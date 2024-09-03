@@ -5,3 +5,6 @@ catalogue.json
 ._report.Rmd
 .vscode
 .vscode
+testing
+**/__pycache__/*
+**/*egg-info/*
