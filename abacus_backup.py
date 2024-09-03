@@ -49,13 +49,13 @@ class Locus:
     left_anchor: str
     right_anchor: str
     structure: str
-    satelites: list[str]
+    satellites: list[str]
     breaks: list[str]
 
     @classmethod
     def from_json_item(cls, item, ref):
         chrom, start, end = process_region(item["ReferenceRegion"])
-        satelites, breaks = process_str_pattern(item["LocusStructure"])
+        satellites, breaks = process_str_pattern(item["LocusStructure"])
 
         # Get region around STR
         left_anchor = str(ref[chrom][(start - ANCHOR_LEN) : start])
@@ -69,7 +69,7 @@ class Locus:
             structure=item["LocusStructure"],
             left_anchor=left_anchor,
             right_anchor=right_anchor,
-            satelites=satelites,
+            satellites=satellites,
             breaks=breaks,
         )
 
@@ -79,7 +79,7 @@ class Locus:
             "locus_chrom": self.chrom,
             "locus_start": self.start,
             "locus_end": self.end,
-            "satelites_str": "-".join(self.satelites),
+            "satellites_str": "-".join(self.satellites),
             "structure": self.structure,
         }
 
@@ -222,7 +222,7 @@ class STR_Candidate:
 
 
 # TODO: Include insertions in kmer string!
-def get_kmer_string(satelites, breaks, kmer_count, seq, mapping, ref) -> Tuple[str, str]:
+def get_kmer_string(satellites, breaks, kmer_count, seq, mapping, ref) -> Tuple[str, str]:
     # Convert reference with cigar
     synced_seq_list = sync_ref_with_cigar(
         ref=ref[(mapping.r_st) : (mapping.r_en)],
@@ -239,9 +239,9 @@ def get_kmer_string(satelites, breaks, kmer_count, seq, mapping, ref) -> Tuple[s
     exp_kmers = []
 
     # Add case for easy looping
-    satelites_loop = satelites + [""]
+    satellites_loop = satellites + [""]
     kmer_count_loop = np.concatenate([kmer_count, np.array([0])])
-    for sat, cnt, brk in zip(satelites_loop, kmer_count_loop, breaks):
+    for sat, cnt, brk in zip(satellites_loop, kmer_count_loop, breaks):
         if brk != "":
             # Add observed break
             obs_kmers.append("".join(seq_in_region[: len(brk)]))
@@ -386,7 +386,7 @@ def discrete_multivariate_normal_pdf(x, mean, var):
 
 
 def get_best_str_candidate(read: STR_Read, candidate_list: List[STR_Candidate], locus: Locus):
-    kmer_length = np.array([len(s) for s in locus.satelites])
+    kmer_length = np.array([len(s) for s in locus.satellites])
 
     best_candidate = None
     mapped_kmers_dict = {}
@@ -436,15 +436,15 @@ def get_best_str_candidate(read: STR_Read, candidate_list: List[STR_Candidate], 
 
 
 def process_str_pattern(str_pattern):
-    SATELITE_PATTERN = r"(?<=\()(?:[GCATN]+)(?=\)[\*\+])"
+    satellite_PATTERN = r"(?<=\()(?:[GCATN]+)(?=\)[\*\+])"
     BREAK_PATTERN = r"(?<=\)[\*\+])(?:[GCATN]*)(?=\()"
 
-    satelites = re.findall(SATELITE_PATTERN, str_pattern)
+    satellites = re.findall(satellite_PATTERN, str_pattern)
     breaks = re.findall(BREAK_PATTERN, str_pattern)
     prefix = str_pattern[: str_pattern.find("(")]
     suffix = str_pattern[str_pattern.rfind(")") + 2 :]
 
-    return satelites, [prefix] + breaks + [suffix]
+    return satellites, [prefix] + breaks + [suffix]
 
 
 def process_reads_in_str_region(bamfile, locus: Locus):
@@ -472,7 +472,7 @@ def process_reads_in_str_region(bamfile, locus: Locus):
 
         # Create kmer string
         observed_kmer_string, expected_kmer_string = get_kmer_string(
-            satelites=locus.satelites,
+            satellites=locus.satellites,
             breaks=locus.breaks,
             kmer_count=str_call["kmer_count"],
             seq=str_call["altered_ref"],
@@ -500,41 +500,41 @@ def process_reads_in_str_region(bamfile, locus: Locus):
 def get_str_candidates(locus, read_str_sequence) -> List[STR_Candidate]:
     # STEP 1: Heuristics for min and max kmer count
 
-    # Heuristic for max: Assume the str region consists of only the satelite
-    max_str_count = [ceil(len(read_str_sequence) * 1.025 / len(satelite)) + 1 for satelite in locus.satelites]
+    # Heuristic for max: Assume the str region consists of only the satellite
+    max_str_count = [ceil(len(read_str_sequence) * 1.025 / len(satellite)) + 1 for satellite in locus.satellites]
 
-    # Make range for each satelite count
+    # Make range for each satellite count
     str_count_ranges = [range(x + 1) for x in max_str_count]
     kmer_counts = [list(combination) for combination in product(*str_count_ranges)]
 
-    # Heuristic for min: Look for exact occurences of satelite
+    # Heuristic for min: Look for exact occurences of satellite
     # Avoid subpatterns by making at least equal length: [CA,CAC,CACG] -> [CACA,CACCAC,CACG]
     # Make more robust by copying: [CA,CAC,CACG] -> [CACACACA,CACCACCACCAC,CACGCACG] (2x)
     # Replace "N" -> "." for regex
-    unique_satelites = [
+    unique_satellites = [
         {
-            "satelite": satelite,
-            "unique_satelite_regex": (satelite * n).replace("N", "."),
+            "satellite": satellite,
+            "unique_satellite_regex": (satellite * n).replace("N", "."),
             "copies": n,
         }
-        for satelite in locus.satelites
-        if (n := ceil(len(max(locus.satelites, key=len)) / len(satelite)) * 2)
+        for satellite in locus.satellites
+        if (n := ceil(len(max(locus.satellites, key=len)) / len(satellite)) * 2)
     ]
 
-    for us in unique_satelites:
-        unique_satelite_count = len(re.findall(us["unique_satelite_regex"], read_str_sequence))
-        min_str_count = unique_satelite_count * us["copies"]
-        satelite_index = [us["satelite"] == s for s in locus.satelites]
-        min_filter_mask = [sum(list(compress(kmer_count, satelite_index))) >= min_str_count for kmer_count in kmer_counts]
+    for us in unique_satellites:
+        unique_satellite_count = len(re.findall(us["unique_satellite_regex"], read_str_sequence))
+        min_str_count = unique_satellite_count * us["copies"]
+        satellite_index = [us["satellite"] == s for s in locus.satellites]
+        min_filter_mask = [sum(list(compress(kmer_count, satellite_index))) >= min_str_count for kmer_count in kmer_counts]
         kmer_counts = list(compress(kmer_counts, min_filter_mask))
 
     # STEP 2: Create altered references
     altered_ref_list = [
         # Start with the left anchor
         locus.left_anchor +
-        # The satelites and breaks
-        "".join(b + s * k for b, s, k in zip(locus.breaks[:-1], locus.satelites, kmer_count)) +
-        # The last satelite and the right anchor
+        # The satellites and breaks
+        "".join(b + s * k for b, s, k in zip(locus.breaks[:-1], locus.satellites, kmer_count)) +
+        # The last satellite and the right anchor
         locus.breaks[-1] + locus.right_anchor
         for kmer_count in kmer_counts
     ]
@@ -544,7 +544,7 @@ def get_str_candidates(locus, read_str_sequence) -> List[STR_Candidate]:
     # STEP 3: Filtering
 
     # Filter out unsensible short/long altered references
-    max_sat_len = max(len(s) for s in locus.satelites)
+    max_sat_len = max(len(s) for s in locus.satellites)
     estimated_str_length = len(read_str_sequence)
     keep_idx = [
         estimated_str_length * 0.95 < ref_str_len < estimated_str_length * 1.05
@@ -850,8 +850,8 @@ def main():
 
             print(f"Processing {locus.id} {locus.structure}...")
 
-            if not locus.satelites:
-                print("No valid satelite pattern found in STR definition")
+            if not locus.satellites:
+                print("No valid satellite pattern found in STR definition")
                 continue
 
             # Call STR in individual reads
@@ -866,8 +866,8 @@ def main():
                 for k, v in locus.to_dict().items():
                     df[k] = v
 
-            # Add satelite information to haplotype results
-            haplotyping_res_df["satelite"] = haplotyping_res_df["idx"].apply(lambda x: locus.satelites[x])
+            # Add satellite information to haplotype results
+            haplotyping_res_df["satellite"] = haplotyping_res_df["idx"].apply(lambda x: locus.satellites[x])
 
             # Concatenate results
             haplotyping_df = pd.concat([haplotyping_df, haplotyping_res_df], axis=0, ignore_index=True)
@@ -888,7 +888,7 @@ def main():
         summary_df.to_csv(f, index=False)
 
     # Render report
-    print(f"Render report...")
+    print("Render report...")
 
     report_name = os.path.basename(args.report_html)
     report_dir = os.path.realpath(os.path.dirname(args.report_html))
