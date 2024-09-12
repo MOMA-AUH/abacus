@@ -8,19 +8,7 @@ from typing import List, Tuple
 import mappy as mp
 import numpy as np
 
-from abacus.constants import (
-    ANCHOR_LEN,
-    GAP_EXTENSION_PENALTY,
-    GAP_OPEN_PENALTY,
-    LONG_GAP_EXTENSION_PENALTY,
-    LONG_GAP_OPEN_PENALTY,
-    MATCH_SCORE,
-    MAX_UNLINK_DIST,
-    MIN_ANCHOR_OVERLAP,
-    MIN_STR_READ_QUAL,
-    MISMATCH_PENALTY,
-    N_MISMATCH_PENALTY,
-)
+from abacus.config import config
 from abacus.locus import Locus
 
 
@@ -99,13 +87,13 @@ class STR_Read:
             extra_flags=0x4000000 + 0x100000,
             best_n=1,
             scoring=[
-                MATCH_SCORE,
-                MISMATCH_PENALTY,
-                GAP_OPEN_PENALTY,
-                GAP_EXTENSION_PENALTY,
-                LONG_GAP_OPEN_PENALTY,
-                LONG_GAP_EXTENSION_PENALTY,
-                N_MISMATCH_PENALTY,
+                config.MATCH_SCORE,
+                config.MISMATCH_PENALTY,
+                config.GAP_OPEN_PENALTY,
+                config.GAP_EXTENSION_PENALTY,
+                config.LONG_GAP_OPEN_PENALTY,
+                config.LONG_GAP_EXTENSION_PENALTY,
+                config.N_MISMATCH_PENALTY,
             ],
         )
 
@@ -115,7 +103,7 @@ class STR_Read:
 
         # Get start and end of STR
         left_anchor_end = self.left_anchor_map.r_en if self.left_anchor_map is not None else 0
-        self.left_anchor_unmapped_end_length = ANCHOR_LEN - (self.left_anchor_map.q_en if self.left_anchor_map is not None else 0)
+        self.left_anchor_unmapped_end_length = config.ANCHOR_LEN - (self.left_anchor_map.q_en if self.left_anchor_map is not None else 0)
 
         right_anchor_start = self.right_anchor_map.r_st if self.right_anchor_map is not None else 0
         self.right_anchor_unmapped_end_length = self.right_anchor_map.q_st if self.right_anchor_map is not None else 0
@@ -140,28 +128,28 @@ class STR_Read:
         if not self.left_anchor_map:
             errors.append("missing_left_anchor")
         else:
-            if self.left_anchor_map.mlen < MIN_ANCHOR_OVERLAP:
+            if self.left_anchor_map.mlen < config.MIN_ANCHOR_OVERLAP:
                 errors.append("bad_left_anchor")
-            if ANCHOR_LEN - self.left_anchor_map.q_en > MAX_UNLINK_DIST:
+            if config.ANCHOR_LEN - self.left_anchor_map.q_en > config.MAX_UNLINK_DIST:
                 errors.append("unlinked_right_anchor")
 
         if not self.right_anchor_map:
             errors.append("missing_right_anchor")
         else:
-            if self.right_anchor_map.mlen < MIN_ANCHOR_OVERLAP:
+            if self.right_anchor_map.mlen < config.MIN_ANCHOR_OVERLAP:
                 errors.append("bad_right_anchor")
-            if self.right_anchor_map.q_st > MAX_UNLINK_DIST:
+            if self.right_anchor_map.q_st > config.MAX_UNLINK_DIST:
                 errors.append("unlinked_right_anchor")
 
         if self.left_anchor_map and self.right_anchor_map:
             if self.right_anchor_map.r_st < self.left_anchor_map.r_en:
                 errors.append("overlapping_anchors")
             else:
-                read_str_start = self.left_anchor_map.r_en + ANCHOR_LEN - self.left_anchor_map.q_en
+                read_str_start = self.left_anchor_map.r_en + config.ANCHOR_LEN - self.left_anchor_map.q_en
                 read_str_end = self.right_anchor_map.r_st - self.right_anchor_map.q_st
                 str_qual = self.query_qualities[read_str_start:read_str_end]
                 median_str_qual = median(str_qual)
-                if median_str_qual < MIN_STR_READ_QUAL:
+                if median_str_qual < config.MIN_STR_READ_QUAL:
                     errors.append("low_read_quality")
 
         self.error_flags = ",".join(errors)
@@ -184,10 +172,9 @@ class STR_Read:
 
 # TODO: Include insertions in kmer string!
 def get_kmer_string(locus: Locus, read: STR_Read, call: STR_Call) -> Tuple[str, str]:
-    satellites = locus.satellites
+    satellite_seqs = [sat.sequence for sat in locus.satellites]
     breaks = locus.breaks
     kmer_count = call.kmer_count
-    seq = call.altered_ref
 
     mapping = call.mapping
     ref = read.query_sequence
@@ -216,7 +203,7 @@ def get_kmer_string(locus: Locus, read: STR_Read, call: STR_Call) -> Tuple[str, 
         seq_in_region = seq_in_region[call.left_linker_length :]
 
     # Add case for easy looping
-    satellites_loop = satellites + [""]
+    satellites_loop = satellite_seqs + [""]
     kmer_count_loop = np.concatenate([kmer_count, np.array([0])])
     for sat, cnt, brk in zip(satellites_loop, kmer_count_loop, breaks):
         if brk != "":
@@ -343,11 +330,11 @@ def get_mapping_score(cigar_string):
     for count, operation in cigar_list:
         if operation in ["I", "D"]:
             # Affine gap penalty
-            score -= GAP_OPEN_PENALTY + count * GAP_EXTENSION_PENALTY
+            score -= config.GAP_OPEN_PENALTY + count * config.GAP_EXTENSION_PENALTY
         elif operation == "=":
-            score += count * MATCH_SCORE
+            score += count * config.MATCH_SCORE
         elif operation == "X":
-            score -= count * MISMATCH_PENALTY
+            score -= count * config.MISMATCH_PENALTY
 
     return score
 
@@ -401,24 +388,24 @@ def get_str_candidates(locus: Locus, read: STR_Read) -> List[STR_Candidate]:
 
     # Find first occurence of first satellite after left anchor
     left_n_linker = ""
-    if len(trimmed_left_anchor) < ANCHOR_LEN or trimmed_left_anchor_map.q_en < ANCHOR_LEN:
+    if len(trimmed_left_anchor) < config.ANCHOR_LEN or trimmed_left_anchor_map.q_en < config.ANCHOR_LEN:
         seq_minus_left_anchor = read.query_sequence[trimmed_left_anchor_map.r_en :]
-        start_pos_of_first_satellite = seq_minus_left_anchor.find(locus.satellites[0])
+        start_pos_of_first_satellite = seq_minus_left_anchor.find(locus.satellites[0].sequence)
         start_pos_of_first_break = seq_minus_left_anchor.find(locus.breaks[0]) if locus.breaks[0] != "" else 1000000
         left_n_linker = "N" * (min(start_pos_of_first_satellite, start_pos_of_first_break))
 
     # Find last occurence of last satellite before right anchor
     right_n_linker = ""
-    if len(trimmed_right_anchor) < ANCHOR_LEN or trimmed_right_anchor_map.q_st > 0:
+    if len(trimmed_right_anchor) < config.ANCHOR_LEN or trimmed_right_anchor_map.q_st > 0:
         seq_minus_right_anchor = read.query_sequence[: trimmed_right_anchor_map.r_st]
-        end_pos_of_last_satellite = seq_minus_right_anchor.rfind(locus.satellites[-1]) + len(locus.satellites[-1])
+        end_pos_of_last_satellite = seq_minus_right_anchor.rfind(locus.satellites[-1].sequence) + len(locus.satellites[-1].sequence)
         end_pos_of_last_break = seq_minus_right_anchor.rfind(locus.breaks[-1]) if locus.breaks[-1] != "" else -1
         right_n_linker = "N" * (len(seq_minus_right_anchor) - max(end_pos_of_last_satellite, end_pos_of_last_break) + 1)
 
     # STEP 1: Heuristics for min and max kmer count
 
     # Heuristic for max: Assume the str region consists of only the satellite
-    max_str_count = [ceil(len(estimated_str_sequence) * 1.025 / len(satellite)) + 1 for satellite in locus.satellites]
+    max_str_count = [ceil(len(estimated_str_sequence) * 1.025 / len(satellite.sequence)) + 1 for satellite in locus.satellites]
 
     # Make range for each satellite count
     str_count_ranges = [range(x + 1) for x in max_str_count]
@@ -431,11 +418,11 @@ def get_str_candidates(locus: Locus, read: STR_Read) -> List[STR_Candidate]:
     unique_satellites = [
         {
             "satellite": satellite,
-            "unique_satellite_regex": (satellite * n).replace("N", "."),
+            "unique_satellite_regex": (satellite.sequence * n).replace("N", "."),
             "copies": n,
         }
         for satellite in locus.satellites
-        if (n := ceil(len(max(locus.satellites, key=len)) / len(satellite)) * 2)
+        if (n := ceil(len(max([s.sequence for s in locus.satellites], key=len)) / len(satellite.sequence)) * 2)
     ]
 
     for us in unique_satellites:
@@ -454,7 +441,7 @@ def get_str_candidates(locus: Locus, read: STR_Read) -> List[STR_Candidate]:
         left_n_linker
         +
         # The satellites and breaks
-        "".join(b + s * k for b, s, k in zip(locus.breaks[:-1], locus.satellites, kmer_count))
+        "".join(b + s.sequence * k for b, s, k in zip(locus.breaks[:-1], locus.satellites, kmer_count))
         +
         # The last satellite and the right anchor
         locus.breaks[-1]
@@ -482,7 +469,7 @@ def get_str_candidates(locus: Locus, read: STR_Read) -> List[STR_Candidate]:
     # STEP 3: Filtering
 
     # Filter out unsensible short/long altered references
-    max_sat_len = max(len(s) for s in locus.satellites)
+    max_sat_len = max(len(s.sequence) for s in locus.satellites)
     estimated_str_length = len(estimated_str_sequence)
     keep_idx = [
         estimated_str_length * 0.90 < ref_str_len < estimated_str_length * 1.10
@@ -504,12 +491,12 @@ def get_str_candidates(locus: Locus, read: STR_Read) -> List[STR_Candidate]:
 
 
 def get_best_str_candidate(read: STR_Read, candidate_list: List[STR_Candidate], locus: Locus) -> STR_Call:
-    kmer_length = np.array([len(s) for s in locus.satellites])
+    kmer_length = np.array([len(s.sequence) for s in locus.satellites])
 
     best_candidate = None
     mapped_kmers_dict = {}
 
-    for c in sorted(candidate_list, key=lambda c: abs((len(c.altered_ref) - 2 * ANCHOR_LEN) - len(read.str_sequence))):
+    for c in sorted(candidate_list, key=lambda c: abs((len(c.altered_ref) - 2 * config.ANCHOR_LEN) - len(read.str_sequence))):
         kmer_count_array = np.array(c.kmer_count)
 
         # Check if mapping is neccesary
@@ -523,8 +510,8 @@ def get_best_str_candidate(read: STR_Read, candidate_list: List[STR_Candidate], 
 
             # Calculate best possible improvment
             best_per_base_improvemnt = max(
-                MATCH_SCORE + GAP_EXTENSION_PENALTY + GAP_OPEN_PENALTY,
-                MATCH_SCORE + MISMATCH_PENALTY,
+                config.MATCH_SCORE + config.GAP_EXTENSION_PENALTY + config.GAP_OPEN_PENALTY,
+                config.MATCH_SCORE + config.MISMATCH_PENALTY,
             )
             best_possible_improvment = np.dot(abs(nearest_mapped_kmer - kmer_count_array), kmer_length) * best_per_base_improvemnt
 
