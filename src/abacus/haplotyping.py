@@ -7,6 +7,8 @@ import pandas as pd
 from scipy.stats import chi2, multivariate_normal
 from sklearn.cluster import DBSCAN
 
+from abacus.graph import Read_Call
+
 
 def discrete_multivariate_normal_pdf(x, mean, var):
     ranges = []
@@ -25,15 +27,15 @@ def discrete_multivariate_normal_pdf(x, mean, var):
     return pdf_x / np.sum(pdf_grid)
 
 
-def call_haplotypes(read_calls: List):
-    kmer_dim = len(read_calls[0]["kmer_count"])
+def call_haplotypes(read_calls: List[Read_Call]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    n_satellites = len(read_calls[0].locus.satellites)
 
     # DBSCAN for initial outlier detection
     good_read_calls = read_calls
     outlier_read_calls = []
 
     # String outliers with pairwise Levenshtein distances
-    read_str_sequences = [r["read_str_sequence"] for r in good_read_calls]
+    read_str_sequences = [r.alignment.str_sequence for r in good_read_calls]
     pairwise_sequence_dist = np.array(
         [[ls.distance(str1, str2) / max(len(str1), len(str2)) for str2 in read_str_sequences] for str1 in read_str_sequences]
     )
@@ -42,25 +44,25 @@ def call_haplotypes(read_calls: List):
 
     # Identify and annotate outliers
     outlier_read_calls.extend(
-        [read | {"em_haplotype": "outlier", "outlier_reason": "sequence_errors"} for read in list(compress(good_read_calls, string_outlier_mask))]
+        [read.to_dict() | {"em_haplotype": "outlier", "outlier_reason": "sequence_errors"} for read in list(compress(good_read_calls, string_outlier_mask))]
     )
     good_read_calls = list(compress(good_read_calls, ~string_outlier_mask))
 
     # Kmer count outliers
-    kmer_counts = np.array([r["kmer_count"] for r in good_read_calls])
+    kmer_counts = np.array([r.kmer_count for r in good_read_calls])
     kmer_dist = np.array([[np.sum(np.abs(k1 - k2)) for k2 in kmer_counts] for k1 in kmer_counts])
-    kmer_clustering = DBSCAN(eps=kmer_dim + 1, min_samples=2, metric="precomputed").fit(kmer_dist)
+    kmer_clustering = DBSCAN(eps=n_satellites + 1, min_samples=2, metric="precomputed").fit(kmer_dist)
     kmer_outlier_mask = kmer_clustering.labels_ == -1
 
     # Identify and annotate outliers
     outlier_read_calls.extend(
-        [read | {"em_haplotype": "outlier", "outlier_reason": "unusual_kmer_count"} for read in list(compress(good_read_calls, kmer_outlier_mask))]
+        [read.to_dict() | {"em_haplotype": "outlier", "outlier_reason": "unusual_kmer_count"} for read in list(compress(good_read_calls, kmer_outlier_mask))]
     )
     good_read_calls = list(compress(good_read_calls, ~kmer_outlier_mask))
-    good_read_calls = [read | {"em_haplotype": pd.NA, "outlier_reason": pd.NA} for read in good_read_calls]
+    good_read_calls = [read.to_dict() | {"em_haplotype": pd.NA, "outlier_reason": pd.NA} for read in good_read_calls]
 
     # TODO: good_read_calls are updated in the function - make this explicit!
-    haplotyping_df, test_summary_df = run_em_algo(good_read_calls, kmer_dim)
+    haplotyping_df, test_summary_df = run_em_algo(good_read_calls, n_satellites)
 
     # Merge data frames
     read_calls_df = pd.concat([pd.DataFrame(good_read_calls), pd.DataFrame(outlier_read_calls)])
