@@ -1,25 +1,42 @@
 ---
 title: "Short Tandem Repeat"
-author: "Simon Drue"
-date: "`r Sys.Date()`"
-output:
+output: 
   html_document:
-    toc: false
+    toc: FALSE 
+    code_folding: hide
+
 params:
+  sample_id: ""
+  input_bam: ""
+  str_catalouge: ""
   reads_csv: ""
   filtered_reads_csv: ""
   clustering_summary_csv: ""
   test_summary_csv: ""
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r Setup, include=FALSE}
+# Setup
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  results = FALSE,
+  out.width = "100%",
+  fig.align = "center"
+)
+
+# Load libraries
 library(tidyverse)
 library(RColorBrewer)
 library(knitr)
 ```
 
-```{r Unpack input parameters, include = TRUE, eval=TRUE}
+```{r Unpack input parameters}
+# Sample information
+sample_id <- params$sample_id
+input_bam <- params$input_bam
+str_catalouge <- params$str_catalouge
+
 # Unpack input variables
 reads_csv <- params$reads_csv
 filtered_reads_csv <- params$filtered_reads_csv
@@ -28,6 +45,7 @@ test_summary_csv <- params$test_summary_csv
 
 print(params)
 
+# TODO: Make variable names more descriptive
 # Load input files
 reads_df <- read_csv(reads_csv)
 filtered_reads_df <- read_csv(filtered_reads_csv)
@@ -35,35 +53,43 @@ clustering_summary_df <- read_csv(clustering_summary_csv)
 test_summary_df <- read_csv(test_summary_csv)
 ```
 
-```{r Test exmaple data, include=FALSE, eval=FALSE}
+```{r Test exmaple data, eval=FALSE}
 # Load data
-reads_csv <- "~/GenomeDK/my_analysis/20231003-abacus-devel/reads_res.csv"
+reads_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.read_info.csv"
 reads_df <- read_csv(reads_csv)
 
-filtered_reads_csv <- "~/GenomeDK/my_analysis/20231003-abacus-devel/filtered_reads_res.csv"
+filtered_reads_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.filtered_reads_info.csv"
 filtered_reads_df <- read_csv(filtered_reads_csv)
 
-clustering_summary_csv <- "~/GenomeDK/my_analysis/20231003-abacus-devel/res_test.csv"
+clustering_summary_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.haplotype_info.csv"
 clustering_summary_df <- read_csv(clustering_summary_csv)
 
-test_summary_csv <- "~/GenomeDK/my_analysis/20231003-abacus-devel/summary_res.csv"
+test_summary_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.summary.csv"
 test_summary_df <- read_csv(test_summary_csv)
 ```
 
 
-```{r Get destinct region, include=FALSE}
+```{r Get destinct region}
 # Get df of region information
 regions <- reads_df %>%
   distinct(locus_id, locus_chrom, locus_start, locus_end, satellites_str, structure)
 ```
 
 
-```{r echo = FALSE, results = "asis", fig.align="center", out.width="100%"}
+# Sample information
+|||
+|:----------------------------------|:--------------------------------------------|
+| **Sample ID**                     | `r sample_id`                               |
+| **Date**                          | `r format(Sys.time(), '%Y/%m/%d %H:%M %Z')` |
+| **Analyzed BAM file**             | `r basename(input_bam)`                     |
+| **STR catalouge**                 | `r basename(str_catalouge)`                 |
+
+```{r Report, results = "asis"}
 cat("\n\n")
 cat("# Choose a region {.tabset .tabset-pills}")
 cat("\n\n")
 
-for (i in 1:nrow(regions)) {
+for (i in seq_len(nrow(regions))) {
   selected_region <- regions[i, ]
 
   # Filter data
@@ -72,8 +98,12 @@ for (i in 1:nrow(regions)) {
     arrange(nchar(read_str_sequence)) %>%
     mutate(read_id = factor(row_number()))
 
-  filtered_reads_region_df <- filtered_reads_df %>%
-    semi_join(selected_region, by = join_by(locus_id))
+  if (nrow(filtered_reads_df) > 0) {
+    filtered_reads_region_df <- filtered_reads_df %>%
+      semi_join(selected_region, by = join_by(locus_id))
+  } else {
+    filtered_reads_region_df <- data.frame()
+  }
 
   summary_region_df <- test_summary_df %>%
     semi_join(selected_region, by = join_by(locus_id))
@@ -166,9 +196,7 @@ for (i in 1:nrow(regions)) {
   cat("#### STR haplotype calls \n")
 
   res_region_df <- clustering_summary_df %>%
-    semi_join(selected_region, by = join_by(locus_chrom, locus_start, locus_end))
-
-  res_region_df %>%
+    semi_join(selected_region, by = join_by(locus_chrom, locus_start, locus_end)) %>%
     mutate_if(is.numeric, ~ round(., 2)) %>%
     select(
       "EM haplotype" = em_haplotype,
@@ -197,13 +225,14 @@ for (i in 1:nrow(regions)) {
   kmer_df <- reads_region_df %>%
     # Get one line per kmer
     mutate(
-      kmer = str_split(kmer_str, "-"),
-      exp_kmer = str_split(expected_kmer_str, "-")
+      kmer = str_split(observed_satellite_str, "-"),
+      exp_kmer = str_split(expected_satellite_str, "-")
     ) %>%
     unnest_longer(col = c(kmer, exp_kmer), values_to = "{col}", indices_to = "{col}_idx") %>%
     # Set kmer=NA for unique kmers (assume these are errors for cleaner abacus plot)
     group_by(kmer) %>%
     mutate(
+      #TODO: kmer = ifelse(n() == 1, NA, kmer)
       kmer = ifelse(n() == 1, NA, kmer)
     ) %>%
     ungroup()
@@ -214,7 +243,7 @@ for (i in 1:nrow(regions)) {
   if (length(kmers) > 12) {
     kmer_cols <- colorRampPalette(colors = col_pallete)(length(kmers))
   } else {
-    kmer_cols <- col_pallete[1:length(kmers)]
+    kmer_cols <- col_pallete[seq_along(kmers)]
   }
   names(kmer_cols) <- kmers
 
@@ -224,7 +253,7 @@ for (i in 1:nrow(regions)) {
       facet_var = c("em_haplotype", "phase")
     )
 
-  for (j in 1:nrow(loop_df)) {
+  for (j in seq_len(nrow(loop_df))) {
     d <- loop_df[j, ]
 
     cat("\n\n")
@@ -235,7 +264,7 @@ for (i in 1:nrow(regions)) {
       title = c("Observed", "Expected"),
       col_var = c("kmer", "exp_kmer")
     )
-    for (k in 1:nrow(inner_loop_df)) {
+    for (k in seq_len(nrow(inner_loop_df))) {
       dd <- inner_loop_df[k, ]
 
       cat("\n\n")
@@ -251,7 +280,11 @@ for (i in 1:nrow(regions)) {
           aes(x = kmer_idx, y = read_id, col = !!sym(dd$col_var)),
           size = 5
         ) +
-        facet_grid(rows = vars(!!sym(d$facet_var)), scales = "free_y", space = "free_y") +
+        facet_grid(
+          rows = vars(!!sym(d$facet_var)),
+          scales = "free_y",
+          space = "free_y"
+        ) +
         labs(
           title = "K-mer overview",
           x = "K-mer index",
@@ -315,7 +348,7 @@ for (i in 1:nrow(regions)) {
   cat("### Filtered reads")
   cat("\n\n")
 
-  cat("A table with information about the filtered reads and the reason why they were removed.")
+  cat("A table with information about the filtered reads and the reason why they were removed.\n")
 
   if (nrow(filtered_reads_region_df) > 0) {
     filtered_reads_region_df %>%
@@ -389,8 +422,9 @@ for (i in 1:nrow(regions)) {
           x = list(seq(mean - 5 * plot_sd, mean + 5 * plot_sd, length.out = 101)),
         ) %>%
         unnest(x) %>%
+        group_by(em_haplotype) %>%
         mutate(
-          d = dnorm(x, mean = mean, sd = plot_sd) * n
+          d = dnorm(x, mean = mean, sd = plot_sd) * n / max(dnorm(mean, mean = mean, sd = plot_sd), 1, na.rm = TRUE)
         )
 
       res_region_plot_index_df <-
@@ -410,10 +444,4 @@ for (i in 1:nrow(regions)) {
 
   # TODO: See if hetero test makes sense for all genes
 }
-```
-
-
-# Input parameters
-```{r Input parameters}
-print(params)
 ```

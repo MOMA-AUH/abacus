@@ -1,5 +1,6 @@
 import subprocess
 from pathlib import Path
+from typing import List, Optional
 
 import pandas as pd
 import pysam
@@ -8,8 +9,17 @@ from pyfaidx import Fasta
 from typing_extensions import Annotated
 
 from abacus.config import config
-from abacus.graph import process_reads_in_str_region
-from abacus.haplotyping import call_haplotypes
+from abacus.graph import (
+    GraphAlignment,
+    GroupedReadCall,
+    get_reads_in_locus,
+    graph_align_flanking_reads_to_locus,
+    graph_align_reads_to_locus,
+    group_flanking_read_calls,
+    handle_flanking_reads,
+    handle_spanning_reads,
+)
+from abacus.haplotyping import filter_read_calls, group_read_calls
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 
@@ -46,12 +56,20 @@ def abacus(
             resolve_path=True,
         ),
     ],
-    config_file: Annotated[
+    sample_id: Annotated[
+        str,
+        typer.Option(
+            "--sample-id",
+            "-n",
+            help="Sample ID",
+        ),
+    ],
+    str_catalouge: Annotated[
         Path,
         typer.Option(
-            "--config",
-            "-c",
-            help="Path to the configuration file (JSON)",
+            "--str-catalouge",
+            "-s",
+            help="Path to the STR catalouge JSON file",
             exists=True,
             file_okay=True,
             dir_okay=False,
@@ -132,6 +150,11 @@ def abacus(
             resolve_path=True,
         ),
     ],
+    loci_subset: Optional[List[str]] = typer.Option(
+        None,
+        "--loci-subset",
+        help="Subset of loci to process. If not provided, all loci will be processed. Use multiple times to specify multiple loci.",
+    ),
     anchor_length: Annotated[
         int,
         typer.Option(
@@ -152,7 +175,7 @@ def abacus(
             "--min-qual",
             help="Minimum median base quality in STR region",
         ),
-    ] = 15,
+    ] = 10,
 ) -> None:
     # Setup logging to file
     set_log_file_handler(logger, log_file)
@@ -169,23 +192,35 @@ def abacus(
     ref_fasta = Fasta(ref)
 
     # Load loci data from JSON
-    loci = load_loci_from_json(config_file, ref_fasta)
+    loci = load_loci_from_json(str_catalouge, ref_fasta)
+
+    # Check if loci subset is valid
+    if loci_subset and all(locus.id not in loci_subset for locus in loci):
+        logger.error("Invalid loci subset provided")
+        raise typer.Exit(code=1)
 
     # Open BAM file
     bamfile = pysam.AlignmentFile(str(bam), "rb")
 
     # Initialize output dataframes
-    haplotyping_df = pd.DataFrame()
-    read_calls_df = pd.DataFrame()
-    filtered_reads_df = pd.DataFrame()
-    summary_df = pd.DataFrame()
+    all_read_calls: List[GroupedReadCall] = []
+    all_filtered_reads: List[GraphAlignment] = []
+    all_haplotyping = []
+    all_summaries = []
+
+    # if loci_subset is not None and "DMPK" not in loci_subset:
+    #     exit()
 
     # Process each locus
     for locus in loci:
         # if locus.id not in ["AR", "HTT", "RFC1_alt", "ATXN8OS", "CNBP"]:
         # if locus.id not in ["AR", "HTT", "CNBP", "FMR1", "FGF14", "DMPK"]:
-        # if locus.id not in ["FGF14"]:
-        if locus.id not in ["ATXN1", "FGF14", "FGF14_alt", "HTT"]:
+        # if locus.id not in ["HTT"]:
+        #     continue
+        # if locus.id not in ["ATXN1", "FGF14", "FGF14_alt", "HTT"]:
+
+        # Skip loci not in subset
+        if loci_subset and locus.id not in loci_subset:
             continue
 
         print(f"Processing {locus.id} {locus.structure}...")
@@ -194,84 +229,113 @@ def abacus(
             print("No valid satellite pattern found in STR definition")
             continue
 
+        # Get reads in locus
+        reads = get_reads_in_locus(bamfile, locus)
+
         # Call STR in individual reads
-        read_calls, filtered_reads = process_reads_in_str_region(bamfile=bamfile, locus=locus)
+        spanning_reads, flanking_reads, filtered_reads, unmapped_reads = graph_align_reads_to_locus(reads, locus)
 
-        filtered_reads_res_df = pd.DataFrame([r.to_dict() for r in filtered_reads])
+        # Handle spanning reads
+        read_calls = handle_spanning_reads(spanning_reads, locus)
 
-        # Call STR haplotypes
-        haplotyping_res_df, read_calls_res_df, test_summary_res_df = call_haplotypes(read_calls=read_calls)
+        # Filter read calls
+        filtered_read_calls, good_read_calls = filter_read_calls(read_calls=read_calls)
+
+        # Run EM algorithm
+        haplotyping_res_df, test_summary_res_df, grouped_read_calls, h1_satellite_counts, h2_satellite_counts = group_read_calls(
+            read_calls=good_read_calls, kmer_dim=len(locus.satellites)
+        )
+
+        # Group flanking reads
+        # TODO: Handle unhandled reads
+        # Re-map flanking reads
+        remapped_flanking_reads, unhandled_1 = graph_align_flanking_reads_to_locus(flanking_reads, locus)
+        # Handle flanking reads
+        called_flanking_reads, unhandled_2 = handle_flanking_reads(remapped_flanking_reads, locus)
+        # Filter flanking reads
+        unhandled_3, good_flanking_reads = filter_read_calls(read_calls=called_flanking_reads)
+        # Group flanking reads
+        grouped_flanking_reads = group_flanking_read_calls(good_flanking_reads)
+
+        # Combine results
+        grouped_read_calls.extend(filtered_read_calls)
+        grouped_read_calls.extend(grouped_flanking_reads)
 
         # TODO: Remove this
         # Annotate results with locus info
         for df in [haplotyping_res_df, test_summary_res_df]:
             for k, v in locus.to_dict().items():
+                # Add locus info as a column
                 df[k] = v
 
-        # Add satellite information to haplotype results satellite = locus.satellites[idx]
-        satellite_df = pd.DataFrame()
-        for i in range(len(locus.satellites)):
-            satellite_df = pd.concat(
-                [
-                    satellite_df,
-                    pd.DataFrame({"satellite": locus.satellites[i].sequence, "em_haplotype": f"h{i+1}"}, index=[0]),
-                ],
-                ignore_index=True,
-                axis=0,
+        satellite_df_list = [
+            pd.DataFrame(
+                {
+                    "idx": sat_idx,
+                    "satellite": locus.satellites[sat_idx].sequence,
+                },
+                index=[0],
             )
+            for sat_idx in range(len(locus.satellites))
+        ]
+        satellite_df = pd.concat(satellite_df_list)
 
-        haplotyping_res_df = pd.merge(haplotyping_res_df, satellite_df, on="em_haplotype", how="left")
+        haplotyping_res_df = pd.merge(haplotyping_res_df, satellite_df, on="idx", how="left")
+
+        print(haplotyping_res_df)
 
         # Concatenate results
-        haplotyping_df = pd.concat([haplotyping_df, haplotyping_res_df], axis=0, ignore_index=True)
-        read_calls_df = pd.concat([read_calls_df, read_calls_res_df], axis=0, ignore_index=True)
-        summary_df = pd.concat([summary_df, test_summary_res_df], axis=0, ignore_index=True)
-        filtered_reads_df = pd.concat([filtered_reads_df, filtered_reads_res_df], axis=0, ignore_index=True)
+        all_read_calls.extend(grouped_read_calls)
+        all_filtered_reads.extend(filtered_reads)
+
+        all_haplotyping.append(haplotyping_res_df)
+        all_summaries.append(test_summary_res_df)
 
     # Write output
     with open(read_info, "w", encoding="utf-8") as f:
-        read_calls_df.to_csv(f, index=False)
+        pd.DataFrame([r.to_dict() for r in all_read_calls]).to_csv(f, index=False)
     with open(filtered_reads_info, "w", encoding="utf-8") as f:
-        filtered_reads_df.to_csv(f, index=False)
+        pd.DataFrame([r.to_dict() for r in all_filtered_reads]).to_csv(f, index=False)
     with open(haplotype_info, "w", encoding="utf-8") as f:
-        haplotyping_df.to_csv(f, index=False)
+        pd.concat(all_haplotyping).to_csv(f, index=False)
     with open(summary, "w", encoding="utf-8") as f:
-        summary_df.to_csv(f, index=False)
+        pd.concat(all_summaries).to_csv(f, index=False)
 
     # Render report
     print("Render report...")
 
-    report_name = report.stem
+    report_name = report.name
     report_dir = report.parent
 
     report_template = "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/report.Rmd"
 
-    process = subprocess.run(
-        [
-            "Rscript",
-            "-e",
-            f"""
-                rmarkdown::render('{report_template}', \
-                    output_file='{report_name}', \
-                    output_dir='{report_dir}', \
-                    intermediates_dir='{report_dir}', \
-                    params=list( \
-                        reads_csv = '{read_info}', \
-                        filtered_reads_csv = '{filtered_reads_info}', \
-                        clustering_summary_csv = '{haplotype_info}', \
-                        test_summary_csv = '{summary}' \
-                    ))""",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    logger.info("Render report")
 
-    # Log stdout and stderr
-    logger.info("Render report stdout:")
-    logger.info(process.stdout)
-    logger.info("Render report stderr:")
-    logger.info(process.stderr)
+    with open(log_file, "a") as f:
+        subprocess.run(
+            [
+                "Rscript",
+                "-e",
+                f"""
+                    rmarkdown::render('{report_template}', \
+                        output_file='{report_name}', \
+                        output_dir='{report_dir}', \
+                        intermediates_dir='{report_dir}', \
+                        params=list( \
+                            sample_id = '{sample_id}', \
+                            input_bam = '{bam}', \
+                            str_catalouge = '{str_catalouge}', \
+                            reads_csv = '{read_info}', \
+                            filtered_reads_csv = '{filtered_reads_info}', \
+                            clustering_summary_csv = '{haplotype_info}', \
+                            test_summary_csv = '{summary}' \
+                        ))""",
+            ],
+            text=True,
+            check=True,
+            stdout=f,
+            stderr=f,
+        )
 
     logger.info("Abacus finished")
 

@@ -9,7 +9,7 @@ class Config:
 
     # Graph parameters
     ANCHOR_LEN: int = 500
-    MIN_ANCHOR_OVERLAP: int = 3
+    MIN_ANCHOR_OVERLAP: int = 200
     MIN_STR_READ_QUAL: int = 15
 
     # Old
