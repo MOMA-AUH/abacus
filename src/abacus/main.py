@@ -307,7 +307,7 @@ def abacus(
     report_name = report.name
     report_dir = report.parent
 
-    report_template = "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/report.Rmd"
+    report_template = Path(__file__).parent.parent.parent / "report.Rmd"
 
     logger.info("Render report")
 
