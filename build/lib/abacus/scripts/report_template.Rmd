@@ -1,0 +1,447 @@
+---
+title: "Short Tandem Repeat"
+output: 
+  html_document:
+    toc: FALSE 
+    code_folding: hide
+
+params:
+  sample_id: ""
+  input_bam: ""
+  str_catalouge: ""
+  reads_csv: ""
+  filtered_reads_csv: ""
+  clustering_summary_csv: ""
+  test_summary_csv: ""
+---
+
+```{r Setup, include=FALSE}
+# Setup
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  results = FALSE,
+  out.width = "100%",
+  fig.align = "center"
+)
+
+# Load libraries
+library(tidyverse)
+library(RColorBrewer)
+library(knitr)
+```
+
+```{r Unpack input parameters}
+# Sample information
+sample_id <- params$sample_id
+input_bam <- params$input_bam
+str_catalouge <- params$str_catalouge
+
+# Unpack input variables
+reads_csv <- params$reads_csv
+filtered_reads_csv <- params$filtered_reads_csv
+clustering_summary_csv <- params$clustering_summary_csv
+test_summary_csv <- params$test_summary_csv
+
+print(params)
+
+# TODO: Make variable names more descriptive
+# Load input files
+reads_df <- read_csv(reads_csv)
+filtered_reads_df <- read_csv(filtered_reads_csv)
+clustering_summary_df <- read_csv(clustering_summary_csv)
+test_summary_df <- read_csv(test_summary_csv)
+```
+
+```{r Test exmaple data, eval=FALSE}
+# Load data
+reads_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.read_info.csv"
+reads_df <- read_csv(reads_csv)
+
+filtered_reads_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.filtered_reads_info.csv"
+filtered_reads_df <- read_csv(filtered_reads_csv)
+
+clustering_summary_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.haplotype_info.csv"
+clustering_summary_df <- read_csv(clustering_summary_csv)
+
+test_summary_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.summary.csv"
+test_summary_df <- read_csv(test_summary_csv)
+```
+
+
+```{r Get destinct region}
+# Get df of region information
+regions <- reads_df %>%
+  distinct(locus_id, locus_chrom, locus_start, locus_end, satellites_str, structure)
+```
+
+
+# Sample information
+|||
+|:----------------------------------|:--------------------------------------------|
+| **Sample ID**                     | `r sample_id`                               |
+| **Date**                          | `r format(Sys.time(), '%Y/%m/%d %H:%M %Z')` |
+| **Analyzed BAM file**             | `r basename(input_bam)`                     |
+| **STR catalouge**                 | `r basename(str_catalouge)`                 |
+
+```{r Report, results = "asis"}
+cat("\n\n")
+cat("# Choose a region {.tabset .tabset-pills}")
+cat("\n\n")
+
+for (i in seq_len(nrow(regions))) {
+  selected_region <- regions[i, ]
+
+  # Filter data
+  reads_region_df <- reads_df %>%
+    semi_join(selected_region, by = join_by(locus_id)) %>%
+    arrange(nchar(read_str_sequence)) %>%
+    mutate(read_id = factor(row_number()))
+
+  if (nrow(filtered_reads_df) > 0) {
+    filtered_reads_region_df <- filtered_reads_df %>%
+      semi_join(selected_region, by = join_by(locus_id))
+  } else {
+    filtered_reads_region_df <- data.frame()
+  }
+
+  summary_region_df <- test_summary_df %>%
+    semi_join(selected_region, by = join_by(locus_id))
+
+  # Create heading - Note this is a tab
+  cat("\n\n")
+  cat("##", selected_region$locus_id)
+  cat("\n\n")
+
+
+  cat("\n\n")
+  cat("### Analysis summary \n")
+  cat("\n\n")
+
+  cat("\n\n")
+  cat("#### STR summary")
+  cat("\n\n")
+  selected_region %>%
+    mutate(
+      goto_link = paste0("http://localhost:60151/goto?locus=", locus_chrom, ":", locus_start, "-", locus_end),
+      igv_link = paste0("[Go to locus](", goto_link, ")"),
+      structure = str_replace_all(structure, fixed("*"), fixed("\\*"))
+    ) %>%
+    select(
+      "Locus ID" = locus_id,
+      "Chrom" = locus_chrom,
+      "Start" = locus_start,
+      "End" = locus_end,
+      "satellites" = satellites_str,
+      "Structure" = structure,
+      "IGV link" = igv_link
+    ) %>%
+    kable(
+      align = "lcccccc"
+    ) %>%
+    print()
+
+  cat("\n\n")
+  cat("#### Read summary")
+  cat("\n\n")
+
+  data.frame(
+    total_coverage = nrow(reads_region_df) + nrow(filtered_reads_region_df),
+    filtered_reads = nrow(filtered_reads_region_df),
+    analyzed_reads = nrow(reads_region_df),
+    outliers = nrow(reads_region_df %>% filter(em_haplotype == "outlier")),
+    haplotyped_reads = nrow(reads_region_df %>% filter(em_haplotype != "outlier"))
+  ) %>%
+    select(
+      "Total coverage" = total_coverage,
+      "Filtered" = filtered_reads,
+      "Analyzed" = analyzed_reads,
+      "Outliers" = outliers,
+      "Used for haplotyping" = haplotyped_reads,
+    ) %>%
+    kable(
+      align = "ccccc"
+    ) %>%
+    print()
+
+  cat("\n\n")
+  cat("#### Heterozygozity test summary \n")
+  cat("\n\n")
+
+  cat("This table shows the result from a statistical test for heterozygozity. The hypothesis ($H_A$) is that the sample is heterozygote i.e. that the data comes from two discrete normal distributions and the null hypothesis ($H_0$) is that the sample is homozygote i.e. that the data can be grouped into one gaussian cluster. The test performed is a log likelihood ratio test, where the statistic is assumed to be $\\chi^2$-distributed where the degrees of freedom is the difference in free paramteres under the two hypotheses. The value for the maximized log likelihood functions and the number of free parameteres under the two hypotheses, the test staistic, degrees of freedom, $p$-value and conclusion is shown in the following table.")
+
+  summary_region_df %>%
+    mutate(
+      conclusion = if_else(
+        is_significant,
+        "Heterozygote",
+        "Homozygote"
+      )
+    ) %>%
+    select(
+      "Log-likelihood Hetero" = log_lik_hetero,
+      "Log-likelihood Homo" = log_lik_homo,
+      "# Parameters Hetero" = n_par_hetero,
+      "# Parameters Homo" = n_par_homo,
+      "$\\chi^2$ Statistic" = statistic,
+      "P-value" = p_value,
+      "Significant" = is_significant,
+      "Conclusion" = conclusion
+    ) %>%
+    kable(
+      align = "cccccc"
+    ) %>%
+    print()
+
+  cat("#### STR haplotype calls \n")
+
+  res_region_df <- clustering_summary_df %>%
+    semi_join(selected_region, by = join_by(locus_chrom, locus_start, locus_end)) %>%
+    mutate_if(is.numeric, ~ round(., 2)) %>%
+    select(
+      "EM haplotype" = em_haplotype,
+      "Count" = n,
+      "satellite" = satellite,
+      "Mean" = mean,
+      "SD" = sd,
+      "Median" = median,
+      "IQR" = iqr,
+    ) %>%
+    kable(
+      align = "lcccccc"
+    ) %>%
+    print()
+
+  # Abacus plot
+  cat("\n\n")
+  cat("### Abacus plot {.tabset .tabset-pills}")
+  cat("\n\n")
+
+  cat("\n\n")
+  cat("A visual representation illustrating the distribution of individual $k$-mers as colored beads along a linear sequence, with each sequence representing individual reads. The reads are grouped into haplotypes called by an unsupervised clustering algorithm (EM). Additionally, a separate group is designated for outlier reads. A read can be classified as an outlier either based on an unusual $k$-mer count or nucleotide sequence. The outlier detection is done using DBSCAN. A similar plot can be found under the *Phase* tab, where the grouping is based on the phasing of the alignment. A heatmap showing the concordance between the two groupings can be seen under *Concordance*.")
+  cat("\n\n")
+
+  # Wrangle STR data for abacus plot
+  kmer_df <- reads_region_df %>%
+    # Get one line per kmer
+    mutate(
+      kmer = str_split(observed_satellite_str, "-"),
+      exp_kmer = str_split(expected_satellite_str, "-")
+    ) %>%
+    unnest_longer(col = c(kmer, exp_kmer), values_to = "{col}", indices_to = "{col}_idx") %>%
+    # Set kmer=NA for unique kmers (assume these are errors for cleaner abacus plot)
+    group_by(kmer) %>%
+    mutate(
+      #TODO: kmer = ifelse(n() == 1, NA, kmer)
+      kmer = ifelse(n() == 1, NA, kmer)
+    ) %>%
+    ungroup()
+
+  # Make color palette for kmers
+  kmers <- unique(c(kmer_df$kmer[!is.na(kmer_df$kmer)], kmer_df$exp_kmer[!is.na(kmer_df$exp_kmer)]))
+  col_pallete <- brewer.pal(12, "Paired")
+  if (length(kmers) > 12) {
+    kmer_cols <- colorRampPalette(colors = col_pallete)(length(kmers))
+  } else {
+    kmer_cols <- col_pallete[seq_along(kmers)]
+  }
+  names(kmer_cols) <- kmers
+
+  loop_df <-
+    data.frame(
+      title = c("EM clustering", "Phase"),
+      facet_var = c("em_haplotype", "phase")
+    )
+
+  for (j in seq_len(nrow(loop_df))) {
+    d <- loop_df[j, ]
+
+    cat("\n\n")
+    cat("#### ", d$title, " {.tabset .tabset-pills}")
+    cat("\n\n")
+
+    inner_loop_df <- data.frame(
+      title = c("Observed", "Expected"),
+      col_var = c("kmer", "exp_kmer")
+    )
+    for (k in seq_len(nrow(inner_loop_df))) {
+      dd <- inner_loop_df[k, ]
+
+      cat("\n\n")
+      cat("##### ", dd$title)
+      cat("\n\n")
+
+      kmer_plot <- ggplot(kmer_df) +
+        geom_hline(
+          aes(yintercept = read_id),
+          lwd = 1
+        ) +
+        geom_point(
+          aes(x = kmer_idx, y = read_id, col = !!sym(dd$col_var)),
+          size = 5
+        ) +
+        facet_grid(
+          rows = vars(!!sym(d$facet_var)),
+          scales = "free_y",
+          space = "free_y"
+        ) +
+        labs(
+          title = "K-mer overview",
+          x = "K-mer index",
+          y = "Read ID"
+        ) +
+        scale_color_manual(values = kmer_cols) +
+        scale_y_discrete(limits = rev)
+
+      print(kmer_plot)
+    }
+  }
+
+
+  cat("\n\n")
+  cat("#### Concordance")
+  cat("\n\n")
+
+  em_phase_plot_df <- reads_region_df %>%
+    count(em_haplotype, phase) %>%
+    complete(em_haplotype = c("h1", "h2", "outlier"), phase = 0:2, fill = list(n = 0)) %>%
+    mutate(
+      em_haplotype = factor(em_haplotype, levels = c("outlier", "h1", "h2")),
+      phase = factor(phase, levels = 0:2)
+    )
+
+  concordance_plot <- ggplot(em_phase_plot_df) +
+    geom_tile(aes(x = em_haplotype, y = factor(phase), fill = n)) +
+    geom_label(aes(x = em_haplotype, y = factor(phase), label = n)) +
+    labs(
+      title = "Clustering/phase concordance",
+      x = "EM haplotype",
+      y = "Phase"
+    )
+
+  print(concordance_plot)
+
+  cat("\n\n")
+  cat("### Additional read information")
+  cat("\n\n")
+
+  cat("A table with additional information for the reads visualized above.")
+
+  reads_region_df %>%
+    select(
+      "Read ID" = read_id,
+      "Query Name" = query_name,
+      "Phase" = phase,
+      "Strand" = strand,
+      "EM Haplotype" = em_haplotype,
+      "Outlier Reason" = outlier_reason,
+      "Median STR Qual" = median_str_qual,
+      "Kmer Count" = kmer_count_str
+    ) %>%
+    mutate_if(is.numeric, ~ round(., 3)) %>%
+    kable(
+      align = "lcccccc"
+    ) %>%
+    print()
+
+  cat("\n\n")
+  cat("### Filtered reads")
+  cat("\n\n")
+
+  cat("A table with information about the filtered reads and the reason why they were removed.\n")
+
+  if (nrow(filtered_reads_region_df) > 0) {
+    filtered_reads_region_df %>%
+      select(
+        "Query Name" = query_name,
+        "Phase" = phase,
+        "Strand" = strand,
+        "Error flags" = error_flags
+      ) %>%
+      mutate_if(is.numeric, ~ round(., 3)) %>%
+      kable(
+        align = "lccc"
+      ) %>%
+      print()
+  } else {
+    cat("There is no filtered reads for this locus. \n")
+  }
+  
+  cat("\n\n")
+  cat("### Histogram plots")
+  cat("\n\n")
+
+  cat("A histogram showing the number of occurences of the individual $k$-mers. Is more than one $k$-mer is present in the pattern one histogram is shown for each $k$-mer. Reads that are removed as outliers are not shown in the plot.")
+
+  res_region_df <- clustering_summary_df %>%
+    semi_join(selected_region, by = join_by(locus_id))
+
+  # Plot count
+  length_df <- reads_region_df %>%
+    mutate(
+      count = str_split(kmer_count_str, "-")
+    ) %>%
+    unnest_longer(col = count, indices_to = "index") %>%
+    mutate(
+      count = as.integer(count)
+    )
+
+  for (j in unique(res_region_df$idx)) {
+    # Get satellite
+    satellites <- str_split_i(selected_region$satellites_str, "-", i = j + 1)
+
+    length_index_df <- length_df %>%
+      filter(
+        index == !!j + 1
+      ) %>%
+      count(
+        count, em_haplotype
+      )
+
+    length_plot <- ggplot(length_index_df) +
+      geom_col(
+        aes(x = count, y = n, fill = em_haplotype, col = em_haplotype),
+        alpha = 0.5,
+        width = 0.75,
+        # position = position_dodge2(preserve = "single")
+      ) +
+      labs(
+        title = paste0("satellite: ", satellites),
+        x = "STR length",
+        y = "Count"
+      ) +
+      scale_x_continuous(breaks = function(x) unique(round(sort(pretty(x))))) +
+      scale_y_continuous(breaks = function(x) unique(round(sort(pretty(x))))) +
+      facet_grid(rows = vars(em_haplotype))
+
+    if (all(!is.na(res_region_df$mean))) {
+      res_region_plot_df <- res_region_df %>%
+        rowwise() %>%
+        mutate(
+          plot_sd = pmax(sd, 0.2),
+          x = list(seq(mean - 5 * plot_sd, mean + 5 * plot_sd, length.out = 101)),
+        ) %>%
+        unnest(x) %>%
+        group_by(em_haplotype) %>%
+        mutate(
+          d = dnorm(x, mean = mean, sd = plot_sd) * n / max(dnorm(mean, mean = mean, sd = plot_sd), 1, na.rm = TRUE)
+        )
+
+      res_region_plot_index_df <-
+        res_region_plot_df %>%
+        filter(idx == !!j)
+
+      length_plot <- length_plot +
+        geom_line(
+          data = res_region_plot_index_df,
+          aes(x = x, y = d, col = em_haplotype)
+        )
+    }
+
+
+    print(length_plot)
+  }
+
+  # TODO: See if hetero test makes sense for all genes
+}
+```
