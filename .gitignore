@@ -2,3 +2,4 @@
 **/*egg-info/*
 .vscode
 testing
+.pytest_cache
