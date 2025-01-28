@@ -1,28 +1,25 @@
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import Annotated, Optional
 
 import pandas as pd
 import typer
 from pyfaidx import Fasta
-from typing_extensions import Annotated
 
 from abacus.config import config
 from abacus.graph import (
-    GraphAlignment,
+    FilteredRead,
     GroupedReadCall,
     get_read_calls,
     get_reads_in_locus,
     graph_align_reads_to_locus,
-    group_flanking_read_calls,
-    remap_flanking_alignments_to_locus,
 )
 from abacus.haplotyping import filter_read_calls, group_read_calls
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 
 # Set up the CLI
-app = typer.Typer()
+app = typer.Typer(pretty_exceptions_show_locals=False)
 
 
 @app.command()
@@ -101,7 +98,7 @@ def abacus(
             resolve_path=True,
         ),
     ],
-    loci_subset: Optional[List[str]] = typer.Option(
+    loci_subset: Optional[list[str]] = typer.Option(
         None,
         "--loci-subset",
         help="Subset of loci to process. If not provided, all loci will be processed. Use multiple times to specify multiple loci.",
@@ -126,7 +123,7 @@ def abacus(
             "--min-qual",
             help="Minimum median base quality in STR region",
         ),
-    ] = 10,
+    ] = 15,
 ) -> None:
     # Setup logging to file
     set_log_file_handler(logger, log_file)
@@ -151,8 +148,8 @@ def abacus(
         raise typer.Exit(code=1)
 
     # Initialize output dataframes
-    all_read_calls: List[GroupedReadCall] = []
-    all_filtered_reads: List[GraphAlignment] = []
+    all_read_calls: list[GroupedReadCall] = []
+    all_filtered_reads: list[FilteredRead] = []
     all_haplotyping = []
     all_summaries = []
 
@@ -172,40 +169,25 @@ def abacus(
         reads = get_reads_in_locus(bam, locus)
 
         # Call STR in individual reads
-        # TODO: Handle unmapped reads
-        spanning_alignments, flanking_alignments, filtered_alignments, unmapped_reads = graph_align_reads_to_locus(reads, locus)
+        alignments, filtered_reads = graph_align_reads_to_locus(reads, locus)
 
         # Handle spanning reads
-        read_calls = get_read_calls(spanning_alignments, locus)
+        # TODO: !!!!!!!BOOKMARK!!!!!!! Add handling of flanking reads in get_read_calls
+        read_calls = get_read_calls(alignments, locus)
 
         # Filter read calls
+        # TODO: Read filter_read_calls and make sure it handles flanking reads correctly
         filtered_read_calls, good_read_calls = filter_read_calls(read_calls=read_calls)
 
         # Run EM algorithm
+        # TODO: Update grouping to take into account flanking reads
         haplotyping_res_df, test_summary_res_df, grouped_read_calls, h1_satellite_counts, h2_satellite_counts = group_read_calls(
-            read_calls=good_read_calls, kmer_dim=len(locus.satellites)
+            read_calls=good_read_calls,
+            kmer_dim=len(locus.satellites),
         )
 
-        # Group flanking reads
-        # TODO: Handle unhandled reads
-        # Re-map flanking reads
-        remapped_flanking_reads, unhandled_1 = remap_flanking_alignments_to_locus(flanking_alignments, locus)
-
-        good_remapped_flanking_reads = [aln for aln in remapped_flanking_reads if not aln.get_error_flags()]
-        filtered_remapped_flanking_reads = [aln for aln in remapped_flanking_reads if aln.get_error_flags()]
-
-        # Handle flanking reads
-        flanking_read_calls = get_read_calls(good_remapped_flanking_reads, locus)
-
-        # Filter flanking reads
-        unhandled_3, good_flanking_read_calls = filter_read_calls(read_calls=flanking_read_calls)
-        # Group flanking reads
-        grouped_flanking_read_calls = group_flanking_read_calls(good_flanking_read_calls)
-
         # Combine results
-        filtered_alignments.extend(filtered_remapped_flanking_reads)
         grouped_read_calls.extend(filtered_read_calls)
-        grouped_read_calls.extend(grouped_flanking_read_calls)
 
         # TODO: Remove this
         # Annotate results with locus info
@@ -226,11 +208,11 @@ def abacus(
         ]
         satellite_df = pd.concat(satellite_df_list)
 
-        haplotyping_res_df = pd.merge(haplotyping_res_df, satellite_df, on="idx", how="left")
+        haplotyping_res_df = haplotyping_res_df.merge(satellite_df, on="idx", how="left")
 
         # Concatenate results
         all_read_calls.extend(grouped_read_calls)
-        all_filtered_reads.extend(filtered_alignments)
+        all_filtered_reads.extend(filtered_reads)
 
         all_haplotyping.append(haplotyping_res_df)
         all_summaries.append(test_summary_res_df)
@@ -245,13 +227,13 @@ def abacus(
     haplotypes_csv = output_dir / "haplotypes.csv"
     summary_csv = output_dir / "summary.csv"
 
-    with open(reads_csv, "w", encoding="utf-8") as f:
+    with Path.open(reads_csv, "w") as f:
         pd.DataFrame([r.to_dict() for r in all_read_calls]).to_csv(f, index=False)
-    with open(filtered_reads_csv, "w", encoding="utf-8") as f:
+    with Path.open(filtered_reads_csv, "w") as f:
         pd.DataFrame([r.to_dict() for r in all_filtered_reads]).to_csv(f, index=False)
-    with open(haplotypes_csv, "w", encoding="utf-8") as f:
+    with Path.open(haplotypes_csv, "w") as f:
         pd.concat(all_haplotyping).to_csv(f, index=False)
-    with open(summary_csv, "w", encoding="utf-8") as f:
+    with Path.open(summary_csv, "w") as f:
         pd.concat(all_summaries).to_csv(f, index=False)
 
     # Render report
@@ -264,7 +246,7 @@ def abacus(
 
     logger.info("Render report")
 
-    with open(log_file, "a") as f:
+    with Path.open(log_file, "a") as f:
         subprocess.run(
             [
                 "Rscript",
@@ -281,7 +263,7 @@ def abacus(
                             reads_csv = '{reads_csv}', \
                             filtered_reads_csv = '{filtered_reads_csv}', \
                             clustering_summary_csv = '{haplotypes_csv}', \
-                            test_summary_csv = '{summary_csv}' \
+                            em_summary_csv = '{summary_csv}' \
                         ))""",
             ],
             text=True,

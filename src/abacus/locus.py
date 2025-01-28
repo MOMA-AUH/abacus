@@ -2,7 +2,6 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
 
 from pyfaidx import Fasta
 
@@ -28,8 +27,8 @@ class Locus:
     left_anchor: str
     right_anchor: str
     structure: str
-    satellites: List[Satellite]
-    breaks: List[str]
+    satellites: list[Satellite]
+    breaks: list[str]
 
     def to_dict(self):
         return {
@@ -42,8 +41,8 @@ class Locus:
         }
 
 
-def load_loci_from_json(json_path: Path, ref: Fasta) -> List[Locus]:
-    with open(json_path, "r", encoding="utf-8") as f:
+def load_loci_from_json(json_path: Path, ref: Fasta) -> list[Locus]:
+    with open(json_path, encoding="utf-8") as f:
         loci_json = json.load(f)
 
     loci = []
@@ -66,12 +65,12 @@ def load_loci_from_json(json_path: Path, ref: Fasta) -> List[Locus]:
                 right_anchor=right_anchor,
                 satellites=satellites,
                 breaks=breaks,
-            )
+            ),
         )
     return loci
 
 
-def process_str_pattern(str_pattern: str) -> Tuple[List[Satellite], List[str]]:
+def process_str_pattern(str_pattern: str) -> tuple[list[Satellite], list[str]]:
     # Extract satellites and satellite operators
     satellite_pattern = r"(?<=\()(?:[GCATNRYSWKMBDHV]+)(?=\)[\*\+])"
     satellite_operator_pattern = r"(?<=\))([\*\+])"
@@ -91,7 +90,7 @@ def process_str_pattern(str_pattern: str) -> Tuple[List[Satellite], List[str]]:
     return satellites, [pre_break] + internal_breaks + [post_break]
 
 
-def process_region(reference_region) -> Tuple[str, int, int]:
+def process_region(reference_region) -> tuple[str, int, int]:
     if not isinstance(reference_region, list):
         reference_region = [reference_region]
 

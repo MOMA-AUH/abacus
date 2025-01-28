@@ -1,9 +1,11 @@
+import array
 import random
 
+import pysam
 import pytest
 
 from abacus.config import config
-from abacus.graph import Locus, Read, get_graph_alignments_dict, get_satellite_counts_from_path, get_satellite_strings
+from abacus.graph import Locus, Read, get_graph_alignments, get_kmer_string, get_satellite_counts_from_path
 from abacus.locus import process_str_pattern
 
 
@@ -206,7 +208,8 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
             sequence=read_str,
             qualities=[30] * len(read_str),
             strand="+",
-            phase=0,
+            mod_5mc_probs="",
+            locus_id="locus1",
         ),
     ]
 
@@ -224,9 +227,10 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
         breaks=breaks,
     )
 
-    graph_aligments = get_graph_alignments_dict(reads, locus)
+    graph_aligments = get_graph_alignments(reads, locus)
     # TODO: Fix this error
-    path = graph_aligments[read_id].path
+    graph_aligment = next(a for a in graph_aligments if a.name == read_id)
+    path = graph_aligment.path
     satellite_counts = get_satellite_counts_from_path(locus=locus, path=path)
 
     assert satellite_counts == expected_satellite_counts
@@ -278,7 +282,8 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
             sequence=read_str,
             qualities=[30] * len(read_str),
             strand="+",
-            phase=0,
+            mod_5mc_probs="",
+            locus_id="locus1",
         ),
     ]
 
@@ -296,18 +301,92 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
         breaks=breaks,
     )
 
-    graph_aligments = get_graph_alignments_dict(reads=reads, locus=locus)
+    graph_aligments = get_graph_alignments(reads=reads, locus=locus)
+    graph_aligment = next(a for a in graph_aligments if a.name == read_id)
 
-    satellite_counts = get_satellite_counts_from_path(locus=locus, path=graph_aligments[read_id].path)
+    satellite_counts = get_satellite_counts_from_path(locus=locus, path=graph_aligment.path)
 
-    observed_kmer_string, expected_kmer_string = get_satellite_strings(
+    observed_kmer_string, expected_kmer_string = get_kmer_string(
         locus=locus,
         satellite_counts=satellite_counts,
-        synced_sequence=graph_aligments[read_id].str_sequence_synced,
+        synced_list=graph_aligment.str_sequence_synced,
     )
 
     assert expected_kmer_string == expected_expected_kmer_string
     assert observed_kmer_string == expected_observed_kmer_string
+
+
+def create_aligned_segment(query_name: str, query_sequence: str, mm_tag: str, ml_tag: list[int]) -> pysam.AlignedSegment:
+    a = pysam.AlignedSegment()
+    a.query_name = query_name
+    a.query_sequence = query_sequence
+
+    # Methylation tags
+    a.set_tag("MM", mm_tag)
+    a.set_tag("ML", array.array("B", ml_tag))
+    return a
+
+
+@pytest.mark.parametrize(
+    ("query_name", "query_sequence", "mm_tag", "ml_tag", "expected_methylation"),
+    [
+        pytest.param(
+            "read1",
+            "AAAA",
+            "C+m?,;",
+            [],
+            [0.0, 0.0, 0.0, 0.0],
+            id="No methylation",
+        ),
+        pytest.param(
+            "read2",
+            "C",
+            "C+m?,0;",
+            [255],
+            [1.0],
+            id="With one methylated C",
+        ),
+        pytest.param(
+            "read2",
+            "ACTTTTTCCAACCCTAACTCGTTCAGTTGCGTATTGCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCAACCCCCACCCTCACCCTCACCCTCACCCTCACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCCTAACCCCTAACCCCTAACCCTAACCCTAACCCCTAACCCCTAACCCCTAACCCCTAACCCTAACCCTAACCCTAACCCAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTCTAACCCTCTAACCCTAACCCTAACCCTCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTACCCTAACCCTACCCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTAACCCTACCCTAACCCCAACCCCAACCCCAACCCCAACCCCAACCCCAACCCTAACCCTAACCCTAACCCTAACCCTACCCTAACCCTAACCCTAACCCTAA",
+            "C+h?,7,1;C+m?,7,1;",
+            [32, 6, 56, 11],
+            [0],
+            id="Test2",
+        ),
+        pytest.param(
+            "read3",
+            "ATCG",
+            "C+m,0;",
+            [128],
+            [0.5, 0.0, 0.0, 0.0],
+            id="With partial methylation",
+        ),
+        pytest.param(
+            "read4",
+            "ATCGATCG",
+            "C+m,0,4;",
+            [128, 64],
+            [0.5, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0],
+            id="With multiple methylation",
+        ),
+    ],
+)
+def test_methylation_from_alignment(
+    query_name,
+    query_sequence,
+    mm_tag,
+    ml_tag,
+    expected_methylation,
+):
+    alignment = create_aligned_segment(
+        query_name=query_name,
+        query_sequence=query_sequence,
+        mm_tag=mm_tag,
+        ml_tag=ml_tag,
+    )
+    read = Read.from_aligment(alignment)
+    assert read.mod_5mc_probs == expected_methylation
 
 
 # TODO: Fix these test cases
