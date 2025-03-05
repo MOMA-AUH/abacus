@@ -51,8 +51,8 @@ def load_loci_from_json(json_path: Path, ref: Fasta) -> list[Locus]:
         satellites, breaks = process_str_pattern(item["LocusStructure"])
 
         # Get region around STR
-        left_anchor = str(ref[chrom][(start - config.ANCHOR_LEN) : start])
-        right_anchor = str(ref[chrom][end : (end + config.ANCHOR_LEN)])
+        left_anchor = str(ref[chrom][(start - config.anchor_len) : start])
+        right_anchor = str(ref[chrom][end : (end + config.anchor_len)])
 
         loci.append(
             Locus(
