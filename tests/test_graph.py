@@ -195,8 +195,8 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
     random.seed(42)
 
     # Make random left and right anchors
-    left_anchor = "".join(random.choices(alphabet, k=config.ANCHOR_LEN))
-    right_anchor = "".join(random.choices(alphabet, k=config.ANCHOR_LEN))
+    left_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
+    right_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
 
     read_str = f"{left_anchor}{read}{right_anchor}"
 
@@ -269,8 +269,8 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
     random.seed(42)
 
     # Make random left and right anchors
-    left_anchor = "".join(random.choices(alphabet, k=config.ANCHOR_LEN))
-    right_anchor = "".join(random.choices(alphabet, k=config.ANCHOR_LEN))
+    left_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
+    right_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
 
     read_str = f"{left_anchor}{read}{right_anchor}"
 
