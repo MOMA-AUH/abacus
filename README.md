@@ -84,3 +84,10 @@ In `str_catalouges/moma_repeat_variants_catalogue_240521.json` you can find a co
     }
 ]
 ```
+
+### Notes on FGF14
+5' flanking variant included in FGF14_alt in the STR catalogue. 
+https://www.nature.com/articles/s41588-024-01808-5/figures/1
+
+A lot of variation around the FGF14 locus.
+https://www.nature.com/articles/s41467-024-52148-1
