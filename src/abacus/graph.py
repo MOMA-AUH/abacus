@@ -307,7 +307,7 @@ class GraphAlignment(Read):
         downstream_seq = "".join(locus_sequence_synced[downstream_start:downstream_end])
         self.downstream_error_rate = compute_error_rate(downstream_ref, downstream_seq)
 
-    def get_error_flags(self) -> str:
+    def get_error_flags(self) -> list[str]:
         errors = []
 
         # TODO: Rename these - and check thier use!
@@ -335,7 +335,7 @@ class GraphAlignment(Read):
         if self.alignment_type == AlignmentType.NO_ANCHORS:
             errors.append("missing_anchors")
 
-        return ",".join(errors)
+        return errors
 
     def to_dict(self) -> dict:
         return {
@@ -363,7 +363,7 @@ class ReadCall:
 
     # Grouped read call
     em_haplotype: str = "none"
-    outlier_reason: str = ""
+    outlier_reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return self.alignment.to_dict() | {
@@ -373,12 +373,12 @@ class ReadCall:
             "ref_kmer_string": self.ref_kmer_string,
             "mod_5mc_kmer_string": self.mod_5mc_kmer_string,
             "em_haplotype": self.em_haplotype,
-            "outlier_reason": self.outlier_reason,
+            "outlier_reasons": ";".join(self.outlier_reasons),
         }
 
-    def add_outlier_reason(self, reason: str) -> ReadCall:
+    def add_outlier_reasons(self, reasons: list[str]) -> ReadCall:
         self.em_haplotype = "outlier"
-        self.outlier_reason = reason
+        self.outlier_reasons.extend(reasons)
 
         return self
 

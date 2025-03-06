@@ -325,7 +325,7 @@ for (i in seq_len(nrow(regions))) {
   cat("\n\n")
 
   cat("\n\n")
-  cat("A visual representation illustrating the distribution of individual $k$-mers as colored beads along a linear sequence, with each sequence representing individual reads. The reads are grouped into haplotypes called by an unsupervised clustering algorithm (EM). Additionally, a separate group is designated for outlier reads. A read can be classified as an outlier either based on an unusual $k$-mer count or nucleotide sequence. The outlier detection is done using DBSCAN. A similar plot can be found under the *Phase* tab, where the grouping is based on the phasing of the alignment. A heatmap showing the concordance between the two groupings can be seen under *Concordance*.")
+  cat("A visual representation illustrating the distribution of individual $k$-mers as colored *beads* along a linear sequence, with each horizontal sequence representing individual reads. The reads are grouped into haplotypes called by an unsupervised clustering algorithm (EM). Additionally, a separate group is designated for outlier reads. A read can be classified as an outlier either based on an unusual $k$-mer count or nucleotide sequence. There are 3 versions of the plot where the beads are colored by the observed $k$-mer, the reference $k$-mer, and the methylation probability of the $k$-mer. Spanning and flanking reads are shown as black and grey lines, respectively.")
   cat("\n\n")
 
   # Wrangle STR data for abacus plot
@@ -671,15 +671,15 @@ for (i in seq_len(nrow(regions))) {
 
   reads_region_df %>%
     filter(em_haplotype == "outlier") %>%
-    # Change "," to newline in outlier_reason
+    # Change "," to newline in outlier_reasons
     mutate(
-      outlier_reason = str_replace_all(outlier_reason, ",", "\n")
+      outlier_reasons = str_replace_all(outlier_reasons, ";", "\n")
     ) %>%
     select(
       "Read ID" = read_id,
       "Query Name" = query_name,
       "Alignment Type" = alignment_type,
-      "Outlier Reason" = outlier_reason,
+      "Outlier Reasons" = outlier_reasons,
       "Median STR Qual" = median_str_qual,
       "Kmer Count" = kmer_count_str
     ) %>%
@@ -780,6 +780,77 @@ for (i in seq_len(nrow(regions))) {
     cat("There is no consensus sequence for this locus.")
   }
 
+  generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
+    # Bin count to min max 100 bins
+    NBINS <- min(100, max(counts_df$count))
+    BIN_SZ <- ceiling(max(counts_df$count) / NBINS)
+
+    counts_df <- counts_df %>%
+      mutate(
+        count = count %/% BIN_SZ * BIN_SZ
+      ) %>%
+      group_by(alignment_type_txt, count) %>%
+      summarise(n = sum(n), .groups = "drop")
+
+    length_plot <- ggplot(counts_df) +
+      # Add histogram of STR length
+      geom_col(
+        aes(
+          x = count,
+          y = n,
+          fill = alignment_type_txt
+        ),
+        width = BIN_SZ
+      ) +
+      scale_x_continuous(breaks = function(x) unique(round(sort(pretty(x))))) +
+      scale_y_continuous(breaks = function(x) unique(round(sort(pretty(x))))) +
+      scale_fill_manual(values = c("Spanning" = "grey30", "Flanking" = "grey70"))
+
+    # Add distributions
+    if (nrow(density_df) > 0) {
+      # Fix colors
+      em_haplotype_colors <- brewer.pal(3, "Set1")
+      names(em_haplotype_colors) <- c("hom", "h1", "h2")
+      # Fix line type
+      em_haplotype_linetype <- c("hom" = "dashed", "h1" = "solid", "h2" = "solid")
+
+      # Scale density to max count
+      if (nrow(density_df) > 0) {
+        density_df <- density_df %>%
+          group_by(em_haplotype) %>%
+          mutate(
+            d = d / max(d) * max(counts_df$n)
+          ) %>%
+          ungroup()
+      }
+
+      length_plot <- length_plot +
+        geom_line(
+          data = density_df,
+          aes(x = x, y = d, col = em_haplotype, linetype = em_haplotype),
+          linewidth = 0.5
+        ) +
+        scale_color_manual(values = em_haplotype_colors) +
+        scale_linetype_manual(values = em_haplotype_linetype, guide = "none")
+    }
+
+    # Add title, labels and legend
+    length_plot <- length_plot +
+      # Add title and labels
+      labs(
+        title = paste("Satellite:", satellite),
+        x = "STR length",
+        y = "Count"
+      ) +
+      # Name the legend
+      guides(
+        fill = guide_legend(title = "Alignment type"),
+        col = guide_legend(title = "Haplotype")
+      )
+
+    return(length_plot)
+  }
+
   cat("\n\n")
   cat("### Histogram plots {.tabset .tabset-pills}")
   cat("\n\n")
@@ -790,67 +861,7 @@ for (i in seq_len(nrow(regions))) {
     cat("There are no haplotyped reads for this locus.")
   } else {
     # Plot count
-    generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
-      # Bin count to min max 100 bins
-      NBINS <- min(100, max(counts_df$count))
-      BIN_SZ <- ceiling(max(counts_df$count) / NBINS)
 
-      counts_df <- counts_df %>%
-        mutate(
-          count = count %/% BIN_SZ * BIN_SZ
-        ) %>%
-        group_by(alignment_type_txt, count) %>%
-        summarise(n = sum(n), .groups = "drop")
-
-      length_plot <- ggplot(counts_df) +
-        # Add histogram of STR length
-        geom_col(
-          aes(
-            x = count,
-            y = n,
-            fill = alignment_type_txt
-          ),
-          width = BIN_SZ
-        ) +
-        labs(
-          title = paste0("Satellite: ", satellite),
-          x = "STR length",
-          y = "Count"
-        ) +
-        scale_x_continuous(breaks = function(x) unique(round(sort(pretty(x))))) +
-        scale_y_continuous(breaks = function(x) unique(round(sort(pretty(x))))) +
-        scale_fill_manual(values = c("Spanning" = "grey30", "Flanking" = "grey70"))
-
-      # Add distributions
-      if (nrow(density_df) > 0) {
-        # Fix colors
-        em_haplotype_colors <- brewer.pal(3, "Set1")
-        names(em_haplotype_colors) <- c("hom", "h1", "h2")
-        # Fix line type
-        em_haplotype_linetype <- c("hom" = "dashed", "h1" = "solid", "h2" = "solid")
-
-        # Scale density to max count
-        if (nrow(density_df) > 0) {
-          density_df <- density_df %>%
-            group_by(em_haplotype) %>%
-            mutate(
-              d = d / max(d) * max(counts_df$n)
-            ) %>%
-            ungroup()
-        }
-
-        length_plot <- length_plot +
-          geom_line(
-            data = density_df,
-            aes(x = x, y = d, col = em_haplotype, linetype = em_haplotype),
-            linewidth = 0.5
-          ) +
-          scale_color_manual(values = em_haplotype_colors) +
-          scale_linetype_manual(values = em_haplotype_linetype, guide = "none")
-      }
-
-      return(length_plot)
-    }
 
     # Get parameters
     em_het_par <- par_summary_region_df %>%
@@ -907,8 +918,11 @@ for (i in seq_len(nrow(regions))) {
       # Get satellite
       satellite <- satellites[j]
 
-      # Filter data
+      cat("\n\n")
+      cat("#### Satellite", j, "{.tabset .tabset-pills}")
+      cat("\n\n")
 
+      # Filter data
       counts_index_df <- length_df %>%
         filter(
           satellite_idx == !!j
@@ -922,8 +936,9 @@ for (i in seq_len(nrow(regions))) {
         filter(satellite_idx == !!j)
 
       cat("\n\n")
-      cat("#### Grouped")
+      cat("##### Grouped")
       cat("\n\n")
+
       length_plot_df <- counts_index_df %>%
         filter(em_haplotype != "outlier")
       if (nrow(length_plot_df) > 0) {
@@ -939,8 +954,9 @@ for (i in seq_len(nrow(regions))) {
       }
 
       cat("\n\n")
-      cat("#### Outliers")
+      cat("##### Outliers")
       cat("\n\n")
+
       length_plot_df <- counts_index_df %>%
         filter(em_haplotype == "outlier")
 

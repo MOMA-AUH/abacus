@@ -201,11 +201,10 @@ def filter_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[
     good_read_calls = []
     for rc in read_calls:
         # Add to outlier list
+        # TODO: Move get_error_flags functionality to this function, so filtering can be done in one place
         outlier_reason_str = rc.alignment.get_error_flags()
         if outlier_reason_str:
-            rc.em_haplotype = "outlier"
-            rc.outlier_reason = outlier_reason_str
-            outlier_read_calls.append(rc)
+            outlier_read_calls.append(rc.add_outlier_reasons(outlier_reason_str))
             continue
 
         # If not an outlier, add to good list

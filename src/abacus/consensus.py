@@ -21,7 +21,7 @@ class ConsensusCall(ReadCall):
             locus=grouped_read_call.locus,
             alignment=grouped_read_call.alignment,
             em_haplotype=grouped_read_call.em_haplotype,
-            outlier_reason=grouped_read_call.outlier_reason,
+            outlier_reasons=grouped_read_call.outlier_reasons,
             satellite_count=grouped_read_call.satellite_count,
             kmer_count_str=grouped_read_call.kmer_count_str,
             obs_kmer_string=grouped_read_call.obs_kmer_string,
