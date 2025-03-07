@@ -10,8 +10,9 @@ class Config:
     # Graph parameters
     anchor_len: int = 500
     min_anchor_overlap: int = 200
-    min_str_read_qual: int = 20
+    min_str_read_qual: int = 17
     max_trim: int = 50
+    error_rate_threshold: float = 0.2
 
 
 config = Config()

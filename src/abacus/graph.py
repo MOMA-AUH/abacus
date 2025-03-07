@@ -312,13 +312,13 @@ class GraphAlignment(Read):
 
         # TODO: Rename these - and check thier use!
         # Check error rates
-        if self.str_error_rate > 0.2:
+        if self.str_error_rate > config.error_rate_threshold:
             errors.append("high_str_error_rate")
 
-        if self.str_window_base_rate > 0.2:
+        if self.str_window_base_rate > config.error_rate_threshold:
             errors.append("has_window_with_high_base_error_rate")
 
-        if self.str_window_indel_rate > 0.2:
+        if self.str_window_indel_rate > config.error_rate_threshold:
             errors.append("has_window_with_high_indel_error_rate")
 
         # TODO: Change to use config. Find appropriate cutoffs

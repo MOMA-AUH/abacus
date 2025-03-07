@@ -141,6 +141,14 @@ def abacus(
             rich_help_panel="Configuration Options",
         ),
     ] = config.max_trim,
+    error_rate_threshold: Annotated[
+        float,
+        typer.Option(
+            "--error-rate-threshold",
+            help="Threshold for error rate",
+            rich_help_panel="Configuration Options",
+        ),
+    ] = config.error_rate_threshold,
 ) -> None:
     # TODO: Update logs with welcome, and loci messages
     # Setup logging to file
@@ -151,6 +159,7 @@ def abacus(
     config.min_anchor_overlap = min_anchor_overlap
     config.min_str_read_qual = min_qual
     config.max_trim = max_trim
+    config.error_rate_threshold = error_rate_threshold
 
     # Welcome message
     logger.info("Running Abacus")
