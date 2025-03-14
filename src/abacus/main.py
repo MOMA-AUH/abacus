@@ -6,10 +6,9 @@ from typing import Annotated
 
 import pandas as pd
 import typer
-from pyfaidx import Fasta
 
 from abacus.config import config
-from abacus.consensus import ConsensusCall, create_consensus_calls
+from abacus.consensus import ConsensusCall, create_consensus_calls_per_haplotype
 from abacus.graph import (
     FilteredRead,
     ReadCall,
@@ -20,6 +19,7 @@ from abacus.haplotyping import filter_read_calls, group_read_calls
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 from abacus.preprocess import get_reads_in_locus
+from abacus.str_vcf import write_vcf
 
 # Set up the CLI
 app = typer.Typer(pretty_exceptions_show_locals=False)
@@ -81,6 +81,19 @@ def abacus(
             "--report",
             "-o",
             help="Path to the output HTML report",
+            exists=False,
+            file_okay=True,
+            dir_okay=False,
+            writable=True,
+            resolve_path=True,
+        ),
+    ],
+    vcf: Annotated[
+        Path,
+        typer.Option(
+            "--vcf",
+            "-v",
+            help="Path to the output VCF file",
             exists=False,
             file_okay=True,
             dir_okay=False,
@@ -164,11 +177,8 @@ def abacus(
     # Welcome message
     logger.info("Running Abacus")
 
-    # Load reference FASTA
-    ref_fasta = Fasta(ref)
-
     # Load loci data from JSON
-    loci = load_loci_from_json(str_catalouge, ref_fasta)
+    loci = load_loci_from_json(str_catalouge, ref)
 
     # Check if loci subset is valid
     if loci_subset and set(loci_subset).isdisjoint([locus.id for locus in loci]):
@@ -219,9 +229,10 @@ def abacus(
         )
 
         # Consensus haplotype
+        # TODO: Use external tool for assembly
         # TODO: Use flanking for consensus
         # TODO: Use ONLY flanking for consensus
-        consensus_sequences = create_consensus_calls(grouped_read_calls)
+        consensus_sequences = create_consensus_calls_per_haplotype(grouped_read_calls)
         all_consensus_calls.extend(consensus_sequences)
 
         # Combine results
@@ -282,6 +293,14 @@ def abacus(
         pd.concat(all_summaries_df).to_csv(f, index=False)
     with Path.open(par_summary_csv, "w") as f:
         pd.concat(all_par_summaries_df).to_csv(f, index=False)
+
+    # Write VCF output
+    write_vcf(
+        vcf=vcf,
+        consensus_calls=all_consensus_calls,
+        reference=ref,
+        sample_id=sample_id,
+    )
 
     # Render report
     print("Render report...")

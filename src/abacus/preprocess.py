@@ -10,7 +10,7 @@ from abacus.read import Read
 def get_reads_in_locus(bam: Path, locus: Locus) -> list[Read]:
     # Get alignments overlapping the region
     with pysam.AlignmentFile(str(bam), "rb") as bamfile:
-        alignments = list(bamfile.fetch(locus.chrom, locus.start, locus.end))
+        alignments = list(bamfile.fetch(locus.location.chrom, locus.location.start, locus.location.end))
 
         # Return empty list if no alignments found
         if not alignments:

@@ -7,26 +7,37 @@ from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls, graph_al
 
 @dataclass
 class ConsensusCall(ReadCall):
+    spanning_reads: int = 0
+    flanking_reads: int = 0
+
+    # TODO: When assembly is used this shpuld be a list (maybe one for left and right flanking, if not spanning available)
     consensus_string: str = field(init=False)
+    # TODO: Add EM "count", i.e. estimated means from EM algorithm
 
     def __post_init__(self: "ConsensusCall") -> None:
         self.consensus_string = contract_kmer_string(self.obs_kmer_string)
 
     def to_dict(self) -> dict:
-        return super().to_dict() | {"consensus_strings": self.consensus_string}
+        return super().to_dict() | {
+            "consensus_strings": self.consensus_string,
+            "spanning_reads": self.spanning_reads,
+            "flanking_reads": self.flanking_reads,
+        }
 
     @classmethod
-    def from_grouped_read_call(cls, grouped_read_call: ReadCall) -> "ConsensusCall":
+    def from_read_call(cls, read_call: ReadCall, spanning_reads: int, flanking_reads: int) -> "ConsensusCall":
         return cls(
-            locus=grouped_read_call.locus,
-            alignment=grouped_read_call.alignment,
-            em_haplotype=grouped_read_call.em_haplotype,
-            outlier_reasons=grouped_read_call.outlier_reasons,
-            satellite_count=grouped_read_call.satellite_count,
-            kmer_count_str=grouped_read_call.kmer_count_str,
-            obs_kmer_string=grouped_read_call.obs_kmer_string,
-            ref_kmer_string=grouped_read_call.ref_kmer_string,
-            mod_5mc_kmer_string=grouped_read_call.mod_5mc_kmer_string,
+            locus=read_call.locus,
+            alignment=read_call.alignment,
+            em_haplotype=read_call.em_haplotype,
+            outlier_reasons=read_call.outlier_reasons,
+            satellite_count=read_call.satellite_count,
+            kmer_count_str=read_call.kmer_count_str,
+            obs_kmer_string=read_call.obs_kmer_string,
+            ref_kmer_string=read_call.ref_kmer_string,
+            mod_5mc_kmer_string=read_call.mod_5mc_kmer_string,
+            spanning_reads=spanning_reads,
+            flanking_reads=flanking_reads,
         )
 
 
@@ -55,18 +66,29 @@ def contract_kmer_string(kmer_string: str) -> str:
     return contracted_kmer
 
 
-def create_consensus_calls(grouped_read_calls: list[ReadCall]) -> list[ConsensusCall]:
-    locus = grouped_read_calls[0].alignment.locus
+def create_consensus_calls_per_haplotype(read_calls: list[ReadCall]) -> list[ConsensusCall]:
+    locus = read_calls[0].alignment.locus
 
     # Group sequences by haplotype
     sequences: dict[str, list[str]] = {}
-    for read_call in grouped_read_calls:
+    spanning_count: dict[str, int] = {}
+    flanking_count: dict[str, int] = {}
+    for read_call in read_calls:
+        # Get haplotype
+        haplotype = read_call.em_haplotype
+
+        # Initialize counts
+        if haplotype not in spanning_count:
+            spanning_count[haplotype] = 0
+        if haplotype not in flanking_count:
+            flanking_count[haplotype] = 0
+
         # Skip if flanking
         if read_call.alignment.alignment_type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING]:
+            flanking_count[haplotype] += 1
             continue
 
-        # Get sequence and haplotype
-        haplotype = read_call.em_haplotype
+        # Get sequence
         s = read_call.obs_kmer_string
 
         # Add sequence to haplotype
@@ -126,4 +148,11 @@ def create_consensus_calls(grouped_read_calls: list[ReadCall]) -> list[Consensus
         read_call.em_haplotype = read_call.alignment.name
 
     # Create consensus calls
-    return [ConsensusCall.from_grouped_read_call(x) for x in consensus_read_calls]
+    return [
+        ConsensusCall.from_read_call(
+            read_call=consensus_read_call,
+            spanning_reads=spanning_count[consensus_read_call.em_haplotype],
+            flanking_reads=flanking_count[consensus_read_call.em_haplotype],
+        )
+        for consensus_read_call in consensus_read_calls
+    ]
