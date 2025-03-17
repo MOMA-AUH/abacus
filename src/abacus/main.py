@@ -8,7 +8,7 @@ import pandas as pd
 import typer
 
 from abacus.config import config
-from abacus.consensus import ConsensusCall, create_consensus_calls_per_haplotype
+from abacus.consensus import ConsensusCall, create_consensus_calls
 from abacus.graph import (
     FilteredRead,
     ReadCall,
@@ -232,8 +232,11 @@ def abacus(
         # TODO: Use external tool for assembly
         # TODO: Use flanking for consensus
         # TODO: Use ONLY flanking for consensus
-        consensus_sequences = create_consensus_calls_per_haplotype(grouped_read_calls)
-        all_consensus_calls.extend(consensus_sequences)
+        unique_haplotypes = {r.em_haplotype for r in grouped_read_calls}
+        for haplotype in unique_haplotypes:
+            haplotyped_read_calls = [r for r in grouped_read_calls if r.em_haplotype == haplotype]
+            consensus_sequences = create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype)
+            all_consensus_calls.extend(consensus_sequences)
 
         # Combine results
         grouped_read_calls.extend(filtered_read_calls)
