@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -13,13 +14,19 @@ from abacus.graph import (
     FilteredRead,
     ReadCall,
     get_read_calls,
-    graph_align_reads_to_locus,
 )
+from abacus.group_summary import calculate_final_group_summaries
 from abacus.haplotyping import filter_read_calls, group_read_calls
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 from abacus.preprocess import get_reads_in_locus
 from abacus.str_vcf import write_vcf
+
+
+class Sex(StrEnum):
+    XX = "XX"
+    XY = "XY"
+
 
 # Set up the CLI
 app = typer.Typer(pretty_exceptions_show_locals=False)
@@ -121,6 +128,14 @@ def abacus(
             help="Subset of loci to process. If not provided, all loci will be processed. Use multiple times to specify multiple loci.",
         ),
     ] = None,
+    sex: Annotated[
+        Sex,
+        typer.Option(
+            "--sex",
+            help="Sex of the sample.",
+            case_sensitive=False,
+        ),
+    ] = Sex.XX,
     # Configuration
     anchor_length: Annotated[
         int,
@@ -185,7 +200,7 @@ def abacus(
         logger.error("No loci in subset found in STR catalouge")
         raise typer.Exit(code=1)
 
-    # Initialize output dataframes
+    # Initialize output data
     all_read_calls: list[ReadCall] = []
     all_filtered_reads: list[FilteredRead] = []
     all_consensus_calls: list[ConsensusCall] = []
@@ -211,24 +226,33 @@ def abacus(
         reads = get_reads_in_locus(bam, locus)
 
         # Call STR in individual reads
-        alignments, unmapped_reads = graph_align_reads_to_locus(reads, locus)
-
-        # Handle spanning reads
-        read_calls = get_read_calls(alignments, locus)
+        read_calls, unmapped_reads = get_read_calls(reads, locus)
 
         # Filter read calls
+        # TODO: Go through filters and clean up unused and unnecessary filters
         filtered_read_calls, good_read_calls = filter_read_calls(read_calls=read_calls)
 
-        # TODO: Change model se that means can only be integers
-        # TODO: Use optimize for homozgyous model
+        # TODO: Use optimize for homozygous model
         # TODO: Min N (eg 2) reads should be required to call a haplotype - if less, then call as homozygous
-        # Run EM algorithm
-        haplotyping_df, test_summary_res_df, par_summary_df, grouped_read_calls = group_read_calls(
+
+        # Get ploidy
+        if locus.location.chrom == "chrY":
+            ploidy = sex.value.count("Y")
+        elif locus.location.chrom == "chrX":
+            ploidy = sex.value.count("X")
+        else:
+            ploidy = 2
+
+        # Group read calls
+        grouped_read_calls, test_summary_res_df, par_summary_df = group_read_calls(
             read_calls=good_read_calls,
-            kmer_dim=len(locus.satellites),
+            ploidy=ploidy,
         )
 
-        # Consensus haplotype
+        # Calculate final group summaries
+        haplotyping_df = calculate_final_group_summaries(grouped_read_calls)
+
+        # Create consensus for each haplotype
         # TODO: Use external tool for assembly
         # TODO: Use flanking for consensus
         # TODO: Use ONLY flanking for consensus

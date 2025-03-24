@@ -16,14 +16,14 @@ def safe_log(x: np.ndarray | np.float64) -> np.ndarray | np.float64:
     return np.log(np.maximum(x, 1e-100))
 
 
-def discrete_multivariate_normal_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray) -> np.ndarray:
+def discrete_multivariate_normal_logpdf_old(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray) -> np.ndarray:
     # Handle empty arrays
     if not x.size:
         return np.array([])
 
-    # Set var to minimum 1e-6
-    var = np.maximum(mean * unit_var, 1e-5)
-    sd = np.sqrt(var)
+    # Cap sd at minimum
+    sd = np.sqrt(mean * unit_var)
+    sd = np.maximum(sd, config.min_sd)
 
     # Initialize logpdf with 0 (log(1))
     logpdf = np.zeros(x.shape[0])
@@ -52,6 +52,38 @@ def discrete_multivariate_normal_logpdf(x: np.ndarray, mean: np.ndarray, unit_va
 
         # Add to logpdf
         logpdf += logpdf_i - norm_const
+
+    return logpdf
+
+
+def discrete_multivariate_normal_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray) -> np.ndarray:
+    # Handle empty arrays
+    if not x.size:
+        return np.array([])
+
+    # Set var to minimum 1e-6
+    sd = np.sqrt(mean * unit_var)
+    sd = np.maximum(sd, config.min_sd)
+
+    # Initialize logpdf with 0 (log(1))
+    logpdf = np.zeros(x.shape[0])
+
+    # Loop through dimensions and calculate logpdf
+    for i in range(mean.shape[0]):
+        # Extract mean and sd for the current dimension
+        x_i = np.round(x[:, i])
+        m = mean[i]
+        s = sd[i]
+
+        # Get logpdf as "mass" between integers
+        cdf_lower = norm.cdf(x_i - 0.5, loc=m, scale=s)
+        cdf_upper = norm.cdf(x_i + 0.5, loc=m, scale=s)
+
+        # Find diff in log space
+        logpdf_i = np.log(np.maximum(cdf_upper - cdf_lower, 1e-100))
+
+        # Add to logpdf
+        logpdf += logpdf_i
 
     return logpdf
 
@@ -213,7 +245,10 @@ def filter_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[
     return outlier_read_calls, good_read_calls
 
 
-def group_read_calls(read_calls: list[ReadCall], kmer_dim: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[ReadCall]]:
+def group_read_calls(read_calls: list[ReadCall], ploidy: int) -> tuple[list[ReadCall], pd.DataFrame, pd.DataFrame]:
+    # Get kmer dimension from first read call
+    kmer_dim = len(read_calls[0].satellite_count)
+
     if not read_calls:
         return create_empty_results(kmer_dim)
 
@@ -226,23 +261,69 @@ def group_read_calls(read_calls: list[ReadCall], kmer_dim: int) -> tuple[pd.Data
     spanning_counts = get_counts(spanning_reads)
     flanking_counts = get_counts(flanking_reads)
 
+    # TODO: Add flanking_counts to homzygous estimation
+    hom_mean, hom_unit_var = estimate_homzygous_parameters(spanning_counts)
+
+    # Estimate confidence intervals for heterozygous means
+    hom_conf_mean_lower, hom_conf_mean_upper = estimate_confidence_intervals_homozygous(
+        spanning_counts,
+        flanking_counts,
+        is_left_flank,
+        hom_mean,
+        hom_unit_var,
+    )
+
+    if ploidy == 1:
+        # Assign homzygous labels to reads
+        grouped_read_calls = []
+        grouped_read_calls.extend([read.add_em_haplotype("hom") for read in spanning_reads])
+        grouped_read_calls.extend([read.add_em_haplotype("hom") for read in flanking_reads])
+
+        # For ploidy=1, we'll create a summary with NaN values since we don't perform heterozygosity testing
+        test_summary_df = summarize_test_statistics(
+            log_lik_hetero=np.float64(np.nan),
+            log_lik_hom=np.float64(np.nan),
+            n_par_hetero=-1,
+            n_par_hom=-1,
+            test_statistic=np.float64(0),
+            df=-1,
+            p_value=np.float64(1),
+            is_significant=False,
+        )
+
+        # Summarize parameter estimates
+        parameter_summary_df = summarize_parameter_estimates(
+            # Fill heterozygous parameters with NaN
+            het_mean_h1=np.full_like(hom_mean, np.nan),
+            het_mean_h1_conf_lower=np.full_like(hom_mean, np.nan),
+            het_mean_h1_conf_upper=np.full_like(hom_mean, np.nan),
+            het_mean_h2=np.full_like(hom_mean, np.nan),
+            het_mean_h2_conf_lower=np.full_like(hom_mean, np.nan),
+            het_mean_h2_conf_upper=np.full_like(hom_mean, np.nan),
+            het_unit_var=np.full_like(hom_mean, np.nan),
+            pi=np.float64(np.nan),
+            # Add homozygous parameters
+            hom_mean=hom_mean,
+            hom_mean_conf_lower=hom_conf_mean_lower,
+            hom_mean_conf_upper=hom_conf_mean_upper,
+            hom_unit_var=hom_unit_var,
+        )
+
+        return read_calls, test_summary_df, parameter_summary_df
+
     # Estimate parameters for heterozygous and homozygous models
     het_mean_h1, het_mean_h2, unit_var, pi = estimate_heterozygous_parameters(spanning_reads, flanking_reads)
 
     # Estimate confidence intervals for heterozygous means
-    if False:
-        het_conf_mean_h1_lower, het_conf_mean_h1_upper, het_conf_mean_h2_lower, het_conf_mean_h2_upper = estimate_confidence_intervals(
-            spanning_counts,
-            flanking_counts,
-            is_left_flank,
-            het_mean_h1,
-            het_mean_h2,
-            unit_var,
-            pi,
-        )
-
-    # TODO: Add flanking_counts to homzygous estimation
-    hom_mean, hom_unit_var = estimate_homzygous_parameters(spanning_counts)
+    het_conf_mean_h1_lower, het_conf_mean_h1_upper, het_conf_mean_h2_lower, het_conf_mean_h2_upper = estimate_confidence_intervals(
+        spanning_counts,
+        flanking_counts,
+        is_left_flank,
+        het_mean_h1,
+        het_mean_h2,
+        unit_var,
+        pi,
+    )
 
     # Test for heterozygosity
     log_lik_hom, log_lik_hetero, n_par_hom, n_par_hetero, test_statistic, df, p_value, is_significant = test_heterozygosity(
@@ -272,10 +353,16 @@ def group_read_calls(read_calls: list[ReadCall], kmer_dim: int) -> tuple[pd.Data
     # Summarize parameter estimates
     parameter_summary_df = summarize_parameter_estimates(
         het_mean_h1=het_mean_h1,
+        het_mean_h1_conf_lower=het_conf_mean_h1_lower,
+        het_mean_h1_conf_upper=het_conf_mean_h1_upper,
         het_mean_h2=het_mean_h2,
+        het_mean_h2_conf_lower=het_conf_mean_h2_lower,
+        het_mean_h2_conf_upper=het_conf_mean_h2_upper,
         het_unit_var=unit_var,
         pi=pi,
         hom_mean=hom_mean,
+        hom_mean_conf_lower=hom_conf_mean_lower,
+        hom_mean_conf_upper=hom_conf_mean_upper,
         hom_unit_var=hom_unit_var,
     )
 
@@ -295,24 +382,10 @@ def group_read_calls(read_calls: list[ReadCall], kmer_dim: int) -> tuple[pd.Data
     grouped_read_calls.extend([read.add_em_haplotype(label) for read, label in zip(spanning_reads, spanning_labels)])
     grouped_read_calls.extend([read.add_em_haplotype(label) for read, label in zip(flanking_reads, flanking_labels)])
 
-    haplotyping_res_df = calculate_final_group_summaries(spanning_counts, spanning_labels, kmer_dim)
-
-    return haplotyping_res_df, test_summary_df, parameter_summary_df, grouped_read_calls
+    return grouped_read_calls, test_summary_df, parameter_summary_df
 
 
-def create_empty_results(kmer_dim: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[ReadCall]]:
-    haplotyping_res_df = pd.DataFrame(
-        {
-            "em_haplotype": "none",
-            "mean": pd.NA,
-            "sd": pd.NA,
-            "median": pd.NA,
-            "iqr": pd.NA,
-            "n": pd.NA,
-            "idx": list(range(kmer_dim)),
-        },
-    )
-
+def create_empty_results(kmer_dim: int) -> tuple[list[ReadCall], pd.DataFrame, pd.DataFrame]:
     summary_res_df = pd.DataFrame(
         {
             "em_haplotype": "overall",
@@ -339,7 +412,7 @@ def create_empty_results(kmer_dim: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.
         },
     )
 
-    return haplotyping_res_df, summary_res_df, empty_params, []
+    return ([], summary_res_df, empty_params)
 
 
 def get_counts(read_calls: list[ReadCall]) -> np.ndarray:
@@ -487,7 +560,7 @@ def estimate_par(
 
     # Define bounds for optimization
     mean_bound = (0, None)
-    unit_var_bound = (1e-5, None)
+    unit_var_bound = (config.min_var, None)
     pi_bound = (1e-5, 1 - 1e-5)
 
     # Make sure initial estimates are within bounds
@@ -920,19 +993,12 @@ def estimate_confidence_intervals(
                 # Find upper bound
                 a = mean[i]
                 b = a
-                j = 0
-                print("----- par -----")
-                print(pi)
-                print(mean)
-                print(mean_h1)
-                print(mean_h2)
-                print(unit_var)
-                print(" Counts")
-                print(spanning_counts)
-                while objective(b, i) < 0:
+                conf_upper[i] = np.inf
+                for j in range(1, 20):
                     b = a + 2**j
-                    j += 1
-                conf_upper[i] = brentq(objective, a, b, args=(i,))
+                    if objective(b, i) > 0:
+                        conf_upper[i] = brentq(objective, a, b, args=(i,))
+                        break
 
         return conf_lower, conf_upper
 
@@ -940,6 +1006,78 @@ def estimate_confidence_intervals(
     conf_mean_h2_lower, conf_mean_h2_upper = find_confidence_interval(mean_h2, 1 - pi, False)
 
     return conf_mean_h1_lower, conf_mean_h1_upper, conf_mean_h2_lower, conf_mean_h2_upper
+
+
+def estimate_confidence_intervals_homozygous(
+    spanning_counts: np.ndarray,
+    flanking_counts: np.ndarray,
+    is_left_flank: list[bool],
+    mean: np.ndarray,
+    unit_var: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    # Handle empty arrays
+    if not spanning_counts.size and not flanking_counts.size:
+        return np.array([]), np.array([])
+
+    # Find where log likelihood ratio is equal to chi2(0.95, 1)
+    chi2_val = np.float64(chi2.ppf(0.95, 1))
+
+    def find_confidence_interval(mean: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        conf_lower = np.full(mean.shape, np.nan)
+        conf_upper = np.full(mean.shape, np.nan)
+
+        for i in range(mean.shape[0]):
+            # Define objective function
+            def objective(x: np.float64, i: int) -> np.float64:
+                # Alternative hypothesis
+                ll_alt = calculate_log_likelihood_homozygous(
+                    spanning_counts,
+                    flanking_counts,
+                    is_left_flank,
+                    mean,
+                    unit_var,
+                )
+                # Null hypothesis
+                mean_null = mean.copy()
+                mean_null[i] = x
+                ll_null = calculate_log_likelihood_homozygous(
+                    spanning_counts,
+                    flanking_counts,
+                    is_left_flank,
+                    mean_null,
+                    unit_var,
+                )
+                # Test statistic
+                q_val = -2 * (ll_null - ll_alt)
+
+                return q_val - chi2_val
+
+            # Find lower bound
+            if objective(np.float64(0), i) < 0:
+                conf_lower[i] = 0
+            else:
+                a = mean[i]
+                while objective(a, i) < 0:
+                    a = a / 2
+                b = mean[i]
+                conf_lower[i] = brentq(objective, a, b, args=(i,))
+
+            # Find upper bound
+            a = mean[i]
+            b = a
+            conf_upper[i] = np.inf
+            for j in range(1, 20):
+                b = a + 2**j
+                if objective(b, i) > 0:
+                    conf_upper[i] = brentq(objective, a, b, args=(i,))
+                    break
+
+        return conf_lower, conf_upper
+
+    # Calculate heterozygous confidence intervals
+    conf_mean_lower, conf_mean_upper = find_confidence_interval(mean)
+
+    return conf_mean_lower, conf_mean_upper
 
 
 def test_heterozygosity(
@@ -1033,43 +1171,49 @@ def summarize_test_statistics(
 
 def summarize_parameter_estimates(
     het_mean_h1: np.ndarray,
+    het_mean_h1_conf_lower: np.ndarray,
+    het_mean_h1_conf_upper: np.ndarray,
     het_mean_h2: np.ndarray,
+    het_mean_h2_conf_lower: np.ndarray,
+    het_mean_h2_conf_upper: np.ndarray,
     het_unit_var: np.ndarray,
     pi: np.float64,
     hom_mean: np.ndarray,
+    hom_mean_conf_lower: np.ndarray,
+    hom_mean_conf_upper: np.ndarray,
     hom_unit_var: np.ndarray,
 ) -> pd.DataFrame:
-    result_df_list = []
+    result_data = [
+        {
+            "em_haplotype": "h1",
+            "mean": het_mean_h1,
+            "mean_lower": het_mean_h1_conf_lower,
+            "mean_upper": het_mean_h1_conf_upper,
+            "unit_var": het_unit_var,
+            "pi": pi,
+            "idx": list(range(len(het_mean_h1))),
+        },
+        {
+            "em_haplotype": "h2",
+            "mean": het_mean_h2,
+            "mean_lower": het_mean_h2_conf_lower,
+            "mean_upper": het_mean_h2_conf_upper,
+            "unit_var": het_unit_var,
+            "pi": 1 - pi,
+            "idx": list(range(len(het_mean_h2))),
+        },
+        {
+            "em_haplotype": "hom",
+            "mean": hom_mean,
+            "mean_lower": hom_mean_conf_lower,
+            "mean_upper": hom_mean_conf_upper,
+            "unit_var": hom_unit_var,
+            "pi": 1,
+            "idx": list(range(len(hom_mean))),
+        },
+    ]
 
-    # Add heterozygous parameters
-    for h in ["h1", "h2"]:
-        mean_h = het_mean_h1 if h == "h1" else het_mean_h2
-        unit_var_h = het_unit_var
-        pi_h = pi if h == "h1" else 1 - pi
-
-        result_dict = {
-            "em_haplotype": h,
-            "mean": mean_h,
-            "unit_var": unit_var_h,
-            "pi": pi_h,
-            "idx": list(range(len(mean_h))),
-        }
-
-        result_df_list.append(pd.DataFrame(result_dict))
-
-    # Add homozygous parameters
-    result_dict = {
-        "em_haplotype": "hom",
-        "mean": hom_mean,
-        "unit_var": hom_unit_var,
-        "pi": 1,
-        "idx": list(range(len(hom_mean))),
-    }
-
-    result_df_list.append(pd.DataFrame(result_dict))
-
-    # Combine results
-    return pd.concat(result_df_list)
+    return pd.concat([pd.DataFrame(data) for data in result_data])
 
 
 def assign_labels(
@@ -1099,32 +1243,3 @@ def assign_labels(
         em_labels_spanning = np.full(len(spanning_reads), "hom")
         em_labels_flanking = np.full(len(flanking_reads), "hom")
     return em_labels_spanning, em_labels_flanking
-
-
-def calculate_final_group_summaries(counts: np.ndarray, em_labels: np.ndarray, kmer_dim: int) -> pd.DataFrame:
-    result_df_list = []
-    for h in ["h1", "h2", "hom"]:
-        h_idx = em_labels == h
-        good_data_h = counts[h_idx,]
-
-        if len(good_data_h) > 0:
-            mean_h = np.mean(good_data_h, axis=0)
-            sd_h = np.std(good_data_h, axis=0)
-            median_h = np.median(good_data_h, axis=0)
-            q1_h = np.percentile(good_data_h, 25, axis=0)
-            q3_h = np.percentile(good_data_h, 75, axis=0)
-            iqr_h = q3_h - q1_h
-
-            result_dict = {
-                "em_haplotype": h,
-                "mean": mean_h,
-                "sd": sd_h,
-                "median": median_h,
-                "iqr": iqr_h,
-                "n": len(good_data_h),
-                "idx": list(range(kmer_dim)),
-            }
-
-            result_df_list.append(pd.DataFrame(result_dict))
-
-    return pd.concat(result_df_list)
