@@ -910,11 +910,14 @@ def remap_flanking_alignments_to_locus(
     return remapped_alignments, filtered_alignments
 
 
-def get_read_calls(spanning_reads: list[GraphAlignment], locus: Locus) -> list[ReadCall]:
+def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], list[FilteredRead]]:
     # Initialize lists
     read_calls: list[ReadCall] = []
 
-    for aln in spanning_reads:
+    # Align reads to locus
+    alignments, unmapped_reads = graph_align_reads_to_locus(reads, locus)
+
+    for aln in alignments:
         # Count satellites from the mapping
         satellite_counts = get_satellite_counts_from_path(aln.path, locus)
 
@@ -948,4 +951,4 @@ def get_read_calls(spanning_reads: list[GraphAlignment], locus: Locus) -> list[R
             ),
         )
 
-    return read_calls
+    return read_calls, unmapped_reads
