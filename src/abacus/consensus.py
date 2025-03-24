@@ -1,9 +1,10 @@
+import random
+from collections import defaultdict
 from dataclasses import dataclass, field
 
-import Levenshtein
 from spoa import poa
 
-from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls, graph_align_reads_to_locus
+from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
 from abacus.locus import Locus
 
 
@@ -68,98 +69,6 @@ def contract_kmer_string(kmer_string: str) -> str:
     return contracted_kmer
 
 
-def create_consensus_calls_per_haplotype_old(read_calls: list[ReadCall]) -> list[ConsensusCall]:
-    locus = read_calls[0].alignment.locus
-
-    # Group sequences by haplotype
-    sequences: dict[str, list[str]] = {}
-    spanning_count: dict[str, int] = {}
-    flanking_count: dict[str, int] = {}
-    for read_call in read_calls:
-        # Get haplotype
-        haplotype = read_call.em_haplotype
-
-        # Initialize counts
-        if haplotype not in spanning_count:
-            spanning_count[haplotype] = 0
-        if haplotype not in flanking_count:
-            flanking_count[haplotype] = 0
-
-        # Skip if flanking
-        if read_call.alignment.alignment_type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING]:
-            flanking_count[haplotype] += 1
-            continue
-
-        # Get sequence
-        s = read_call.obs_kmer_string
-
-        # Add sequence to haplotype
-        if haplotype not in sequences:
-            sequences[haplotype] = []
-        sequences[haplotype].append(s)
-
-    # Get observed kmers
-    observed_kmers = {kmer for seqs in sequences.values() for seq in seqs for kmer in seq.split("-")}
-
-    # Get dictionaries to translate kmers <-> unique characters
-    kmer_to_uniqe_char = {kmer: chr(33 + i) for i, kmer in enumerate(observed_kmers)}
-    uniqe_char_to_kmer = {v: k for k, v in kmer_to_uniqe_char.items()}
-
-    # Translate kmer strings to unique character strings
-    translated_sequences: dict[str, list[str]] = {}
-    for haplotype, seqs in sequences.items():
-        translated_sequences[haplotype] = ["".join([kmer_to_uniqe_char[kmer] for kmer in seq.split("-")]) for seq in seqs]
-
-    # Use Levenshtein median to create unique character consensus sequences
-    consensus_unique_char_sequences = {}
-    for haplotype, seqs in translated_sequences.items():
-        consensus_unique_char_sequences[haplotype] = Levenshtein.median([s.encode() for s in seqs])
-
-    # Translate unique character sequences back to kmers
-    consensus_sequences = {}
-    for haplotype, consensus_sequence in consensus_unique_char_sequences.items():
-        consensus_sequences[haplotype] = "".join([uniqe_char_to_kmer[char] for char in consensus_sequence])
-
-    # Create reads for consensus sequences
-    consensus_reads = []
-    for haplotype, consensus_sequence in consensus_sequences.items():
-        full_sequence = locus.left_anchor + consensus_sequence + locus.right_anchor
-        sequence_length = len(full_sequence)
-
-        consensus_reads.append(
-            Read(
-                name=haplotype,
-                sequence=full_sequence,
-                qualities=[60] * sequence_length,
-                mod_5mc_probs="0" * sequence_length,
-                strand="+",
-                locus=locus,
-                n_soft_clipped_left=0,
-                n_soft_clipped_right=0,
-            ),
-        )
-
-    # Align
-    consensus_alignments, _ = graph_align_reads_to_locus(consensus_reads, locus)
-
-    # Get consensus read calls
-    consensus_read_calls = get_read_calls(consensus_alignments, locus)
-
-    # Add haplotype to read calls - use read name
-    for read_call in consensus_read_calls:
-        read_call.em_haplotype = read_call.alignment.name
-
-    # Create consensus calls
-    return [
-        ConsensusCall.from_read_call(
-            read_call=consensus_read_call,
-            spanning_reads=spanning_count[consensus_read_call.em_haplotype],
-            flanking_reads=flanking_count[consensus_read_call.em_haplotype],
-        )
-        for consensus_read_call in consensus_read_calls
-    ]
-
-
 def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[ConsensusCall]:
     locus = read_calls[0].alignment.locus
 
@@ -184,8 +93,9 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[C
     # Get dictionaries to translate kmers <-> unique characters
     # Add dictionary for anchor kmers
     all_sequences = spanning_sequences + left_flanking_sequences + right_flanking_sequences
-    all_observed_kmers = {kmer for seq in all_sequences for kmer in seq}
-    kmer_to_unique_char = {kmer: chr(33 + i) for i, kmer in enumerate(all_observed_kmers)}
+    all_observed_kmers = sorted({kmer for seq in all_sequences for kmer in seq})
+    # Start from 46 to avoid special characters - esp. "-" used by poa!
+    kmer_to_unique_char = {kmer: chr(47 + i) for i, kmer in enumerate(all_observed_kmers)}
     uniqe_char_to_kmer = {v: k for k, v in kmer_to_unique_char.items()}
 
     # Translate kmer strings to unique character strings
@@ -193,25 +103,44 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[C
     translated_left_flanking_sequences: list[str] = ["".join(kmer_to_unique_char[kmer] for kmer in seq) for seq in left_flanking_sequences]
     translated_right_flanking_sequences: list[str] = ["".join(kmer_to_unique_char[kmer] for kmer in seq) for seq in right_flanking_sequences]
 
+    # Reserve special characters for anchors and missing end character
+    left_anchor_chars = [chr(i) for i in [33, 34]]
+    right_anchor_chars = [chr(i) for i in [35, 36]]
+    missing_end_char = chr(37)
+
+    # Add random anchors to sequences
+    random.seed(42)
+    anchor_len = 100
+    random_left_anchor = "".join([random.choice(left_anchor_chars) for _ in range(anchor_len)])
+    random_right_anchor = "".join([random.choice(right_anchor_chars) for _ in range(anchor_len)])
+
+    translated_spanning_sequences = [random_left_anchor + seq + random_right_anchor for seq in translated_spanning_sequences]
+    translated_left_flanking_sequences = [random_left_anchor + seq for seq in translated_left_flanking_sequences]
+    translated_right_flanking_sequences = [seq + random_right_anchor for seq in translated_right_flanking_sequences]
+
     # Use poa to create consensus sequences
     spanning_consensus_sequence = ""
     left_flanking_consensus_sequence = ""
     right_flanking_consensus_sequence = ""
-    algorithm = 1
+    algorithm = 0
     # If there are spanning sequences, use all sequences to create consensus
     # If not, create consensus for left and right flanking sequences separately
     # Translate unique character sequences back to kmers
     if spanning_sequences:
-        all_translated_sequences = translated_spanning_sequences + translated_left_flanking_sequences + translated_right_flanking_sequences
-        cons, _ = poa(all_translated_sequences, algorithm=algorithm)
-        spanning_consensus_sequence = "".join([uniqe_char_to_kmer[char] for char in cons])
+        msa = generate_msa(translated_spanning_sequences, translated_left_flanking_sequences, translated_right_flanking_sequences, missing_end_char, algorithm)
+        spanning_consensus_sequence = generate_majority_consensus(msa, missing_end_char, left_anchor_chars + right_anchor_chars)
     else:
         if left_flanking_sequences:
-            cons, _ = poa(translated_left_flanking_sequences, algorithm=algorithm)
-            left_flanking_consensus_sequence = "".join([uniqe_char_to_kmer[char] for char in cons])
+            msa = generate_msa([], translated_left_flanking_sequences, [], missing_end_char, algorithm)
+            left_flanking_consensus_sequence = generate_majority_consensus(msa, missing_end_char, left_anchor_chars + right_anchor_chars)
         if right_flanking_sequences:
-            cons, _ = poa(translated_right_flanking_sequences, algorithm=algorithm)
-            right_flanking_consensus_sequence = "".join([uniqe_char_to_kmer[char] for char in cons])
+            msa = generate_msa([], [], translated_right_flanking_sequences, missing_end_char, algorithm)
+            right_flanking_consensus_sequence = generate_majority_consensus(msa, missing_end_char, left_anchor_chars + right_anchor_chars)
+
+    # Translate unique character sequences back to kmers
+    spanning_consensus_sequence = "".join([uniqe_char_to_kmer[char] for char in spanning_consensus_sequence])
+    left_flanking_consensus_sequence = "".join([uniqe_char_to_kmer[char] for char in left_flanking_consensus_sequence])
+    right_flanking_consensus_sequence = "".join([uniqe_char_to_kmer[char] for char in right_flanking_consensus_sequence])
 
     # Create reads for consensus sequences
     consensus_read_calls: list[ReadCall] = []
@@ -223,7 +152,6 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[C
         consensus_read_calls.append(left_flanking_consensus_read_calls)
     if right_flanking_consensus_sequence:
         right_flanking_consensus_read_calls = get_consensus_read_call(locus, right_flanking_consensus_sequence, AlignmentType.RIGHT_FLANKING, haplotype)
-        print(right_flanking_consensus_read_calls)
         consensus_read_calls.append(right_flanking_consensus_read_calls)
 
     # Add haplotype to read calls - use read name
@@ -239,6 +167,57 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[C
         )
         for consensus_read_call in consensus_read_calls
     ]
+
+
+def generate_msa(
+    spanning_sequences: list[str],
+    left_flanking_sequences: list[str],
+    right_flanking_sequences: list[str],
+    missing_end_char: str,
+    algorithm: int,
+) -> list[str]:
+    # Combine all sequences
+    all_translated_sequences = spanning_sequences + left_flanking_sequences + right_flanking_sequences
+    _, msa = poa(all_translated_sequences, algorithm=algorithm)
+
+    # Split MSA
+    spanning_msa: list[str] = msa[: len(spanning_sequences)]
+    left_flanking_msa: list[str] = msa[len(spanning_sequences) : len(spanning_sequences) + len(left_flanking_sequences)]
+    right_flanking_msa: list[str] = msa[len(spanning_sequences) + len(left_flanking_sequences) :]
+
+    # For flankings change missing end character "-" to missing_end_char
+    # Left flanking: Remove from right end
+    for i, seq in enumerate(left_flanking_msa):
+        end_stripped_seq = seq.rstrip("-")
+        left_flanking_msa[i] = end_stripped_seq + missing_end_char * (len(seq) - len(end_stripped_seq))
+
+    # Right flanking: Remove from left end
+    for i, seq in enumerate(right_flanking_msa):
+        start_stripped_seq = seq.lstrip("-")
+        right_flanking_msa[i] = missing_end_char * (len(seq) - len(start_stripped_seq)) + start_stripped_seq
+
+    return spanning_msa + left_flanking_msa + right_flanking_msa
+
+
+def generate_majority_consensus(msa: list[str], missing_end_char: str, remove_chars: list[str]) -> str:
+    consensus_sequence = ""
+    for i in range(len(msa[0])):
+        char_votes: dict[str, int] = defaultdict(int)
+        for seq in msa:
+            char = seq[i]
+            # Skip missing end character
+            if char == missing_end_char:
+                continue
+            # Add vote
+            char_votes[char] += 1
+        majority_char = max(char_votes, key=lambda k: char_votes[k])
+        consensus_sequence += majority_char
+
+    # Remove "-" and other characters from consensus sequence
+    for char in [*remove_chars, "-"]:
+        consensus_sequence = consensus_sequence.replace(char, "")
+
+    return consensus_sequence
 
 
 def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: AlignmentType, haplotype: str) -> ReadCall:
@@ -270,9 +249,6 @@ def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: Alignme
         n_soft_clipped_right=0,
     )
 
-    # Align
-    consensus_alignments, _ = graph_align_reads_to_locus([consensus_read], locus)
-
     # Get consensus read calls
-    consensus_read_calls = get_read_calls(consensus_alignments, locus)
+    consensus_read_calls, _ = get_read_calls([consensus_read], locus)
     return consensus_read_calls[0]
