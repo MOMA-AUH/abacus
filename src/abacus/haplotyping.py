@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import Levenshtein
 import numpy as np
 import pandas as pd
 from Levenshtein import distance as levenshtein_distance
 from scipy.optimize import brentq, minimize
 from scipy.stats import chi2, norm
-from sklearn.cluster import DBSCAN
 
 from abacus.config import config
 from abacus.graph import AlignmentType, ReadCall
@@ -190,67 +188,10 @@ def adjust_logpdf_for_flanks(x: np.ndarray, is_left_flank: list[bool], logpdf: n
     return res
 
 
-# TODO: Go through filters and make sure they are working as expected - also for flanking reads
-def filter_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:
-    if not read_calls:
-        return [], []
-
-    read_calls = list(read_calls)
-
-    # Check STR match ratios
-    str_match_ratios = np.array([rc.alignment.str_error_rate for rc in read_calls])
-    read_error_mask = str_match_ratios < 0.80
-
-    # Check STR quality
-    str_qualities = np.array([rc.alignment.str_median_quality for rc in read_calls])
-    has_left_anchor = np.array([rc.alignment.has_left_anchor for rc in read_calls])
-    has_right_anchor = np.array([rc.alignment.has_right_anchor for rc in read_calls])
-    str_quality_mask = np.logical_and.reduce([str_qualities < config.min_str_read_qual, has_left_anchor, has_right_anchor])
-
-    # String outliers with pairwise Levenshtein distances
-    read_str_sequences = [r.alignment.str_sequence for r in read_calls]
-    pairwise_sequence_dist = np.array(
-        [
-            [Levenshtein.distance(str1, str2) / np.maximum(len(str1), len(str2)) if str1 and str2 else 1.0 for str2 in read_str_sequences]
-            for str1 in read_str_sequences
-        ],
-    )
-    string_clustering = DBSCAN(eps=0.33, min_samples=3, metric="precomputed").fit(pairwise_sequence_dist)
-    # TODO: Check if this is necessary - disabled for now
-    # string_outlier_mask = string_clustering.labels_ == -1
-    string_outlier_mask = string_clustering.labels_ == 100
-
-    # Kmer count outliers
-    kmer_counts = np.array([r.satellite_count for r in read_calls])
-    kmer_pct_dist = np.array([[np.max([np.abs(k1 - k2) / (np.maximum(k1, k2) + 1)]) for k2 in kmer_counts] for k1 in kmer_counts])
-    kmer_clustering = DBSCAN(eps=0.33, min_samples=3, metric="precomputed").fit(kmer_pct_dist)
-    # TODO: Check if this is necessary - disabled for now
-    # kmer_outlier_mask = kmer_clustering.labels_ == -1
-    kmer_outlier_mask = kmer_clustering.labels_ == 100
-
-    # Identify and annotate outliers
-    outlier_read_calls = []
-    good_read_calls = []
-    for rc in read_calls:
-        # Add to outlier list
-        # TODO: Move get_error_flags functionality to this function, so filtering can be done in one place
-        outlier_reason_str = rc.alignment.get_error_flags()
-        if outlier_reason_str:
-            outlier_read_calls.append(rc.add_outlier_reasons(outlier_reason_str))
-            continue
-
-        # If not an outlier, add to good list
-        good_read_calls.append(rc)
-
-    return outlier_read_calls, good_read_calls
-
-
 def group_read_calls(read_calls: list[ReadCall], ploidy: int) -> tuple[list[ReadCall], pd.DataFrame, pd.DataFrame]:
-    # Get kmer dimension from first read call
-    kmer_dim = len(read_calls[0].satellite_count)
-
+    # Handle empty read_calls
     if not read_calls:
-        return create_empty_results(kmer_dim)
+        return create_empty_results(0)
 
     # Split read calls into flanking and spanning reads
     spanning_reads = [r for r in read_calls if r.alignment.alignment_type == AlignmentType.SPANNING]
@@ -419,7 +360,17 @@ def get_counts(read_calls: list[ReadCall]) -> np.ndarray:
     return np.array([r.satellite_count for r in read_calls])
 
 
-def initialize_parameters(counts: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.float64]:
+def initialize_parameters(spanning_counts: np.ndarray, flanking_counts: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.float64]:
+    counts = spanning_counts
+    # If any flanking reads are longer than the longest spanning read, we need to extend the spanning reads
+    if flanking_counts.size > 0:
+        max_spanning_counts = np.max(spanning_counts, axis=0)
+        long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
+
+        # Add long flanking reads to spanning reads
+        if long_flanking_reads.size > 0:
+            counts = np.concatenate((spanning_counts, long_flanking_reads))
+
     # Sort counts by max count
     max_counts = np.max(counts, axis=1)
     idx = np.argsort(max_counts)
@@ -444,16 +395,16 @@ def initialize_parameters(counts: np.ndarray) -> tuple[np.ndarray, np.ndarray, n
     # Pi
     pi = np.float64(0.51)
 
-    # Make sure init means are not too close - if so, move them apart
-    means_too_close = np.where(abs(mean_h1 - mean_h2) < 1)
-    mean_h1[means_too_close and mean_h1 < mean_h2] *= 0.9
-    mean_h1[means_too_close and mean_h1 > mean_h2] *= 1.1
-    mean_h2[means_too_close and mean_h1 > mean_h2] *= 0.9
-    mean_h2[means_too_close and mean_h1 < mean_h2] *= 1.1
-
     # Make sure mean is at least 0.1
     mean_h1 = np.maximum(mean_h1, 0.1)
     mean_h2 = np.maximum(mean_h2, 0.1)
+
+    # Make sure init means are not too close - if so, move them apart
+    means_too_close = abs(mean_h1 - mean_h2) < 1
+    mean_h1[means_too_close & (mean_h1 <= mean_h2)] *= 0.9
+    mean_h1[means_too_close & (mean_h1 >= mean_h2)] *= 1.1
+    mean_h2[means_too_close & (mean_h1 >= mean_h2)] *= 0.9
+    mean_h2[means_too_close & (mean_h1 <= mean_h2)] *= 1.1
 
     return mean_h1, mean_h2, unit_var, pi
 
@@ -560,7 +511,7 @@ def estimate_par(
 
     # Define bounds for optimization
     mean_bound = (0, None)
-    unit_var_bound = (config.min_var, None)
+    unit_var_bound = (1e-5, None)
     pi_bound = (1e-5, 1 - 1e-5)
 
     # Make sure initial estimates are within bounds
@@ -592,6 +543,13 @@ def estimate_par(
     unit_var = np.array(optim_res.x[2 * dim : 3 * dim])
     pi = np.float64(optim_res.x[-1])
 
+    print("------------")
+    print("Mean H1:", mean_h1)
+    print("Mean H2:", mean_h2)
+    print("Unit Var:", unit_var)
+    print("Pi:", pi)
+    print("Log Likelihood:", -optim_res.fun)
+
     log_likelihood = -optim_res.fun
 
     return mean_h1, mean_h2, unit_var, pi, log_likelihood
@@ -606,7 +564,7 @@ def estimate_heterozygous_parameters(
     flanking_counts, _, is_left_flank = extract_info_from_flanking_reads(flanking_reads)
 
     # Get initial parameters from spanning reads only
-    mean_h1, mean_h2, unit_var, pi = initialize_parameters(spanning_counts)
+    mean_h1, mean_h2, unit_var, pi = initialize_parameters(spanning_counts, flanking_counts)
 
     # Initialize log likelihood
     log_likelihood = np.float64(-np.inf)

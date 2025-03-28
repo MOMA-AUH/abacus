@@ -9,7 +9,6 @@ from enum import StrEnum, auto
 from pathlib import Path
 from statistics import median
 
-import Levenshtein
 import numpy as np
 
 from abacus.config import config
@@ -17,6 +16,7 @@ from abacus.constants import AMBIGUOUS_BASES_DICT
 from abacus.locus import Locus
 from abacus.logging import logger
 from abacus.read import FilteredRead, Read
+from abacus.utils import compute_error_rate
 
 
 def sync_cigar(cigar: str) -> list[str]:
@@ -135,11 +135,6 @@ class GraphAlignment(Read):
 
     reference: str = field(init=False)
     str_reference: str = field(init=False)
-
-    # Sequence divergence
-    str_error_rate: float = field(init=False)
-    str_window_base_rate: float = field(init=False)
-    str_window_indel_rate: float = field(init=False)
 
     # Properties of flanking regions
     has_left_anchor: bool = field(init=False)
@@ -266,77 +261,6 @@ class GraphAlignment(Read):
         else:
             self.alignment_type = AlignmentType.NO_ANCHORS
 
-        # Calculate error rates
-        # STR region
-        self.str_error_rate = compute_error_rate(self.str_reference, "".join(self.str_sequence_synced))
-
-        window_length = 50
-
-        # Find highest base error rate in STR region
-        str_end = len(self.str_sequence_synced)
-        self.str_window_base_rate = 0.0
-        if window_length < str_end:
-            for i in range(str_end - window_length):
-                window_ref = self.str_reference[i : i + window_length]
-                window_seq = "".join(self.str_sequence_synced[i : i + window_length])
-                error_rate = compute_error_rate(window_ref, window_seq, indel_cost=0)
-                self.str_window_base_rate = max(self.str_window_base_rate, error_rate)
-
-        # Find highest indel error rate in STR region
-        str_end = len(self.str_sequence_synced)
-        self.str_window_indel_rate = 0.0
-        if window_length < str_end:
-            for i in range(str_end - window_length):
-                window_ref = self.str_reference[i : i + window_length]
-                window_seq = "".join(self.str_sequence_synced[i : i + window_length])
-                error_rate = compute_error_rate(window_ref, window_seq, replace_cost=0)
-                self.str_window_indel_rate = max(self.str_window_indel_rate, error_rate)
-
-        # Upstream and downstream error rates
-        stream_length = 50
-
-        upstream_start = max(trim_start - stream_length, 0)
-        upstream_end = trim_start
-        upstream_ref = self.reference[upstream_start:upstream_end]
-        upstream_seq = "".join(locus_sequence_synced[upstream_start:upstream_end])
-        self.upstream_error_rate = compute_error_rate(upstream_ref, upstream_seq)
-
-        downstream_start = -trim_end
-        downstream_end = min(0, -trim_end + stream_length)
-        downstream_ref = self.reference[downstream_start:downstream_end]
-        downstream_seq = "".join(locus_sequence_synced[downstream_start:downstream_end])
-        self.downstream_error_rate = compute_error_rate(downstream_ref, downstream_seq)
-
-    def get_error_flags(self) -> list[str]:
-        errors = []
-
-        # TODO: Rename these - and check thier use!
-        # Check error rates
-        if self.str_error_rate > config.error_rate_threshold:
-            errors.append("high_str_error_rate")
-
-        if self.str_window_base_rate > config.error_rate_threshold:
-            errors.append("has_window_with_high_base_error_rate")
-
-        if self.str_window_indel_rate > config.error_rate_threshold:
-            errors.append("has_window_with_high_indel_error_rate")
-
-        # TODO: Change to use config. Find appropriate cutoffs
-        if self.has_left_anchor and self.upstream_error_rate > 1:
-            errors.append("high_upstream_error_rate")
-        if self.has_right_anchor and self.downstream_error_rate > 1:
-            errors.append("high_downstream_error_rate")
-
-        # Check quality
-        if self.str_median_quality < config.min_str_read_qual:
-            errors.append("low_str_median_quality")
-
-        # Set error flags for OTHER alignment type
-        if self.alignment_type == AlignmentType.NO_ANCHORS:
-            errors.append("missing_anchors")
-
-        return errors
-
     def to_dict(self) -> dict:
         return {
             "query_name": self.name,
@@ -344,7 +268,6 @@ class GraphAlignment(Read):
             "read_str_sequence": self.str_sequence,
             "read_str_qualities": self.str_qualities,
             "alignment_type": self.alignment_type,
-            "error_flags": self.get_error_flags(),
             "median_str_qual": self.str_median_quality,
         } | self.locus.to_dict()
 
@@ -376,6 +299,11 @@ class ReadCall:
             "outlier_reasons": ";".join(self.outlier_reasons),
         }
 
+    def add_outlier_reason(self, reason: str) -> ReadCall:
+        self.add_outlier_reasons([reason])
+
+        return self
+
     def add_outlier_reasons(self, reasons: list[str]) -> ReadCall:
         self.em_haplotype = "outlier"
         self.outlier_reasons.extend(reasons)
@@ -387,25 +315,8 @@ class ReadCall:
 
         return self
 
-
-def compute_error_rate(s1: str, s2: str, indel_cost: float = 1, replace_cost: float = 1) -> float:
-    # If reference and sequence are empty, return 0
-    if not s1 and not s2:
-        return 0
-
-    # Get edit operations
-    ops = Levenshtein.editops(s1, s2)
-
-    # Calculate cost
-    cost = 0.0
-    for op in ops:
-        if op[0] in ["delete", "insert"]:
-            cost += indel_cost
-        elif op[0] == "replace":
-            cost += replace_cost
-
-    # Normalize cost
-    return cost / max(len(s2), len(s1))
+    def is_spanning(self) -> bool:
+        return self.alignment.alignment_type == AlignmentType.SPANNING
 
 
 def get_satellite_counts_from_path(path: list[str], locus: Locus) -> list[int]:

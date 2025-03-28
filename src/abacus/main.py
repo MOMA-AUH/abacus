@@ -10,13 +10,14 @@ import typer
 
 from abacus.config import config
 from abacus.consensus import ConsensusCall, create_consensus_calls
+from abacus.filtering import evaluate_haplotyping, filter_read_calls
 from abacus.graph import (
     FilteredRead,
     ReadCall,
     get_read_calls,
 )
 from abacus.group_summary import calculate_final_group_summaries
-from abacus.haplotyping import filter_read_calls, group_read_calls
+from abacus.haplotyping import group_read_calls
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 from abacus.preprocess import get_reads_in_locus
@@ -225,16 +226,6 @@ def abacus(
         # Get reads in locus
         reads = get_reads_in_locus(bam, locus)
 
-        # Call STR in individual reads
-        read_calls, unmapped_reads = get_read_calls(reads, locus)
-
-        # Filter read calls
-        # TODO: Go through filters and clean up unused and unnecessary filters
-        filtered_read_calls, good_read_calls = filter_read_calls(read_calls=read_calls)
-
-        # TODO: Use optimize for homozygous model
-        # TODO: Min N (eg 2) reads should be required to call a haplotype - if less, then call as homozygous
-
         # Get ploidy
         if locus.location.chrom == "chrY":
             ploidy = sex.value.count("Y")
@@ -243,11 +234,34 @@ def abacus(
         else:
             ploidy = 2
 
+        # Call STR in individual reads
+        read_calls, unmapped_reads = get_read_calls(reads, locus)
+
+        # Filter read calls
+        # TODO: Go through filters and clean up unused and unnecessary filters
+        good_read_calls, filtered_read_calls = filter_read_calls(read_calls=read_calls)
+
+        # TODO: Use optimize for homozygous model
+        # TODO: Min N (eg 2) reads should be required to call a haplotype - if less, then call as homozygous
+
         # Group read calls
         grouped_read_calls, test_summary_res_df, par_summary_df = group_read_calls(
             read_calls=good_read_calls,
             ploidy=ploidy,
         )
+
+        # Evaluate haplotypes and remove outliers
+        grouped_read_calls, outlier_read_calls = evaluate_haplotyping(grouped_read_calls)
+
+        # Add outliers to filtered reads
+        filtered_read_calls.extend(outlier_read_calls)
+
+        # If there are outliers, rerun haplotyping with outliers removed
+        if outlier_read_calls:
+            grouped_read_calls, test_summary_res_df, par_summary_df = group_read_calls(
+                read_calls=grouped_read_calls,
+                ploidy=ploidy,
+            )
 
         # Calculate final group summaries
         haplotyping_df = calculate_final_group_summaries(grouped_read_calls)
