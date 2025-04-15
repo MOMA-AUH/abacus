@@ -430,12 +430,6 @@ def optimize_estimates_integers(
             best_unit_var = np.array(optim_res.x[:dim])
             best_pi = np.float64(optim_res.x[-1])
 
-    print("Estimates:")
-    print("Mean H1:", best_mean_h1)
-    print("Mean H2:", best_mean_h2)
-    print("Spanning counts:", spanning_counts)
-    print("Flanking counts:", flanking_counts)
-
     return HeterozygousParameters(
         mean_h1=best_mean_h1,
         mean_h2=best_mean_h2,
