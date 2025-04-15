@@ -50,11 +50,15 @@ def discrete_multivariate_normal_logpdf(x: np.ndarray, mean: np.ndarray, unit_va
         s = sd[i]
 
         # Get logpdf as "mass" between integers
-        cdf_lower = norm.cdf(x_i - 0.5, loc=m, scale=s)
-        cdf_upper = norm.cdf(x_i + 0.5, loc=m, scale=s)
+        logcdf_lower = norm.logcdf(x_i - 0.5, loc=m, scale=s)
+        logcdf_upper = norm.logcdf(x_i + 0.5, loc=m, scale=s)
 
-        # Find diff in log space
-        logpdf_i = np.log(np.maximum(cdf_upper - cdf_lower, 1e-100))
+        # Substract logcdf_lower from logcdf_upper in log space
+        # log(cdf_upper - cdf_lower) = logcdf_upper + log(1 - exp(logcdf_lower - logcdf_upper))
+        logpdf_i = logcdf_upper + np.log1p(-np.exp(logcdf_lower - logcdf_upper))
+
+        # Make sure logpdf_i is not -Inf
+        logpdf_i = np.where(logpdf_i == -np.inf, -1000, logpdf_i)
 
         # Add to logpdf
         logpdf += logpdf_i
@@ -190,10 +194,10 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     # Initialize counts
     counts = spanning_counts.copy()
 
-    # If any flanking reads are longer than the longest spanning read, we need to extend the spanning reads
+    # If any flanking reads are longer than the median spanning read, add them to the counts
     if flanking_counts.size > 0:
-        max_spanning_counts = np.max(spanning_counts, axis=0)
-        long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
+        median_spanning_counts = np.median(spanning_counts, axis=0)
+        long_flanking_reads = np.array([x for x in flanking_counts if any(x > median_spanning_counts)])
 
         # Add long flanking reads to spanning reads
         if long_flanking_reads.size > 0:
@@ -222,11 +226,11 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     robust_mean_h2 = (mean_h2 + median_h2) / 2
 
     # Variance
-    sd_h1 = np.std(counts_h1, axis=0)
-    sd_h2 = np.std(counts_h2, axis=0)
+    sd_h1 = np.sqrt(np.average((counts_h1 - robust_mean_h1) ** 2, axis=0))
+    sd_h2 = np.sqrt(np.average((counts_h2 - robust_mean_h2) ** 2, axis=0))
 
-    mad_h1 = np.median(np.abs(counts_h1 - median_h1), axis=0)
-    mad_h2 = np.median(np.abs(counts_h2 - median_h2), axis=0)
+    mad_h1 = np.median(np.abs(counts_h1 - robust_mean_h1), axis=0)
+    mad_h2 = np.median(np.abs(counts_h2 - robust_mean_h2), axis=0)
 
     robust_sd_h1 = (sd_h1 + mad_h1) / 2
     robust_sd_h2 = (sd_h2 + mad_h2) / 2
@@ -342,10 +346,10 @@ def estimate_heterozygous_parameters(
 
     par_optim = optimize_estimates(
         read_calls,
-        par_init.mean_h1,
-        par_init.mean_h2,
-        par_init.unit_var,
-        par_init.pi,
+        par_refined.mean_h1,
+        par_refined.mean_h2,
+        par_refined.unit_var,
+        par_refined.pi,
     )
 
     return optimize_estimates_integers(
