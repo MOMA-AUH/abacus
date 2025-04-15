@@ -11,7 +11,7 @@ def calculate_final_group_summaries(grouped_read_calls: list[ReadCall]) -> pd.Da
     if len(grouped_read_calls) == 0:
         return pd.DataFrame(
             {
-                "em_haplotype": "none",
+                "haplotype": "none",
                 "mean": pd.NA,
                 "sd": pd.NA,
                 "median": pd.NA,
@@ -23,10 +23,10 @@ def calculate_final_group_summaries(grouped_read_calls: list[ReadCall]) -> pd.Da
 
     result_df_list = []
     # Get unique haplotypes from labels
-    unique_haplotypes = np.unique([rc.em_haplotype for rc in grouped_read_calls])
+    unique_haplotypes = np.unique([rc.haplotype for rc in grouped_read_calls])
     for h in unique_haplotypes:
         # Get data for each haplotype
-        counts_h = np.array([rc.satellite_count for rc in grouped_read_calls if rc.em_haplotype == h])
+        counts_h = np.array([rc.satellite_count for rc in grouped_read_calls if rc.haplotype == h])
 
         # Calculate summary statistics
         mean_h = np.mean(counts_h, axis=0)
@@ -37,7 +37,7 @@ def calculate_final_group_summaries(grouped_read_calls: list[ReadCall]) -> pd.Da
         iqr_h = q3_h - q1_h
 
         result_dict = {
-            "em_haplotype": h,
+            "haplotype": h,
             "mean": mean_h,
             "sd": sd_h,
             "median": median_h,

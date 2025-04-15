@@ -226,18 +226,7 @@ def write_vcf(
             ),
         )
 
-        print("----------------")
-        print("Before sorting")
-        for locus, calls in consensus_calls_by_locus.items():
-            for call in calls:
-                print(call.locus.location, call.alignment.name)
-        print("After sorting")
-        for locus, calls in consensus_calls_by_locus_sorted.items():
-            for call in calls:
-                print(call.locus.location, call.alignment.name)
-        print("----------------")
-
         # Create VCF records
-        for _, calls in consensus_calls_by_locus.items():
+        for _, calls in consensus_calls_by_locus_sorted.items():
             records = create_vcf_records(calls, reference)
             vcf_file.write("\n".join(records) + "\n")

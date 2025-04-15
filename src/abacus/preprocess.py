@@ -40,7 +40,7 @@ def get_reads_in_locus(bam: Path, locus: Locus) -> list[Read]:
             primary_alignments.extend(primary_alignment)
 
     # Convert primary alignments to Read objects
-    reads = [Read.from_aligment(alignment=alignment, locus=locus) for alignment in primary_alignments]
+    reads = [Read.from_alignment(alignment=alignment, locus=locus) for alignment in primary_alignments]
 
     # Trim soft-clipped bases
     reads = [trim_soft_clipped_bases(read, config.max_trim) for read in reads]

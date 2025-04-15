@@ -2,6 +2,8 @@ import random
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+import numpy as np
+from Levenshtein import distance as levenshtein_distance
 from spoa import poa
 
 from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
@@ -32,7 +34,7 @@ class ConsensusCall(ReadCall):
         return cls(
             locus=read_call.locus,
             alignment=read_call.alignment,
-            em_haplotype=read_call.em_haplotype,
+            haplotype=read_call.haplotype,
             outlier_reasons=read_call.outlier_reasons,
             satellite_count=read_call.satellite_count,
             kmer_count_str=read_call.kmer_count_str,
@@ -73,9 +75,9 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[C
     locus = read_calls[0].alignment.locus
 
     # Split read calls by alignment type
-    spanning_read_calls = [r for r in read_calls if r.alignment.alignment_type == AlignmentType.SPANNING]
-    left_flanking_read_calls = [r for r in read_calls if r.alignment.alignment_type == AlignmentType.LEFT_FLANKING]
-    right_flanking_read_calls = [r for r in read_calls if r.alignment.alignment_type == AlignmentType.RIGHT_FLANKING]
+    spanning_read_calls = [r for r in read_calls if r.alignment.type == AlignmentType.SPANNING]
+    left_flanking_read_calls = [r for r in read_calls if r.alignment.type == AlignmentType.LEFT_FLANKING]
+    right_flanking_read_calls = [r for r in read_calls if r.alignment.type == AlignmentType.RIGHT_FLANKING]
 
     # Group sequences by haplotype
     spanning_sequences: list[list[str]] = [s.obs_kmer_string.split("-") for s in spanning_read_calls]
@@ -156,7 +158,7 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[C
 
     # Add haplotype to read calls - use read name
     for read_call in consensus_read_calls:
-        read_call.em_haplotype = haplotype
+        read_call.haplotype = haplotype
 
     # Create consensus calls
     return [
@@ -252,3 +254,120 @@ def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: Alignme
     # Get consensus read calls
     consensus_read_calls, _ = get_read_calls([consensus_read], locus)
     return consensus_read_calls[0]
+
+
+def get_heterozygote_labels_seq(
+    read_calls: list[ReadCall],
+    consensus_read_calls: list[ConsensusCall],
+) -> list[ReadCall]:
+    # Get unique consensus haplotypes
+    unique_haplotypes = {read_call.haplotype for read_call in consensus_read_calls}
+    for read_call in read_calls:
+        closest_consensus = ""
+        dist_to_closest = np.inf
+        for haplotype in unique_haplotypes:
+            # Get consensus read calls for this haplotype
+            haplotype_consensus_read_calls = [x for x in consensus_read_calls if x.haplotype == haplotype]
+
+            # Get group probabilities using string distance
+            dist_to_consensus = calc_dist_to_consesus(
+                read_call=read_call,
+                consensus_read_calls=haplotype_consensus_read_calls,
+            )
+
+            # Check if this is the closest consensus
+            if dist_to_consensus < dist_to_closest:
+                dist_to_closest = dist_to_consensus
+                closest_consensus = haplotype
+
+            read_call.haplotype = closest_consensus
+
+    return read_calls
+
+
+def calc_dist_to_consesus(
+    read_call: ReadCall,
+    consensus_read_calls: list[ConsensusCall],
+) -> float:
+    # Extract information from reads
+    seq = read_call.alignment.str_sequence
+    seq_type = read_call.alignment.type
+
+    best_dist = np.inf
+    for consensus_read_call in consensus_read_calls:
+        consensus_seq = consensus_read_call.alignment.str_sequence
+        consensus_type = consensus_read_call.alignment.type
+
+        # Skip if both are flanking and on different sides
+        if AlignmentType.SPANNING not in (seq_type, consensus_type) and seq_type != consensus_type:
+            continue
+
+        seq_trimmed, consensus_seq_trimmed = trim_sequences_for_comparison(seq, seq_type, consensus_seq, consensus_type)
+        dist = levenshtein_distance(seq_trimmed, consensus_seq_trimmed)
+
+        # Check if distance is better than best distance
+        best_dist = min(best_dist, dist)
+
+    return best_dist
+
+
+def trim_sequences_for_comparison(seq1: str, type1: AlignmentType, seq2: str, type2: AlignmentType) -> tuple[str, str]:
+    """Trim two sequences for appropriate comparison based on their alignment types.
+
+    Args:
+        seq1: First sequence string
+        type1: Alignment type of the first sequence
+        seq2: Second sequence string
+        type2: Alignment type of the second sequence
+
+    Returns:
+        tuple[str, str]: Trimmed versions of seq1 and seq2
+
+    """
+    seq1_start, seq1_end = 0, len(seq1)
+    seq2_start, seq2_end = 0, len(seq2)
+
+    # LEFT_FLANKING vs LEFT_FLANKING
+    if type1 == AlignmentType.LEFT_FLANKING and type2 == AlignmentType.LEFT_FLANKING:
+        min_length = min(len(seq1), len(seq2))
+        seq1_end = seq2_end = min_length
+
+    # LEFT_FLANKING vs SPANNING
+    elif type1 == AlignmentType.LEFT_FLANKING and type2 == AlignmentType.SPANNING:
+        trim_length = min(len(seq1), len(seq2))
+        seq2_end = trim_length
+    elif type1 == AlignmentType.SPANNING and type2 == AlignmentType.LEFT_FLANKING:
+        trim_length = min(len(seq1), len(seq2))
+        seq1_end = trim_length
+
+    # RIGHT_FLANKING vs SPANNING
+    elif type1 == AlignmentType.RIGHT_FLANKING and type2 == AlignmentType.SPANNING:
+        trim_length = min(len(seq1), len(seq2))
+        seq2_start = len(seq2) - trim_length
+    elif type1 == AlignmentType.SPANNING and type2 == AlignmentType.RIGHT_FLANKING:
+        trim_length = min(len(seq1), len(seq2))
+        seq1_start = len(seq1) - trim_length
+
+    # RIGHT_FLANKING vs RIGHT_FLANKING
+    elif type1 == AlignmentType.RIGHT_FLANKING and type2 == AlignmentType.RIGHT_FLANKING:
+        min_length = min(len(seq1), len(seq2))
+        seq1_start = len(seq1) - min_length
+        seq2_start = len(seq2) - min_length
+
+    # LEFT_FLANKING vs RIGHT_FLANKING
+    # No meaningful overlap, trim the beginning of the longer sequence
+    elif (type1, type2) == (AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING):
+        min_length = min(len(seq1), len(seq2))
+        seq1_end = min_length
+        seq2_start = len(seq2) - min_length
+
+    elif (type1, type2) == (AlignmentType.RIGHT_FLANKING, AlignmentType.LEFT_FLANKING):
+        min_length = min(len(seq1), len(seq2))
+        seq1_start = len(seq1) - min_length
+        seq2_end = min_length
+
+    # Apply trimming
+    seq1_trimmed = seq1[seq1_start:seq1_end]
+    seq2_trimmed = seq2[seq2_start:seq2_end]
+
+    return seq1_trimmed, seq2_trimmed

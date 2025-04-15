@@ -27,7 +27,7 @@ class Read:
         return f"@{self.name}\n{self.sequence}\n+\n{self.quality_string()}\n"
 
     @classmethod
-    def from_aligment(cls, alignment: pysam.AlignedSegment, locus: Locus) -> "Read":
+    def from_alignment(cls, alignment: pysam.AlignedSegment, locus: Locus) -> "Read":
         # Get read information
         name = alignment.query_name or ""
         sequence = alignment.query_sequence or ""

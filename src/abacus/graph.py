@@ -5,18 +5,16 @@ import re
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from enum import StrEnum, auto
 from pathlib import Path
 from statistics import median
 
 import numpy as np
 
 from abacus.config import config
-from abacus.constants import AMBIGUOUS_BASES_DICT
 from abacus.locus import Locus
 from abacus.logging import logger
 from abacus.read import FilteredRead, Read
-from abacus.utils import compute_error_rate
+from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType, compute_error_rate
 
 
 def sync_cigar(cigar: str) -> list[str]:
@@ -65,14 +63,6 @@ def sync_with_cigar(input_list: list, cig: str) -> list[list]:
             input_list = input_list[cigar_len:]
 
     return res_list
-
-
-# Enum for alignment type
-class AlignmentType(StrEnum):
-    SPANNING = auto()
-    LEFT_FLANKING = auto()
-    RIGHT_FLANKING = auto()
-    NO_ANCHORS = auto()
 
 
 # TODO: Add test for this and extract into function
@@ -141,7 +131,7 @@ class GraphAlignment(Read):
     has_right_anchor: bool = field(init=False)
 
     # Alignment type
-    alignment_type: AlignmentType = field(init=False)
+    type: AlignmentType = field(init=False)
 
     @classmethod
     def from_gaf_line(cls, read: Read, gaf_line: str) -> GraphAlignment:
@@ -253,13 +243,13 @@ class GraphAlignment(Read):
 
         # Determine alignment type
         if self.has_left_anchor and self.has_right_anchor:
-            self.alignment_type = AlignmentType.SPANNING
+            self.type = AlignmentType.SPANNING
         elif self.has_left_anchor:
-            self.alignment_type = AlignmentType.LEFT_FLANKING
+            self.type = AlignmentType.LEFT_FLANKING
         elif self.has_right_anchor:
-            self.alignment_type = AlignmentType.RIGHT_FLANKING
+            self.type = AlignmentType.RIGHT_FLANKING
         else:
-            self.alignment_type = AlignmentType.NO_ANCHORS
+            self.type = AlignmentType.NO_ANCHORS
 
     def to_dict(self) -> dict:
         return {
@@ -267,56 +257,9 @@ class GraphAlignment(Read):
             "strand": self.strand,
             "read_str_sequence": self.str_sequence,
             "read_str_qualities": self.str_qualities,
-            "alignment_type": self.alignment_type,
+            "alignment_type": self.type,
             "median_str_qual": self.str_median_quality,
         } | self.locus.to_dict()
-
-
-@dataclass
-class ReadCall:
-    locus: Locus
-    alignment: GraphAlignment
-    satellite_count: list[int]
-    kmer_count_str: str
-
-    # Kmer strings (for visualization)
-    obs_kmer_string: str
-    ref_kmer_string: str
-    mod_5mc_kmer_string: str
-
-    # Grouped read call
-    em_haplotype: str = "none"
-    outlier_reasons: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return self.alignment.to_dict() | {
-            "kmer_count": self.satellite_count,
-            "kmer_count_str": self.kmer_count_str,
-            "obs_kmer_string": self.obs_kmer_string,
-            "ref_kmer_string": self.ref_kmer_string,
-            "mod_5mc_kmer_string": self.mod_5mc_kmer_string,
-            "em_haplotype": self.em_haplotype,
-            "outlier_reasons": ";".join(self.outlier_reasons),
-        }
-
-    def add_outlier_reason(self, reason: str) -> ReadCall:
-        self.add_outlier_reasons([reason])
-
-        return self
-
-    def add_outlier_reasons(self, reasons: list[str]) -> ReadCall:
-        self.em_haplotype = "outlier"
-        self.outlier_reasons.extend(reasons)
-
-        return self
-
-    def add_em_haplotype(self, haplotype: str) -> ReadCall:
-        self.em_haplotype = haplotype
-
-        return self
-
-    def is_spanning(self) -> bool:
-        return self.alignment.alignment_type == AlignmentType.SPANNING
 
 
 def get_satellite_counts_from_path(path: list[str], locus: Locus) -> list[int]:
@@ -588,8 +531,8 @@ def get_graph_alignments(reads: list[Read], locus: Locus) -> list[GraphAlignment
         )
 
         # Log the stdout and stderr
-        logger.info("minigraph stdout: %s", process.stdout)
-        logger.error("minigraph stderr: %s", process.stderr)
+        logger.debug("minigraph stdout: %s", process.stdout)
+        logger.debug("minigraph stderr: %s", process.stderr)
 
         # Get the output from file
         with Path.open(output_gaf) as f:
@@ -670,7 +613,7 @@ def graph_align_reads_to_locus(
     # Process the results
     for aln in graph_alignments:
         # Filter out reads with errors
-        if aln.alignment_type == AlignmentType.NO_ANCHORS:
+        if aln.type == AlignmentType.NO_ANCHORS:
             unmapped_reads.append(
                 FilteredRead.from_read(
                     read=aln,
@@ -680,7 +623,7 @@ def graph_align_reads_to_locus(
             continue
 
         # Flanking reads
-        if aln.alignment_type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING]:
+        if aln.type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING]:
             flanking_alignments.append(aln)
             continue
 
@@ -695,9 +638,7 @@ def graph_align_reads_to_locus(
     unmapped_reads.extend(unmapped_flanking_reads)
 
     # Remove flanking reads that do not visit the STR region
-    non_overlapping_reads = [
-        aln for aln in alignments if aln.str_sequence == "" and aln.alignment_type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING]
-    ]
+    non_overlapping_reads = [aln for aln in alignments if aln.str_sequence == "" and aln.type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING]]
     alignments = [aln for aln in alignments if aln not in non_overlapping_reads]
 
     # Mark reads that do not overlap the STR region
@@ -754,15 +695,10 @@ def remap_flanking_alignments_to_locus(
     synthetic_reads: list[Read] = []
     flanking_direction_map: dict[str, AlignmentType] = {}
 
-    # TODO: Implement handling of flanking reads in more complex loci
-    # Only handle loci with a single satellite and no breaks
-    if len(locus.satellites) != 1 or any(b != "" for b in locus.breaks):
-        return [], [FilteredRead.from_read(read=aln, error_flags="complex_locus") for aln in flanking_alignments]
-
     # Create synthetic reads by adding the anchor to the end where it is missing
     for aln in flanking_alignments:
         # Add anchor to the end where it is missing
-        if aln.alignment_type == AlignmentType.LEFT_FLANKING:
+        if aln.type == AlignmentType.LEFT_FLANKING:
             flanking_direction_map[aln.name] = AlignmentType.LEFT_FLANKING
             sequence, n_overlap = pad_with_right_anchor(aln.sequence, locus.right_anchor)
             added_bases = len(locus.right_anchor) - n_overlap
@@ -802,7 +738,7 @@ def remap_flanking_alignments_to_locus(
 
     for aln in remapped_flanking_reads:
         # Reads with errors
-        if aln.alignment_type != AlignmentType.SPANNING:
+        if aln.type != AlignmentType.SPANNING:
             filtered_alignments.append(
                 FilteredRead.from_read(
                     read=aln,
@@ -813,12 +749,59 @@ def remap_flanking_alignments_to_locus(
 
         # Flanking reads
         # Fix the alignment type
-        aln.alignment_type = flanking_direction_map[aln.name]
+        aln.type = flanking_direction_map[aln.name]
 
         # Add to the list
         remapped_alignments.append(aln)
 
     return remapped_alignments, filtered_alignments
+
+
+@dataclass
+class ReadCall:
+    locus: Locus
+    alignment: GraphAlignment
+    satellite_count: list[int]
+    kmer_count_str: str
+
+    # Kmer strings (for visualization)
+    obs_kmer_string: str
+    ref_kmer_string: str
+    mod_5mc_kmer_string: str
+
+    # Grouped read call
+    haplotype: str = "none"
+    outlier_reasons: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return self.alignment.to_dict() | {
+            "kmer_count": self.satellite_count,
+            "kmer_count_str": self.kmer_count_str,
+            "obs_kmer_string": self.obs_kmer_string,
+            "ref_kmer_string": self.ref_kmer_string,
+            "mod_5mc_kmer_string": self.mod_5mc_kmer_string,
+            "haplotype": self.haplotype,
+            "outlier_reasons": ";".join(self.outlier_reasons),
+        }
+
+    def add_outlier_reason(self, reason: str) -> ReadCall:
+        self.add_outlier_reasons([reason])
+
+        return self
+
+    def add_outlier_reasons(self, reasons: list[str]) -> ReadCall:
+        self.haplotype = "outlier"
+        self.outlier_reasons.extend(reasons)
+
+        return self
+
+    def set_haplotype(self, haplotype: str) -> ReadCall:
+        self.haplotype = haplotype
+
+        return self
+
+    def is_spanning(self) -> bool:
+        return self.alignment.type == AlignmentType.SPANNING
 
 
 def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], list[FilteredRead]]:
@@ -849,7 +832,6 @@ def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], lis
             satellite_counts=satellite_counts,
         )
 
-        # Find best call
         read_calls.append(
             ReadCall(
                 locus=locus,
