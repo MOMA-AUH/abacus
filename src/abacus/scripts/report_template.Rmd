@@ -79,11 +79,15 @@ filtered_reads_df <- read_csv(filtered_reads_csv)
 consensus_df <- read_csv(consensus_csv)
 clustering_summary_df <- read_csv(clustering_summary_csv)
 test_summary_df <- read_csv(test_summary_csv)
-par_summary_df <- read_csv(par_summary_csv)
+all_par_summary_df <- read_csv(par_summary_csv)
 ```
 
 ```{r Constants}
 ALIGNMENT_TYPES <- c("left_flanking", "spanning", "right_flanking")
+
+# Colors
+HEADER_BACKGROUND <- "grey87"
+STRIPED_BACKGROUND <- "grey97"
 ```
 
 ```{r Functions}
@@ -330,7 +334,7 @@ create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette = NULL) {
 
   # Add details to plot
   min_kmer_idx <- min(kmer_plot_df$cor_kmer_idx)
-  vertical_fixer_df = kmer_plot_df %>%
+  vertical_fixer_df <- kmer_plot_df %>%
     distinct(read_id, haplotype) %>%
     group_by(haplotype) %>%
     summarise(
@@ -501,43 +505,69 @@ data.frame(
   # Transpose
   t() %>%
   kbl(align = "l") %>%
-  kable_styling("bordered", full_width = T) %>%
+  kable_styling("bordered", full_width = TRUE) %>%
   # Make first column grey
-  column_spec(1, background = "grey98", bold = T)
+  column_spec(1, background = HEADER_BACKGROUND, bold = TRUE)
 ```
 
 # Test summary
 
 ```{r Summary Table, results = TRUE}
-# TODO: Only show relevant estiamte! Filter on siginificant?
-
-test_df = test_summary_df %>%
+test_df <- test_summary_df %>%
   select(locus_id, is_significant)
 
-par_summary_df %>%
+signif_par_summary_df <- all_par_summary_df %>%
   # Filter on significant estimates
   left_join(test_df, by = join_by(locus_id)) %>%
   filter((is_significant & haplotype != "hom") | (!is_significant) & haplotype == "hom") %>%
+  # Arrange by satellite and haplotype
+  arrange(locus_id, idx, haplotype)
+
+background_row_index <- signif_par_summary_df %>%
+  # Get row index
+  group_by(locus_id) %>%
+  summarise(
+    n = n(),
+  ) %>%
+  mutate(
+    a = cumsum(n)
+  ) %>%
+  # Remove every other group
+  filter(row_number() %% 2 == 1) %>%
+  rowwise() %>%
+  mutate(
+    x = list((a - n + 1):a)
+  ) %>%
+  unnest(x) %>%
+  pull(x)
+
+signif_par_summary_df %>%
   # Round to 2 decimals
   mutate_if(is.numeric, ~ round(., 2)) %>%
-  # Arrange by satellite and haplotype
-  arrange(locus_id, haplotype, idx) %>%
   # Select parameters, round and print
   select(
     "Locus ID" = locus_id,
-    "Haplotype" = haplotype,
     "Satellite" = satellite,
+    "Haplotype" = haplotype,
     "Count estimate" = mean,
-    "Lower" = mean_lower,
-    "Upper" = mean_upper,
+    "95% CI Lower" = mean_lower,
+    "95% CI Upper" = mean_upper
   ) %>%
   kbl(
     align = "c"
   ) %>%
-  column_spec(2:3, italic = T) %>%
-  collapse_rows(columns = c(1, 2), valign = "middle", target = 1) %>%
-  kable_styling(c("bordered", "striped"), full_width = T) %>%
-  add_header_above(header = c(" " = 4, "95% CI" = 2))
+  column_spec(1, italic = TRUE) %>%
+  kable_styling("bordered", full_width = TRUE) %>%
+  collapse_rows(columns = c(1, 2), valign = "middle", target = 1, ) %>%
+  row_spec(
+    0,
+    background = HEADER_BACKGROUND
+  ) %>%
+  # Add background color to every other row
+  row_spec(
+    background_row_index,
+    background = STRIPED_BACKGROUND
+  )
 ```
 
 ```{r Build report, results = "asis"}
@@ -569,7 +599,10 @@ for (i in seq_len(nrow(regions))) {
   test_summary_region_df <- test_summary_df %>%
     semi_join(selected_region, by = join_by(locus_id))
 
-  par_summary_region_df <- par_summary_df %>%
+  par_summary_region_df <- all_par_summary_df %>%
+    semi_join(selected_region, by = join_by(locus_id))
+
+  signif_par_summary_region_df <- signif_par_summary_df %>%
     semi_join(selected_region, by = join_by(locus_id))
 
   res_region_df <- clustering_summary_df %>%
@@ -598,58 +631,11 @@ for (i in seq_len(nrow(regions))) {
     kbl(
       align = "c"
     ) %>%
-    kable_styling(c("bordered", "striped"), full_width = T) %>%
-    cat()
-
-  cat("\n\n")
-  cat("### Coverage summary")
-  cat("\n\n")
-
-  data.frame(
-    total_coverage = nrow(reads_region_df) + nrow(filtered_reads_region_df),
-    filtered_reads = nrow(filtered_reads_region_df),
-    analyzed_reads = nrow(reads_region_df),
-    outliers = nrow(reads_region_df %>% filter(haplotype == "outlier")),
-    haplotyped_reads = nrow(reads_region_df %>% filter(haplotype != "outlier"))
-  ) %>%
-    select(
-      "Total coverage" = total_coverage,
-      "Filtered" = filtered_reads,
-      "Analyzed" = analyzed_reads,
-      "Outliers" = outliers,
-      "Used for haplotyping" = haplotyped_reads,
+    kable_styling("bordered", full_width = TRUE) %>%
+    row_spec(
+      0,
+      background = HEADER_BACKGROUND
     ) %>%
-    kbl(
-      align = "c"
-    ) %>%
-    kable_styling(c("bordered", "striped"), full_width = T) %>%
-    cat()
-
-  cat("\n\n")
-  cat("#### Group summaries")
-  cat("\n\n")
-
-  res_region_df %>%
-    # Arrange by satellite and haplotype
-    arrange(haplotype, satellite) %>%
-    # Select parameters, round and print
-    select(
-      "Haplotype" = haplotype,
-      "Count" = n,
-      "Satellite" = satellite,
-      "Mean" = mean,
-      "SD" = sd,
-      "Median" = median,
-      "IQR" = iqr,
-    ) %>%
-    mutate_if(is.numeric, ~ round(., 2)) %>%
-    kbl(
-      align = "c"
-    ) %>%
-    column_spec(1, italic = T) %>%
-    column_spec(3, italic = T) %>%
-    kable_styling(c("bordered", "striped"), full_width = T) %>%
-    collapse_rows(columns = c(1, 2), valign = "middle") %>%
     cat()
 
   # Abacus plot
@@ -761,6 +747,95 @@ for (i in seq_len(nrow(regions))) {
     print(kmer_plot)
   }
 
+  # Add Coverage and group summaries
+  cat("\n\n")
+  cat("### {-}") # This is a placeholder to stop the tabset
+
+  cat("\n\n")
+  cat("#### Count estimates")
+  cat("\n\n")
+
+  signif_par_summary_region_df %>%
+    # Round to 2 decimals
+    mutate_if(is.numeric, ~ round(., 2)) %>%
+    # Select parameters, round and print
+    select(
+      "Locus ID" = locus_id,
+      "Satellite" = satellite,
+      "Haplotype" = haplotype,
+      "Count estimate" = mean,
+      "95% CI Lower" = mean_lower,
+      "95% CI Upper" = mean_upper,
+    ) %>%
+    kbl(
+      align = "c"
+    ) %>%
+    column_spec(1, italic = TRUE) %>%
+    kable_styling("bordered", full_width = TRUE) %>%
+    row_spec(
+      0,
+      background = "grey90"
+    ) %>%
+    collapse_rows(columns = c(1, 2), valign = "middle", target = 1) %>%
+    cat()
+
+  cat("\n\n")
+  cat("#### Coverage summary")
+  cat("\n\n")
+
+  data.frame(
+    total_coverage = nrow(reads_region_df) + nrow(filtered_reads_region_df),
+    filtered_reads = nrow(filtered_reads_region_df),
+    outliers = nrow(reads_region_df %>% filter(haplotype == "outlier")),
+    haplotyped_reads = nrow(reads_region_df %>% filter(haplotype != "outlier"))
+  ) %>%
+    select(
+      "Total coverage" = total_coverage,
+      "Used for haplotyping" = haplotyped_reads,
+      "Filtered" = filtered_reads,
+      "Outliers" = outliers,
+    ) %>%
+    kbl(
+      align = "c"
+    ) %>%
+    kable_styling("bordered", full_width = TRUE) %>%
+    row_spec(
+      0,
+      background = HEADER_BACKGROUND
+    ) %>%
+    cat()
+
+  cat("\n\n")
+  cat("#### Group summaries")
+  cat("\n\n")
+
+  res_region_df %>%
+    # Remvoe outlier group
+    filter(haplotype != "outlier") %>%
+    # Arrange by satellite and haplotype
+    arrange(idx, haplotype) %>%
+    # Select parameters, round and print
+    select(
+      "Satellite" = satellite,
+      "Haplotype" = haplotype,
+      "Coverage" = n,
+      "Mean" = mean,
+      "SD" = sd,
+      "Median" = median,
+      "IQR" = iqr,
+    ) %>%
+    mutate_if(is.numeric, ~ round(., 2)) %>%
+    kbl(
+      align = "c"
+    ) %>%
+    kable_styling("bordered", full_width = TRUE) %>%
+    row_spec(
+      0,
+      background = HEADER_BACKGROUND
+    ) %>%
+    collapse_rows(columns = 1, valign = "middle") %>%
+    cat()
+
   cat("\n\n")
   cat("### Additional read information {.tabset .tabset-pills}")
   cat("\n\n")
@@ -768,8 +843,6 @@ for (i in seq_len(nrow(regions))) {
   cat("\n\n")
   cat("#### Passed")
   cat("\n\n")
-
-  cat("A table with additional information for the reads visualized above.")
 
   reads_region_df %>%
     filter(haplotype != "outlier") %>%
@@ -785,8 +858,11 @@ for (i in seq_len(nrow(regions))) {
     kbl(
       align = "c"
     ) %>%
-    column_spec(1, italic = T) %>%
-    kable_styling(c("bordered", "striped"), full_width = T) %>%
+    kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
+    row_spec(
+      0,
+      background = HEADER_BACKGROUND
+    ) %>%
     collapse_rows(columns = 1, valign = "middle") %>%
     cat()
 
@@ -794,32 +870,38 @@ for (i in seq_len(nrow(regions))) {
   cat("#### Outliers")
   cat("\n\n")
 
-  reads_region_df %>%
-    filter(haplotype == "outlier") %>%
-    # Change "," to newline in outlier_reasons
-    mutate(
-      outlier_reasons = str_replace_all(outlier_reasons, ";", "\n")
-    ) %>%
-    select(
-      "Read ID" = read_id,
-      "Query Name" = query_name,
-      "Alignment Type" = alignment_type,
-      "Outlier Reasons" = outlier_reasons,
-      "Median STR Qual" = median_str_qual,
-      "Kmer Count" = kmer_count_str
-    ) %>%
-    mutate_if(is.numeric, ~ round(., 3)) %>%
-    kbl(
-      align = "c"
-    ) %>%
-    kable_styling(c("bordered", "striped"), full_width = T) %>%
-    cat()
+  if (no_outlier_reads) {
+    cat("There are no outliers for this locus.")
+  } else {
+    reads_region_df %>%
+      filter(haplotype == "outlier") %>%
+      # Change "," to newline in outlier_reasons
+      mutate(
+        outlier_reasons = str_replace_all(outlier_reasons, ";", "\n")
+      ) %>%
+      select(
+        "Read ID" = read_id,
+        "Query Name" = query_name,
+        "Alignment Type" = alignment_type,
+        "Outlier Reasons" = outlier_reasons,
+        "Median STR Qual" = median_str_qual,
+        "Kmer Count" = kmer_count_str
+      ) %>%
+      mutate_if(is.numeric, ~ round(., 3)) %>%
+      kbl(
+        align = "c"
+      ) %>%
+      kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
+      row_spec(
+        0,
+        background = HEADER_BACKGROUND
+      ) %>%
+      cat()
+  }
 
   cat("\n\n")
   cat("#### Filtered")
   cat("\n\n")
-
-  cat("A table with information about the filtered reads and the reason why they were removed.\n")
 
   if (nrow(filtered_reads_region_df) > 0) {
     filtered_reads_region_df %>%
@@ -830,7 +912,11 @@ for (i in seq_len(nrow(regions))) {
       kbl(
         align = "c"
       ) %>%
-      kable_styling(c("bordered", "striped"), full_width = T) %>%
+      kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
+      row_spec(
+        0,
+        background = HEADER_BACKGROUND
+      ) %>%
       cat()
   } else {
     cat("There is no filtered reads for this locus. \n")
@@ -857,6 +943,11 @@ for (i in seq_len(nrow(regions))) {
   } else {
     cat("There is no consensus sequence for this locus.")
   }
+  
+  # Consensus table
+  cat("\n\n")
+  cat("#### Consensus sequences")
+  cat("\n\n")
 
   if (nrow(consensus_region_df) > 0) {
     consensus_region_df %>%
@@ -872,8 +963,11 @@ for (i in seq_len(nrow(regions))) {
       kbl(
         align = "c", escape = FALSE
       ) %>%
-      column_spec(1, italic = T) %>%
-      kable_styling(c("bordered", "striped"), full_width = T) %>%
+      kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
+      row_spec(
+        0,
+        background = HEADER_BACKGROUND
+      ) %>%
       collapse_rows(columns = 1, valign = "middle") %>%
       cat()
   } else {
@@ -1031,7 +1125,11 @@ for (i in seq_len(nrow(regions))) {
     kbl(
       align = "c"
     ) %>%
-    kable_styling(c("bordered", "striped"), full_width = T) %>%
+    kable_styling("bordered", full_width = TRUE) %>%
+    row_spec(
+      0,
+      background = HEADER_BACKGROUND
+    ) %>%
     cat()
 
   cat("\n\n")
@@ -1049,15 +1147,18 @@ for (i in seq_len(nrow(regions))) {
     arrange(model, haplotype, idx) %>%
     select(
       "Model" = model,
-      "Haplotype" = haplotype,
       "Satellite" = satellite,
+      "Haplotype" = haplotype,
       "Mean" = mean,
     ) %>%
     mutate_if(is.numeric, ~ round(., 2)) %>%
     kbl(align = "c") %>%
-    column_spec(1:2, italic = T) %>%
-    kable_styling(c("bordered", "striped"), full_width = T) %>%
-    collapse_rows(columns = 1:2, valign = "middle") %>%
+    kable_styling("bordered", full_width = TRUE) %>%
+    collapse_rows(columns = 1:2, valign = "middle", target = 1) %>%
+    row_spec(
+      0,
+      background = HEADER_BACKGROUND
+    ) %>%
     cat()
 
   cat("\n\n")
@@ -1080,9 +1181,12 @@ for (i in seq_len(nrow(regions))) {
     distinct() %>%
     mutate_if(is.numeric, ~ round(., 2)) %>%
     kbl(align = "c") %>%
-    column_spec(1, italic = T) %>%
-    kable_styling(c("bordered", "striped"), full_width = T) %>%
+    kable_styling("bordered", full_width = TRUE) %>%
     collapse_rows(columns = 1, valign = "middle") %>%
+    row_spec(
+      0,
+      background = HEADER_BACKGROUND
+    ) %>%
     cat()
 
 
@@ -1103,9 +1207,12 @@ for (i in seq_len(nrow(regions))) {
     distinct() %>%
     mutate_if(is.numeric, ~ round(., 2)) %>%
     kbl(align = "c") %>%
-    column_spec(2, italic = T) %>%
-    kable_styling(c("bordered", "striped"), full_width = T) %>%
+    kable_styling("bordered", full_width = TRUE) %>%
     collapse_rows(columns = 1, valign = "middle") %>%
+    row_spec(
+      0,
+      background = HEADER_BACKGROUND
+    ) %>%
     cat()
 }
 ```
