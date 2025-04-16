@@ -55,7 +55,9 @@ def discrete_multivariate_normal_logpdf(x: np.ndarray, mean: np.ndarray, unit_va
 
         # Substract logcdf_lower from logcdf_upper in log space
         # log(cdf_upper - cdf_lower) = logcdf_upper + log(1 - exp(logcdf_lower - logcdf_upper))
-        logpdf_i = logcdf_upper + np.log1p(-np.exp(logcdf_lower - logcdf_upper))
+        # Prevent underflow by ensuring the argument to log1p is > -1
+        diff = np.minimum(logcdf_lower - logcdf_upper, -1e-15)
+        logpdf_i = logcdf_upper + np.log1p(-np.exp(diff))
 
         # Make sure logpdf_i is not -Inf
         logpdf_i = np.where(logpdf_i == -np.inf, -1000, logpdf_i)
@@ -196,8 +198,8 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
 
     # If any flanking reads are longer than the median spanning read, add them to the counts
     if flanking_counts.size > 0:
-        median_spanning_counts = np.median(spanning_counts, axis=0)
-        long_flanking_reads = np.array([x for x in flanking_counts if any(x > median_spanning_counts)])
+        max_spanning_counts = np.max(spanning_counts, axis=0)
+        long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
 
         # Add long flanking reads to spanning reads
         if long_flanking_reads.size > 0:
@@ -334,16 +336,22 @@ def estimate_heterozygous_parameters(
             pi=np.float64(0),
         )
 
+    # Step 1: Calculate initial estimates
     par_init = calculate_initial_estimates(read_calls)
 
-    par_refined = refine_initial_estimates(
-        read_calls,
-        par_init.mean_h1,
-        par_init.mean_h2,
-        par_init.unit_var,
-        par_init.pi,
-    )
+    # Step 2: Refine initial estimates using EM-like updates
+    par_refined = par_init
+    n_refinements = 2
+    for _ in range(n_refinements):
+        par_refined = refine_initial_estimates(
+            read_calls,
+            par_refined.mean_h1,
+            par_refined.mean_h2,
+            par_refined.unit_var,
+            par_refined.pi,
+        )
 
+    # Step 3: Optimize estimates using L-BFGS-B
     par_optim = optimize_estimates(
         read_calls,
         par_refined.mean_h1,
@@ -352,6 +360,7 @@ def estimate_heterozygous_parameters(
         par_refined.pi,
     )
 
+    # Step 4: Find best integer estimates around optimal estimate
     return optimize_estimates_integers(
         read_calls,
         par_optim.mean_h1,
