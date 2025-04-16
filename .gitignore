@@ -3,3 +3,4 @@
 .vscode
 testing
 .pytest_cache
+**/._*
