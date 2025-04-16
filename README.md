@@ -39,25 +39,53 @@ To set up the environment for this project, follow these steps:
 ## Basic usage
 To run Abacus, you need to provide the following arguments:
 
-- `--sample_id`: The identifier of the sample that you are analyzing.
 - `--bam`: The path to the BAM file that contains aligned reads from the Long-Read Sequencing data.
 - `--ref`: The path to the reference FASTA file that was used to align the reads in the BAM file.
-- `--str_catalogue`: The path to the STR catalogue (JSON) that contains the information about the STR loci that you want to analyze.
+- `--str-catalouge`: The path to the STR catalogue (JSON) that contains the information about the STR loci that you want to analyze. See the [provided examples](./str_catalouges/) in the repository.
 - `--report`: The path to the HTML file where the analysis results will be saved.
+- `--vcf`: The path to the VCF file where the STR genotyping results will be saved.
+- `--sample-id`: The identifier of the sample that you are analyzing.
+- `--sex`: The sex of the sample (default: XX). Use `XX` for female and `XY` for male.
+- `--loci-subset`: A subset of loci to process. Use multiple times to specify multiple loci.
 
-The following command shows an example of how to run Abacus:
+### Example 1: Analyze all loci
 ```sh
 abacus \
-    --sample_id sample1 \
     --bam input.bam \
     --ref reference.fa \
-    --str_catalogue str_catalogue.json \
-    --report output.html
+    --str-catalouge str_catalogue.json \
+    --report output.html \
+    --vcf output.vcf \
+    --sample-id my_sample
 ```
 
-After running the command, Abacus will analyze the STR data from the BAM file and save the results in the HTML report file.
+### Example 2: Analyze a subset of loci (FGF14 and RFC1) in male
+```sh
+abacus \
+    --bam input.bam \
+    --ref reference.fa \
+    --str-catalouge str_catalogue.json \
+    --report output.html \
+    --vcf output.vcf \
+    --sample-id my_sample \
+    --sex XY \
+    --loci-subset FGF14 \
+    --loci-subset RFC1
+```
 
-### The STR catalouge
+### Configuration parameters
+The following configuration parameters allow fine-tuning of the analysis:
+
+- `--anchor-length`: Length of the left and right anchor sequences. Default: `50`.
+- `--min-anchor-overlap`: Minimum overlap between the read and the anchor sequence. Default: `10`.
+- `--min-qual`: Minimum median base quality in the STR region. Reads with lower quality will be filtered out. Default: `20`.
+- `--max-trim`: Maximum number of bases to trim from the ends of reads. Default: `5`.
+- `--error-rate-threshold`: Threshold for the error rate in the STR region. Reads with higher error rates will be filtered out. Default: `0.1`.
+- `--min-haplotype-depth`: Minimum allowed depth for each called haplotype. If the depth is lower, the locus will be called as homozygous. Default: `10`.
+- `--heterozygozity-alpha`: Sensitivity cutoff for the heterozygosity test. This test focuses on differences in length between haplotypes. Default: `0.05`.
+- `--split-alpha`: Sensitivity cutoff for the split haplotype test. This test focuses on differences in read depth between haplotypes. Default: `0.05`.
+
+## The STR catalouge
 
 The STR catalogue is a JSON file that contains information about the STR loci that you want to analyze. Each entry in the catalogue should contain the following information:
 
@@ -85,9 +113,21 @@ In `str_catalouges/moma_repeat_variants_catalogue_240521.json` you can find a co
 ]
 ```
 
-### Notes on FGF14
-5' flanking variant included in FGF14_alt in the STR catalogue. 
+## Notes on FGF14
+FGF14 is a complex locus with multiple haplotypes and a large number of variants. In the provided catalouge [provided examples](./str_catalouges/abacus_catalouge.json) we have included a `FGF14_complex` entry that contains the following information:
+
+```json
+[
+    {
+        "LocusId": "FGF14_complex",
+        "LocusStructure": "(TAGTCATAGTACCCCAA)*(GAA)*",
+        "ReferenceRegion": "chr13:102161565-102161726"
+    },
+]
+```
+
+The insertion `(TAGTCATAGTACCCCAA)*` is described in the following paper:
 https://www.nature.com/articles/s41588-024-01808-5/figures/1
 
-A lot of variation around the FGF14 locus.
+A lot of additional variation around the FGF14 locus is discussed in the following paper:
 https://www.nature.com/articles/s41467-024-52148-1

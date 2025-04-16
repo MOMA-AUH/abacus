@@ -142,7 +142,7 @@
         "ReferenceRegion": "chr13:102161576-102161726"
     },
     {
-        "LocusId": "FGF14_w_insertion",
+        "LocusId": "FGF14_complex",
         "LocusStructure": "(TAGTCATAGTACCCCAA)*(GAA)*",
         "ReferenceRegion": "chr13:102161565-102161726"
     },
