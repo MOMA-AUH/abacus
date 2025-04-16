@@ -11,11 +11,6 @@ Abacus is a tool for analyzing STR (Short Tandem Repeat) data from Long-Read Seq
 
 Abacus works by first converting the entries of an STR catalogue (JSON) into graphs, which are then used to analyze the reads from an aligned BAM file. Each read in the BAM file is first mapped to the graph using [minigraph](https://github.com/lh3/minigraph) and the number of repeats of each satellite is calculated based on the resulting path. The reads are then grouped according to the satellite repeat counts and the STR alleles (haplotypes) are called based on these groups. The analysis results are then saved in an HTML report file, which contains information about the STR loci, the called STR alleles, and nice visualizations of the data.
 
-## Table of Contents
-- [Installation](#installation)
-- [Usage](#usage)
-    - [The STR catalouge](#the-str-catalouge)
-
 ## Installation
 To set up the environment for this project, follow these steps:
 
