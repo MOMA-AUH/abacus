@@ -2,5 +2,6 @@
 **/*egg-info/*
 .vscode
 testing
+build
 .pytest_cache
 **/._*
