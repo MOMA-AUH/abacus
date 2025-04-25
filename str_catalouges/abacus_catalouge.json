@@ -67,6 +67,11 @@
         "ReferenceRegion": "chr16:66490398-66490453"
     },
     {
+        "LocusId": "BEAN1_alt",
+        "LocusStructure": "(TGGAA)*(TAAAA)*",
+        "ReferenceRegion": "chr16:66490398-66490453"
+    },
+    {
         "LocusId": "C9ORF72",
         "LocusStructure": "(GGCCCC)*",
         "ReferenceRegion": "chr9:27573528-27573546"
@@ -341,6 +346,11 @@
     {
         "LocusId": "XYLT1",
         "LocusStructure": "(GCC)*",
+        "ReferenceRegion": "chr16:17470907-17470922"
+    },
+    {
+        "LocusId": "XYLT1_alt",
+        "LocusStructure": "(GNN)*",
         "ReferenceRegion": "chr16:17470907-17470922"
     },
     {
