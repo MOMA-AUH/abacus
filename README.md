@@ -7,9 +7,9 @@
 
 ## Description
 
-Abacus is a tool for analyzing STR (Short Tandem Repeat) data from Long-Read Sequencing technologies. It is designed to work with data from the Oxford Nanopore Technologies (ONT) platform, but have also been tested with data from the Pacific Biosciences (PacBio) platform. The main goal of Abacus is to provide a user-friendly interface for analyzing STR data, and to provide a comprehensive report of the analysis results. 
+Abacus is a tool for analyzing STR (Short Tandem Repeat) data from Long-Read Sequencing technologies. It is designed to work with data from the Oxford Nanopore Technologies (ONT) platform, but has also been tested with data from the Pacific Biosciences (PacBio) platform. The main goal of Abacus is to provide a user-friendly interface for analyzing STR data and to provide a comprehensive report of the analysis results.
 
-Abacus works by first converting the entries of an STR catalogue (JSON) into graphs, which are then used to analyze the reads from an aligned BAM file. Each read in the BAM file is first mapped to the graph using [minigraph](https://github.com/lh3/minigraph) and the number of repeats of each satellite is calculated based on the resulting path. The reads are then grouped according to the satellite repeat counts and the STR alleles (haplotypes) are called based on these groups. The analysis results are then saved in an HTML report file, which contains information about the STR loci, the called STR alleles, and nice visualizations of the data.
+Abacus works by first converting the entries of an STR catalogue (JSON) into graphs, which are then used to analyze the reads from an aligned BAM file. Each read in the BAM file is first mapped to the graph using [minigraph](https://github.com/lh3/minigraph), and the number of repeats of each satellite is calculated based on the resulting path. The reads are then grouped according to the satellite repeat counts, and the STR alleles (haplotypes) are called based on these groups. The analysis results are then saved in an HTML report file, which contains information about the STR loci, the called STR alleles, and visualizations of the data.
 
 ## Installation
 To set up the environment for this project, follow these steps:
@@ -71,20 +71,22 @@ abacus \
 ### Configuration parameters
 The following configuration parameters allow fine-tuning of the analysis:
 
-- `--anchor-length`: Length of the left and right anchor sequences. Default: `50`.
-- `--min-anchor-overlap`: Minimum overlap between the read and the anchor sequence. Default: `10`.
-- `--min-qual`: Minimum median base quality in the STR region. Reads with lower quality will be filtered out. Default: `20`.
-- `--max-trim`: Maximum number of bases to trim from the ends of reads. Default: `5`.
-- `--error-rate-threshold`: Threshold for the error rate in the STR region. Reads with higher error rates will be filtered out. Default: `0.1`.
-- `--min-haplotype-depth`: Minimum allowed depth for each called haplotype. If the depth is lower, the locus will be called as homozygous. Default: `10`.
+- `--anchor-length`: Length of the left and right anchor sequences. Default: `500`.
+- `--min-anchor-overlap`: Minimum overlap between the read and the anchor sequence. Default: `200`.
+- `--min-str-qual`: Minimum median base quality in the STR region. Reads with lower quality will be filtered out. Default: `17`.
+- `--min-end-qual`: Minimum base quality at read ends. Used for trimming. Default: `15`.
+- `--trim-window-size`: Window size for trimming low-quality bases. Default: `10`.
+- `--max-trim`: Maximum number of bases to trim from the ends of reads. Default: `50`.
+- `--error-rate-threshold`: Threshold for the error rate in the STR region. Reads with higher error rates will be filtered out. Default: `0.2`.
+- `--min-haplotype-depth`: Minimum allowed depth for each called haplotype. If the depth is lower, the locus will be called as homozygous. Default: `3`.
 - `--heterozygozity-alpha`: Sensitivity cutoff for the heterozygosity test. This test focuses on differences in length between haplotypes. Default: `0.05`.
-- `--split-alpha`: Sensitivity cutoff for the split haplotype test. This test focuses on differences in read depth between haplotypes. Default: `0.05`.
+- `--split-alpha`: Sensitivity cutoff for the split haplotype test. This test focuses on differences in read depth between haplotypes. Default: `0.01`.
 
 ## The STR catalouge
 
 The STR catalogue is a JSON file that contains information about the STR loci that you want to analyze. Each entry in the catalogue should contain the following information:
 
-- `LocusId`: The identifier of the STR locus. This can be any string that uniquely identifies the locus. Is used to refer to the locus in the analysis results.
+- `LocusId`: The identifier of the STR locus. This can be any string that uniquely identifies the locus. It is used to refer to the locus in the analysis results.
 - `LocusStructure`: The structure of the STR locus, where each repeat unit is enclosed in parentheses and followed by an asterisk. For example, the structure of the ATXN1 locus: `(CTG)*`. The structure can contain any number of repeat units of any length and can contain [IUPAC](https://en.wikipedia.org/wiki/International_Union_of_Pure_and_Applied_Chemistry) base symbols, such as `N` or `Y`. The structure can also contain non-repeating sequences, such as flanking regions or interruptions. For example, the structure of the HTT locus: `(CAG)*CAACAG(CCG)*`, where `CAACAG` is a non-repeating sequence.
 - `ReferenceRegion`: The genomic region of the STR locus in the reference genome. This can be a single region of the entire structure of the STR locus, or a list of regions that cover the entire structure of the STR locus. The regions should be in the format `chr:start-end`, where `chr` is the chromosome name and `start` and `end` are the start and end positions of the region, respectively.
 
