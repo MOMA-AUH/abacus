@@ -46,22 +46,19 @@ def get_reads_in_locus(bam: Path, locus: Locus) -> list[Read]:
     reads = [trim_soft_clipped_bases(read, config.max_trim) for read in reads]
 
     # Filter reads with low quality bases
-    reads = [trim_low_quality_bases(read) for read in reads]
+    reads = [trim_low_quality_end_bases(read) for read in reads]
 
     return reads
 
 
-def trim_low_quality_bases(read: Read) -> Read:
+def trim_low_quality_end_bases(read: Read) -> Read:
     # If no read quality is available, return the read
     if not read.qualities:
         return read
 
     # Trim low quality bases
-    min_qual = 15
-    max_trim = 25
-
-    trim_start_index = next((i for i in range(max_trim) if read.qualities[i] >= min_qual), 0)
-    trim_end_index = next((j for j in range(max_trim) if read.qualities[-j - 1] >= min_qual), 0)
+    trim_start_index = next((i for i in range(config.max_trim) if min(read.qualities[i : i + config.trim_window_size]) >= config.min_end_qual), 0)
+    trim_end_index = next((j for j in range(config.max_trim) if min(read.qualities[-j - 1 - config.trim_window_size : -j - 1]) >= config.min_end_qual), 0)
 
     # If no trimming is needed, return the read
     if trim_start_index == 0 and trim_end_index == 0:

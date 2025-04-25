@@ -263,6 +263,12 @@ def get_heterozygote_labels_seq(
     # Get unique consensus haplotypes
     unique_haplotypes = {read_call.haplotype for read_call in consensus_read_calls}
     for read_call in read_calls:
+        # Skip if read call is spanning
+        if read_call.alignment.type == AlignmentType.SPANNING:
+            continue
+
+        # Find closest consensus and use this as haplotype
+        # Initialize
         closest_consensus = ""
         dist_to_closest = np.inf
         for haplotype in unique_haplotypes:
@@ -270,7 +276,7 @@ def get_heterozygote_labels_seq(
             haplotype_consensus_read_calls = [x for x in consensus_read_calls if x.haplotype == haplotype]
 
             # Get group probabilities using string distance
-            dist_to_consensus = calc_dist_to_consesus(
+            dist_to_consensus = calc_dist_to_consensus(
                 read_call=read_call,
                 consensus_read_calls=haplotype_consensus_read_calls,
             )
@@ -285,7 +291,7 @@ def get_heterozygote_labels_seq(
     return read_calls
 
 
-def calc_dist_to_consesus(
+def calc_dist_to_consensus(
     read_call: ReadCall,
     consensus_read_calls: list[ConsensusCall],
 ) -> float:

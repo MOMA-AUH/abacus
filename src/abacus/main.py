@@ -188,14 +188,30 @@ def abacus(
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.min_anchor_overlap,
-    min_qual: Annotated[
+    min_str_qual: Annotated[
         int,
         typer.Option(
-            "--min-qual",
+            "--min-str-qual",
             help="Minimum median base quality in STR region",
             rich_help_panel=CONFIGURATION,
         ),
-    ] = config.min_str_read_qual,
+    ] = config.min_str_qual,
+    min_end_qual: Annotated[
+        int,
+        typer.Option(
+            "--min-end-qual",
+            help="Minimum base quality at read ends. Used for trimming.",
+            rich_help_panel=CONFIGURATION,
+        ),
+    ] = config.min_end_qual,
+    trim_window_size: Annotated[
+        int,
+        typer.Option(
+            "--trim-window-size",
+            help="Window size for trimming low quality bases",
+            rich_help_panel=CONFIGURATION,
+        ),
+    ] = config.trim_window_size,
     max_trim: Annotated[
         int,
         typer.Option(
@@ -243,7 +259,9 @@ def abacus(
     # Setup configuration
     config.anchor_len = anchor_length
     config.min_anchor_overlap = min_anchor_overlap
-    config.min_str_read_qual = min_qual
+    config.min_str_qual = min_str_qual
+    config.min_end_qual = min_end_qual
+    config.trim_window_size = trim_window_size
     config.max_trim = max_trim
     config.error_rate_threshold = error_rate_threshold
     config.min_haplotype_depth = min_haplotype_depth
@@ -328,7 +346,7 @@ def abacus(
             haplotyped_read_calls = [r for r in grouped_read_calls if r.haplotype == haplotype]
             raw_consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype))
 
-        # Re-group read calls based on the raw consensus
+        # Re-group flanking read calls based on the raw consensus
         grouped_read_calls = get_heterozygote_labels_seq(
             read_calls=grouped_read_calls,
             consensus_read_calls=raw_consensus_calls,
@@ -380,17 +398,17 @@ def abacus(
         all_par_summaries_df.append(parameter_summary_df)
 
     # Create output directory
-    output_dir = report.parent / "abacus_output"
-    output_dir.mkdir(exist_ok=True)
+    working_dir = report.parent / "abacus_output"
+    working_dir.mkdir(exist_ok=True)
 
     # Write output files
-    reads_csv = output_dir / "reads.csv"
-    filtered_reads_csv = output_dir / "filtered_reads.csv"
-    consensus_csv = output_dir / "consensus.csv"
+    reads_csv = working_dir / "reads.csv"
+    filtered_reads_csv = working_dir / "filtered_reads.csv"
+    consensus_csv = working_dir / "consensus.csv"
 
-    haplotypes_csv = output_dir / "haplotypes.csv"
-    summary_csv = output_dir / "summary.csv"
-    par_summary_csv = output_dir / "par_summary.csv"
+    haplotypes_csv = working_dir / "haplotypes.csv"
+    summary_csv = working_dir / "summary.csv"
+    par_summary_csv = working_dir / "par_summary.csv"
 
     with Path.open(reads_csv, "w") as f:
         pd.DataFrame([r.to_dict() for r in all_read_calls]).to_csv(f, index=False)

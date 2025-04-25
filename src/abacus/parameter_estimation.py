@@ -193,17 +193,37 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     # Extract counts
     spanning_counts, flanking_counts, _ = unpack_read_calls(read_calls)
 
-    # Initialize counts
-    counts = spanning_counts.copy()
+    # Handle case with no reads
+    if not spanning_counts.size and not flanking_counts.size:
+        return HeterozygousParameters(
+            mean_h1=np.array([]),
+            mean_h2=np.array([]),
+            unit_var=np.array([]),
+            pi=np.float64(0),
+        )
+
+    # Handle case no spanning reads
+    if not spanning_counts.size:
+        # Get longest flanking read based on sum of counts
+        longest_flanking_idx = np.argmax(np.sum(flanking_counts, axis=1))
+        longest_flanking = flanking_counts[longest_flanking_idx]
+        mean_h1 = np.maximum(longest_flanking, 1) * 0.9
+        mean_h2 = np.maximum(longest_flanking, 1) * 1.1
+        return HeterozygousParameters(
+            mean_h1=mean_h1,
+            mean_h2=mean_h2,
+            unit_var=np.full_like(mean_h1, 0.5),
+            pi=np.float64(0.5),
+        )
 
     # If any flanking reads are longer than the median spanning read, add them to the counts
-    if flanking_counts.size > 0:
-        max_spanning_counts = np.max(spanning_counts, axis=0)
-        long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
+    max_spanning_counts = np.max(spanning_counts, axis=0)
+    long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
 
-        # Add long flanking reads to spanning reads
-        if long_flanking_reads.size > 0:
-            counts = np.concatenate((spanning_counts, long_flanking_reads))
+    # Add long flanking reads to spanning reads
+    counts = spanning_counts.copy()
+    if long_flanking_reads.size > 0:
+        counts = np.concatenate((counts, long_flanking_reads))
 
     # Sort counts by max count
     max_counts = np.max(counts, axis=1)
@@ -227,6 +247,20 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     robust_mean_h1 = (mean_h1 + median_h1) / 2
     robust_mean_h2 = (mean_h2 + median_h2) / 2
 
+    # Re-split counts based on distance to closest mean. Note that if equally close, the count is assigned to both groups
+    counts_h1 = np.array([x for x in counts if np.linalg.norm(x - robust_mean_h1) <= np.linalg.norm(x - robust_mean_h2)])
+    counts_h2 = np.array([x for x in counts if np.linalg.norm(x - robust_mean_h2) <= np.linalg.norm(x - robust_mean_h1)])
+
+    # Re-calculate means
+    mean_h1 = np.mean(counts_h1, axis=0)
+    mean_h2 = np.mean(counts_h2, axis=0)
+
+    median_h1 = np.median(counts_h1, axis=0)
+    median_h2 = np.median(counts_h2, axis=0)
+
+    robust_mean_h1 = (mean_h1 + median_h1) / 2
+    robust_mean_h2 = (mean_h2 + median_h2) / 2
+
     # Variance
     sd_h1 = np.sqrt(np.average((counts_h1 - robust_mean_h1) ** 2, axis=0))
     sd_h2 = np.sqrt(np.average((counts_h2 - robust_mean_h2) ** 2, axis=0))
@@ -240,8 +274,9 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     # Calculate robust variance
     unit_var_h1 = robust_sd_h1**2 / (robust_mean_h1 + 1e-5)
     unit_var_h2 = robust_sd_h2**2 / (robust_mean_h2 + 1e-5)
+    min_unit_var = np.minimum(unit_var_h1, unit_var_h2)
 
-    unit_var = np.average(np.array([unit_var_h1, unit_var_h2]), axis=0)
+    unit_var = np.average(np.array([unit_var_h1, unit_var_h2, min_unit_var]), axis=0)
     unit_var = np.maximum(unit_var, config.min_var)
 
     # Pi
@@ -264,16 +299,6 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
         unit_var=unit_var,
         pi=pi,
     )
-
-
-def weighted_median(x: np.ndarray, w: np.ndarray) -> np.ndarray:
-    res = np.zeros(x.shape[1])
-    for i in range(x.shape[1]):
-        idx = np.argsort(x[:, i])
-        cs = np.cumsum(w[idx])
-        cs /= cs[-1]
-        res[i] = x[idx, i][np.searchsorted(cs, 0.5)]
-    return res
 
 
 def estimate_mean_spanning(counts: np.ndarray, gamma: np.ndarray) -> np.ndarray:
@@ -381,18 +406,18 @@ def optimize_estimates_integers(
     spanning_counts, flanking_counts, is_left_flank = unpack_read_calls(read_calls)
 
     # Get initial estimates
-    dim = spanning_counts.shape[1]
+    dim = mean_h1_optim.shape[0]
 
     ranges_h1 = []
     for i in range(dim):
-        start = np.floor(mean_h1_optim[i]) - 1
+        start = np.floor(mean_h1_optim[i])
         start = np.maximum(start, 0)
         end = np.ceil(mean_h1_optim[i]) + 1
         ranges_h1.append(np.arange(start, end, 1))
 
     ranges_h2 = []
     for i in range(dim):
-        start = np.floor(mean_h2_optim[i]) - 1
+        start = np.floor(mean_h2_optim[i])
         start = np.maximum(start, 0)
         end = np.ceil(mean_h2_optim[i]) + 1
         ranges_h2.append(np.arange(start, end, 1))
@@ -415,7 +440,7 @@ def optimize_estimates_integers(
     # Loop through all combinations of mean_h1 and mean_h2
     for mean_h1_int, mean_h2_int in product(mean_grid_h1, mean_grid_h2):
         # Optimize variance and pi while keeping integer means fixed
-        dim = spanning_counts.shape[1]
+        dim = mean_h1_int.shape[0]
         optim_res = minimize(
             fun=lambda x, mean_h1_int=mean_h1_int, mean_h2_int=mean_h2_int, dim=dim: -calculate_log_likelihood_heterozygous(
                 spanning_counts=spanning_counts,
@@ -469,7 +494,7 @@ def optimize_estimates(
     pi_init = np.clip(pi_init, pi_bound[0], pi_bound[1])
 
     # Optimize log likelihood to find best mean
-    dim = spanning_counts.shape[1]
+    dim = mean_h1_init.shape[0]
     optim_res = minimize(
         fun=lambda x: -calculate_log_likelihood_heterozygous(
             spanning_counts=spanning_counts,
@@ -532,27 +557,30 @@ def refine_initial_estimates(
     # Get initial estimates
     if spanning_counts.size and flanking_counts.size:
         # Use max as initial estimates
-        mean_h1_init = np.maximum(mean_h1_spanning_init, mean_h1_flanking_init)
-        mean_h2_init = np.maximum(mean_h2_spanning_init, mean_h2_flanking_init)
+        mean_h1_refined = np.maximum(mean_h1_spanning_init, mean_h1_flanking_init)
+        mean_h2_refined = np.maximum(mean_h2_spanning_init, mean_h2_flanking_init)
     elif spanning_counts.size:
         # Get initial estimates from spanning reads only
-        mean_h1_init = mean_h1_spanning_init
-        mean_h2_init = mean_h2_spanning_init
+        mean_h1_refined = mean_h1_spanning_init
+        mean_h2_refined = mean_h2_spanning_init
     else:
         # Get initial estimates from flanking reads only
-        mean_h1_init = mean_h1_flanking_init
-        mean_h2_init = mean_h2_flanking_init
+        mean_h1_refined = mean_h1_flanking_init
+        mean_h2_refined = mean_h2_flanking_init
 
-    # Get initial estimates for unit variance
-    unit_var_init = estimate_unit_variance(spanning_counts, gamma_h1_spanning, gamma_h2_spanning, mean_h1_init, mean_h2_init)
+    # If spanning reads are present, use them to refine variance estimates - else use initial estimates
+    if spanning_counts.size:
+        unit_var_refined = estimate_unit_variance(spanning_counts, gamma_h1_spanning, gamma_h2_spanning, mean_h1_refined, mean_h2_refined)
+    else:
+        unit_var_refined = unit_var
 
     # Get initial estimate for pi
-    pi_init = np.float64(np.average(np.append(gamma_h1_spanning, gamma_h1_flanking)))
+    pi_refined = np.float64(np.average(np.append(gamma_h1_spanning, gamma_h1_flanking)))
     return HeterozygousParameters(
-        mean_h1=mean_h1_init,
-        mean_h2=mean_h2_init,
-        unit_var=unit_var_init,
-        pi=pi_init,
+        mean_h1=mean_h1_refined,
+        mean_h2=mean_h2_refined,
+        unit_var=unit_var_refined,
+        pi=pi_refined,
     )
 
 
@@ -646,27 +674,39 @@ def unpack_read_calls(
 def estimate_homozygous_parameters(
     read_calls: list[ReadCall],
 ) -> HomozygousParameters:
-    if not read_calls:
+    # Unpack read calls
+    spanning_counts, flanking_counts, is_left_flank = unpack_read_calls(read_calls)
+
+    # Handle case with no reads
+    if not spanning_counts.size and not flanking_counts.size:
         return HomozygousParameters(
             mean=np.array([]),
             unit_var=np.array([]),
         )
 
-    # Unpack read calls
-    spanning_counts, flanking_counts, is_left_flank = unpack_read_calls(read_calls)
+    # Handle case no spanning reads
+    if not spanning_counts.size:
+        # Get longest flanking read based on sum of counts
+        longest_flanking_idx = np.argmax(np.sum(flanking_counts, axis=1))
+        longest_flanking = flanking_counts[longest_flanking_idx]
+        mean = np.maximum(longest_flanking, 1)
+        return HomozygousParameters(
+            mean=mean,
+            unit_var=np.full_like(mean, 0.5),
+        )
 
-    # Combine spanning and flanking counts
-    if flanking_counts.size > 0:
-        max_spanning_counts = np.max(spanning_counts, axis=0)
-        long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
+    # If any flanking reads are longer than the median spanning read, add them to the counts
+    max_spanning_counts = np.max(spanning_counts, axis=0)
+    long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
 
-        # Add long flanking reads to spanning reads
-        if long_flanking_reads.size > 0:
-            spanning_counts = np.concatenate((spanning_counts, long_flanking_reads))
+    # Add long flanking reads to spanning reads
+    counts = spanning_counts.copy()
+    if long_flanking_reads.size > 0:
+        counts = np.concatenate((counts, long_flanking_reads))
 
     # Calculate initial estimates
-    mean_init = np.average(spanning_counts, axis=0)
-    unit_var_init = np.average((spanning_counts - mean_init) ** 2, axis=0) / (mean_init + 1e-5)
+    mean_init = np.average(counts, axis=0)
+    unit_var_init = np.average((counts - mean_init) ** 2, axis=0) / (mean_init + 1e-5)
 
     # Optimize estimates
     mean_optim, unit_var_optim = optimize_homozygous_estimates(
@@ -699,7 +739,7 @@ def optimize_estimates_integers_homozygous(
     mean_optim: np.ndarray,
     unit_var_optim: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    dim = spanning_counts.shape[1]
+    dim = mean_optim.shape[0]
 
     mean_ranges = []
     for i in range(dim):
@@ -722,7 +762,7 @@ def optimize_estimates_integers_homozygous(
     # Loop through all combinations of mean
     for mean_int in mean_grid:
         # Optimize variance while keeping integer means fixed
-        dim = spanning_counts.shape[1]
+        dim = mean_int.shape[0]
         optim_res = minimize(
             fun=lambda x, mean_int=mean_int, dim=dim: -calculate_log_likelihood_homozygous(
                 spanning_counts=spanning_counts,
@@ -761,7 +801,7 @@ def optimize_homozygous_estimates(
     unit_var_init = np.clip(unit_var_init, unit_var_bound[0], unit_var_bound[1])
 
     # Optimize log likelihood to find best mean
-    dim = spanning_counts.shape[1]
+    dim = mean_init.shape[0]
     optim_res = minimize(
         fun=lambda x: -calculate_log_likelihood_homozygous(
             spanning_counts=spanning_counts,

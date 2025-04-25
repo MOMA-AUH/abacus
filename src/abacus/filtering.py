@@ -25,7 +25,7 @@ def filter_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[
 
 def check_alignment_parameters(rc: ReadCall) -> None:
     # Check STR quality
-    if rc.alignment.str_median_quality < config.min_str_read_qual:
+    if rc.alignment.str_median_quality < config.min_str_qual:
         rc.add_outlier_reason("low_str_median_quality")
 
     # Check STR error rates
