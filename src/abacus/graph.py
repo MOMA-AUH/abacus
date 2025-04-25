@@ -78,19 +78,21 @@ def get_reference_sequence_from_path(path: list[str], locus: Locus) -> str:
             reference += break_seq
             continue
 
-        # For satellites, add the satellite sequence and check for ambiguous bases ie. if the next node is a sub_satellite
+        # Satellites and sub-satellites
+        # Add the satellite sequence
         if node.startswith("satellite"):
             satellite_idx = int(node.split("_")[1])
             satellite_seq = locus.satellites[satellite_idx].sequence
             reference += satellite_seq
-            continue
 
-        if node.startswith("sub_satellite") and any(node.endswith(s) for s in ["_A", "_T", "_C", "_G"]):
+        # Handle ambiguous bases
+        if node.startswith(("satellite", "sub_satellite")) and any(node.endswith(s) for s in ["_A", "_T", "_C", "_G"]):
             # Ambiguous base
             base = node[-1]
-            satellite_idx = int(node.split("_")[2])
+            index = node.removeprefix("sub_").removeprefix("satellite_")
+            satellite_idx = int(index.split("_")[0])
             satellite_length = len(locus.satellites[satellite_idx].sequence)
-            # Change the first ambiguous base to base
+            # Look at the last bases of the reference sequence and replace the first ambiguous base
             for i in range(len(reference) - satellite_length, len(reference)):
                 c = reference[i]
                 if c in AMBIGUOUS_BASES_DICT:
