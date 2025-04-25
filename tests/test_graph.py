@@ -5,8 +5,8 @@ import pysam
 import pytest
 
 from abacus.config import config
-from abacus.graph import Locus, Read, get_graph_alignments, get_kmer_string, get_satellite_counts_from_path
-from abacus.locus import Location, create_satellites, process_str_pattern
+from abacus.graph import Locus, Read, get_graph_alignments, get_kmer_string, get_reference_sequence_from_path, get_satellite_counts_from_path
+from abacus.locus import Location, Satellite, create_satellites, process_str_pattern
 
 
 @pytest.mark.parametrize(
@@ -348,6 +348,47 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
     assert observed_kmer_string == expected_observed_kmer_string
 
 
+@pytest.mark.parametrize(
+    ("path", "reference_seq", "expected_reference"),
+    [
+        pytest.param(
+            ["left_anchor", "satellite_0", "right_anchor"],
+            "TCG",
+            "TCG",
+            id="Simple path with 1 satellite",
+        ),
+        pytest.param(
+            ["left_anchor", "satellite_0_0_G", "sub_satellite_0_1", "right_anchor"],
+            "NGC",
+            "GGC",
+            id="Ambiguous base in path (first base)",
+        ),
+        pytest.param(
+            [
+                "left_anchor",
+                "satellite_0_0",
+                "sub_satellite_0_1_G",
+                "sub_satellite_0_2_A",
+                "sub_satellite_0_3",
+                "satellite_0_0",
+                "sub_satellite_0_1_A",
+                "sub_satellite_0_2_G",
+                "sub_satellite_0_3",
+                "right_anchor",
+            ],
+            "AARRG",
+            "AAGAGAAAGG",
+            id="Ambiguous bases (RFC1)",
+        ),
+    ],
+)
+def test_get_reference_sequence_from_path(path: list[str], reference_seq: str, expected_reference: str):
+    # Create a dummy locus
+    locus = create_synthetic_simple_locus(reference_seq)
+    reference = get_reference_sequence_from_path(path, locus)
+    assert reference == expected_reference
+
+
 def create_aligned_segment(query_name: str, query_sequence: str, mm_tag: str, ml_tag: list[int]) -> pysam.AlignedSegment:
     a = pysam.AlignedSegment()
     a.query_name = query_name
@@ -357,6 +398,31 @@ def create_aligned_segment(query_name: str, query_sequence: str, mm_tag: str, ml
     a.set_tag("MM", mm_tag)
     a.set_tag("ML", array.array("B", ml_tag))
     return a
+
+
+def create_synthetic_simple_locus(satellite_seq: str):
+    # Create random anchors
+    left_anchor = ""
+    right_anchor = ""
+
+    # Create a simple locus with one satellite
+    locus = Locus(
+        id="test",
+        structure="test",
+        location=Location(chrom="chr1", start=1000, end=2000),
+        satellites=[
+            Satellite(
+                id="test",
+                sequence=satellite_seq,
+                location=Location("chr1", 1000, 2000),
+                skippable=False,
+            ),
+        ],
+        breaks=["", ""],
+        left_anchor=left_anchor,
+        right_anchor=right_anchor,
+    )
+    return locus
 
 
 # Note: Probs are represented with ASCII, i.e.:
