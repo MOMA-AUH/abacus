@@ -71,6 +71,14 @@ consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/
 clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/haplotypes.csv"
 test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/summary.csv"
 par_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/par_summary.csv"
+
+
+reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/reads.csv"
+filtered_reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/filtered_reads.csv"
+consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/consensus.csv"
+clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/haplotypes.csv"
+test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/summary.csv"
+par_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/par_summary.csv"
 ```
 
 ```{r Load data}
@@ -583,12 +591,11 @@ regions <- reads_df %>%
 for (i in seq_len(nrow(regions))) {
   selected_region <- regions[i, ]
 
-  # Filter data
+  # Filter data to selected region
   reads_region_df <- reads_df %>%
     semi_join(selected_region, by = join_by(locus_id)) %>%
     wrangle_reads_data()
 
-  # TODO: Is this if statement needed?
   if (nrow(filtered_reads_df) > 0) {
     filtered_reads_region_df <- filtered_reads_df %>%
       semi_join(selected_region, by = join_by(locus_id))
@@ -605,8 +612,13 @@ for (i in seq_len(nrow(regions))) {
   signif_par_summary_region_df <- signif_par_summary_df %>%
     semi_join(selected_region, by = join_by(locus_id))
 
-  res_region_df <- clustering_summary_df %>%
+  clustering_summary_region_df <- clustering_summary_df %>%
     semi_join(selected_region, by = join_by(locus_id))
+
+  # Calculate coverage
+  n_haplotyped_reads <- nrow(reads_region_df %>% filter(haplotype != "outlier"))
+  n_outlier_reads <- nrow(reads_region_df %>% filter(haplotype == "outlier"))
+  n_filtered_reads <- nrow(filtered_reads_region_df)
 
 
   # Create heading - Note this is a tab
@@ -659,7 +671,6 @@ for (i in seq_len(nrow(regions))) {
   no_haplotype_reads <- nrow(kmer_haplotyped_df) == 0
   no_outlier_reads <- nrow(kmer_outlier_df) == 0
 
-  # TODO
   # Get color palette
   # Get kmers that should be prioritized for color
   # Ref kmers
@@ -692,7 +703,7 @@ for (i in seq_len(nrow(regions))) {
   kmer_color_palette <- generate_kmer_color_palette(top_kmers)
 
   cat("\n\n")
-  cat("#### Sequence")
+  cat("#### Sequence (N=", n_haplotyped_reads, ")", sep = "")
   cat("\n\n")
 
   if (no_haplotype_reads) {
@@ -728,7 +739,7 @@ for (i in seq_len(nrow(regions))) {
   }
 
   cat("\n\n")
-  cat("#### Outliers")
+  cat("#### Outliers (N=", n_outlier_reads, ")", sep = "")
   cat("\n\n")
 
   if (no_outlier_reads) {
@@ -780,38 +791,10 @@ for (i in seq_len(nrow(regions))) {
     cat()
 
   cat("\n\n")
-  cat("#### Coverage summary")
-  cat("\n\n")
-
-  data.frame(
-    total_coverage = nrow(reads_region_df) + nrow(filtered_reads_region_df),
-    filtered_reads = nrow(filtered_reads_region_df),
-    outliers = nrow(reads_region_df %>% filter(haplotype == "outlier")),
-    haplotyped_reads = nrow(reads_region_df %>% filter(haplotype != "outlier"))
-  ) %>%
-    select(
-      "Total coverage" = total_coverage,
-      "Used for haplotyping" = haplotyped_reads,
-      "Filtered" = filtered_reads,
-      "Outliers" = outliers,
-    ) %>%
-    kbl(
-      align = "c"
-    ) %>%
-    kable_styling("bordered", full_width = TRUE) %>%
-    row_spec(
-      0,
-      background = HEADER_BACKGROUND
-    ) %>%
-    cat()
-
-  cat("\n\n")
   cat("#### Group summaries")
   cat("\n\n")
 
-  res_region_df %>%
-    # Remvoe outlier group
-    filter(haplotype != "outlier") %>%
+  clustering_summary_region_df %>%
     # Arrange by satellite and haplotype
     arrange(idx, haplotype) %>%
     # Select parameters, round and print
@@ -841,33 +824,39 @@ for (i in seq_len(nrow(regions))) {
   cat("\n\n")
 
   cat("\n\n")
-  cat("#### Passed")
+  cat("#### Passed (N=", n_haplotyped_reads, ")", sep = "")
   cat("\n\n")
 
-  reads_region_df %>%
-    filter(haplotype != "outlier") %>%
-    select(
-      "Haplotype" = haplotype,
-      "Read ID" = read_id,
-      "Query Name" = query_name,
-      "Alignment Type" = alignment_type,
-      "Median STR Qual" = median_str_qual,
-      "Kmer Count" = kmer_count_str
-    ) %>%
-    mutate_if(is.numeric, ~ round(., 3)) %>%
-    kbl(
-      align = "c"
-    ) %>%
-    kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
-    row_spec(
-      0,
-      background = HEADER_BACKGROUND
-    ) %>%
-    collapse_rows(columns = 1, valign = "middle") %>%
-    cat()
+  passed_reads_region_df <- reads_region_df %>%
+    filter(haplotype != "outlier")
+
+  if (nrow(passed_reads_region_df) == 0) {
+    cat("There are no haplotyped reads for this locus.")
+  } else {
+    passed_reads_region_df %>%
+      select(
+        "Haplotype" = haplotype,
+        "Read ID" = read_id,
+        "Query Name" = query_name,
+        "Alignment Type" = alignment_type,
+        "Median STR Qual" = median_str_qual,
+        "Kmer Count" = kmer_count_str
+      ) %>%
+      mutate_if(is.numeric, ~ round(., 3)) %>%
+      kbl(
+        align = "c"
+      ) %>%
+      kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
+      row_spec(
+        0,
+        background = HEADER_BACKGROUND
+      ) %>%
+      collapse_rows(columns = 1, valign = "middle") %>%
+      cat()
+  }
 
   cat("\n\n")
-  cat("#### Outliers")
+  cat("#### Outliers (N=", n_outlier_reads, ")", sep = "")
   cat("\n\n")
 
   if (no_outlier_reads) {
@@ -900,7 +889,7 @@ for (i in seq_len(nrow(regions))) {
   }
 
   cat("\n\n")
-  cat("#### Filtered")
+  cat("#### Filtered reads (N=", n_filtered_reads, ")", sep = "")
   cat("\n\n")
 
   if (nrow(filtered_reads_region_df) > 0) {
@@ -934,16 +923,17 @@ for (i in seq_len(nrow(regions))) {
   cat("From each haplotype, a consensus sequence is generated. The consensus sequence is created as the 'median' of the observed sequences. The consensus sequence is shown in the table below, together an abacus plot showing the inividual $k$-mers.")
 
   # Create Abacus plots
-  consensus_kmer_df <- consensus_region_df %>%
-    wrangle_reads_to_kmers()
 
   if (nrow(consensus_region_df) > 0) {
+    consensus_kmer_df <- consensus_region_df %>%
+      wrangle_reads_to_kmers()
+
     consensus_kmer_plot <- create_kmer_plot(consensus_kmer_df, "kmer", kmer_color_palette)
     print(consensus_kmer_plot)
   } else {
     cat("There is no consensus sequence for this locus.")
   }
-  
+
   # Consensus table
   cat("\n\n")
   cat("#### Consensus sequences")
