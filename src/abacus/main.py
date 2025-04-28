@@ -362,7 +362,7 @@ def abacus(
 
         het_params_dict[locus.id] = het_params
         hom_params_dict[locus.id] = hom_params
-        locus_is_het_dict[locus.id] = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2]
+        locus_is_het_dict[locus.id] = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2] if grouped_read_calls else False
 
         # Summarize haplotype estimation
         parameter_summary_df = summarize_parameter_estimates(het_params, hom_params)
