@@ -96,6 +96,7 @@ ALIGNMENT_TYPES <- c("left_flanking", "spanning", "right_flanking")
 # Colors
 HEADER_BACKGROUND <- "grey87"
 STRIPED_BACKGROUND <- "grey97"
+ATTENTION_COLOR = "#FF5733"
 ```
 
 ```{r Functions}
@@ -531,7 +532,7 @@ signif_par_summary_df <- all_par_summary_df %>%
   # Arrange by satellite and haplotype
   arrange(locus_id, idx, haplotype)
 
-background_row_index <- signif_par_summary_df %>%
+stripped_row_index <- signif_par_summary_df %>%
   # Get row index
   group_by(locus_id) %>%
   summarise(
@@ -548,6 +549,12 @@ background_row_index <- signif_par_summary_df %>%
   ) %>%
   unnest(x) %>%
   pull(x)
+
+wide_ci_row_index <- signif_par_summary_df %>%
+  mutate(
+    is_ci_wide = mean_upper - mean_lower > 2
+  ) %>%
+  pull(is_ci_wide)
 
 signif_par_summary_df %>%
   # Round to 2 decimals
@@ -566,16 +573,34 @@ signif_par_summary_df %>%
   ) %>%
   column_spec(1, italic = TRUE) %>%
   kable_styling("bordered", full_width = TRUE) %>%
-  collapse_rows(columns = c(1, 2), valign = "middle", target = 1, ) %>%
   row_spec(
     0,
     background = HEADER_BACKGROUND
   ) %>%
   # Add background color to every other row
   row_spec(
-    background_row_index,
+    stripped_row_index,
     background = STRIPED_BACKGROUND
-  )
+  ) %>%
+  # If confidence interval is wide, highlight the text in the corresponding cell
+  column_spec(
+    5:6,
+    color = if_else(
+      wide_ci_row_index,
+      ATTENTION_COLOR,
+      "black"
+    ),
+    bold = wide_ci_row_index
+  ) %>%
+  collapse_rows(columns = c(1, 2), valign = "middle", target = 1, )
+```
+
+```{r Color comment , results = "asis"}
+if (length(wide_ci_row_index) > 0) {
+  cat("\n\n")
+  cat("**Note:** Some confidence intervals are wide (>2) and are highlighted in orange. This indicates that the estimate may be uncertain.")
+  cat("\n\n")
+}
 ```
 
 ```{r Build report, results = "asis"}
