@@ -13,13 +13,11 @@ from abacus.parameter_estimation import (
     calculate_grouping_probabilities_spanning,
     calculate_log_likelihood_heterozygous,
     calculate_log_likelihood_homozygous,
-    estimate_confidence_intervals_heterozygous,
-    estimate_confidence_intervals_homozygous,
     estimate_heterozygous_parameters,
     estimate_homozygous_parameters,
     unpack_read_calls,
 )
-from abacus.utils import AlignmentType
+from abacus.utils import AlignmentType, Haplotype
 
 
 def run_haplotyping(
@@ -41,10 +39,11 @@ def run_haplotyping(
         # Assign labels to reads
         if ploidy == 1:
             # Assign labels to reads
-            grouped_read_calls = [read.set_haplotype("hom") for read in read_calls]
+            grouped_read_calls = [read.set_haplotype(Haplotype.HOM) for read in read_calls]
         else:
-            # Assign labels to reads
+            # Estimate heterozygous parameters
             het_params = estimate_heterozygous_parameters(read_calls)
+            # Assign labels to reads
             grouped_read_calls = add_heterozygote_labels(
                 read_calls,
                 het_params,
@@ -72,6 +71,10 @@ def run_haplotyping(
             mean_h2=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
             unit_var=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
             pi=np.float64(np.nan),
+            mean_h1_ci_low=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
+            mean_h1_ci_high=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
+            mean_h2_ci_low=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
+            mean_h2_ci_high=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
         )
 
         test_summary_df = summarize_test_statistics(
@@ -104,7 +107,7 @@ def run_haplotyping(
     split_test_significant = bool(split_p_value < config.split_alpha)
     if not heterozygosity_test_significant or split_test_significant:
         for read in grouped_read_calls:
-            read.set_haplotype("hom")
+            read.set_haplotype(Haplotype.HOM)
 
     # Summarize test statistics
     test_summary_df = summarize_test_statistics(
@@ -140,11 +143,17 @@ def create_empty_results() -> tuple[list[ReadCall], list[ReadCall], Heterozygous
         mean_h2=np.full(1, np.nan, dtype=np.float64),
         unit_var=np.full(1, np.nan, dtype=np.float64),
         pi=np.float64(np.nan),
+        mean_h1_ci_low=np.full(1, np.nan, dtype=np.float64),
+        mean_h1_ci_high=np.full(1, np.nan, dtype=np.float64),
+        mean_h2_ci_low=np.full(1, np.nan, dtype=np.float64),
+        mean_h2_ci_high=np.full(1, np.nan, dtype=np.float64),
     )
 
     hom_params = HomozygousParameters(
-        mean=np.full(1, np.nan, dtype=np.float64),
-        unit_var=np.full(1, np.nan, dtype=np.float64),
+        mean=np.array([np.nan], dtype=np.float64),
+        unit_var=np.array([np.nan], dtype=np.float64),
+        mean_ci_low=np.array([np.nan], dtype=np.float64),
+        mean_ci_high=np.array([np.nan], dtype=np.float64),
     )
 
     return [], [], het_params, hom_params, summary_res_df
@@ -176,7 +185,7 @@ def add_heterozygote_labels(
 
     for i, read in enumerate(spanning_reads):
         # Assign labels based on maximum probability
-        read.set_haplotype("h1" if p_group_h1_spanning[i] > p_group_h2_spanning[i] else "h2")
+        read.set_haplotype(Haplotype.H1 if p_group_h1_spanning[i] > p_group_h2_spanning[i] else Haplotype.H2)
 
     # Add labels to flanking reads
     flanking_counts = np.array([read.satellite_count for read in flanking_reads])
@@ -194,7 +203,7 @@ def add_heterozygote_labels(
 
     for i, read in enumerate(flanking_reads):
         # Assign labels based on maximum probability
-        read.set_haplotype("h1" if p_group_h1_flanking[i] > p_group_h2_flanking[i] else "h2")
+        read.set_haplotype(Haplotype.H1 if p_group_h1_flanking[i] > p_group_h2_flanking[i] else Haplotype.H2)
 
     return spanning_reads + flanking_reads
 
@@ -402,41 +411,16 @@ def summarize_test_statistics(
 
 
 def summarize_parameter_estimates(
-    read_calls: list[ReadCall],
     het_params: HeterozygousParameters,
     hom_params: HomozygousParameters,
 ) -> pd.DataFrame:
-    # If nan in het_params, set confidence intervals to nan
-    if np.isnan(het_params.mean_h1).any() or np.isnan(het_params.mean_h2).any():
-        het_conf_mean_h1_lower = np.full_like(hom_params.mean, np.nan, dtype=np.float64)
-        het_conf_mean_h1_upper = np.full_like(hom_params.mean, np.nan, dtype=np.float64)
-        het_conf_mean_h2_lower = np.full_like(hom_params.mean, np.nan, dtype=np.float64)
-        het_conf_mean_h2_upper = np.full_like(hom_params.mean, np.nan, dtype=np.float64)
-    # Estimate confidence intervals means
-    else:
-        het_conf_mean_h1_lower, het_conf_mean_h1_upper, het_conf_mean_h2_lower, het_conf_mean_h2_upper = estimate_confidence_intervals_heterozygous(
-            read_calls,
-            het_params.mean_h1,
-            het_params.mean_h2,
-            het_params.unit_var,
-            het_params.pi,
-        )
-
-    # If nan in hom_params, set confidence intervals to nan
-    if np.isnan(hom_params.mean).any():
-        hom_conf_mean_lower = np.full_like(hom_params.mean, np.nan, dtype=np.float64)
-        hom_conf_mean_upper = np.full_like(hom_params.mean, np.nan, dtype=np.float64)
-    else:
-        # Estimate confidence intervals means
-        hom_conf_mean_lower, hom_conf_mean_upper = estimate_confidence_intervals_homozygous(read_calls, hom_params.mean, hom_params.unit_var)
-
     # Gather results
     result_data = [
         {
             "haplotype": "h1",
             "mean": het_params.mean_h1,
-            "mean_lower": het_conf_mean_h1_lower,
-            "mean_upper": het_conf_mean_h1_upper,
+            "mean_lower": het_params.mean_h1_ci_low,
+            "mean_upper": het_params.mean_h1_ci_high,
             "unit_var": het_params.unit_var,
             "pi": het_params.pi,
             "idx": list(range(len(het_params.mean_h1))),
@@ -444,8 +428,8 @@ def summarize_parameter_estimates(
         {
             "haplotype": "h2",
             "mean": het_params.mean_h2,
-            "mean_lower": het_conf_mean_h2_lower,
-            "mean_upper": het_conf_mean_h2_upper,
+            "mean_lower": het_params.mean_h2_ci_low,
+            "mean_upper": het_params.mean_h2_ci_high,
             "unit_var": het_params.unit_var,
             "pi": 1 - het_params.pi,
             "idx": list(range(len(het_params.mean_h2))),
@@ -453,8 +437,8 @@ def summarize_parameter_estimates(
         {
             "haplotype": "hom",
             "mean": hom_params.mean,
-            "mean_lower": hom_conf_mean_lower,
-            "mean_upper": hom_conf_mean_upper,
+            "mean_lower": hom_params.mean_ci_low,
+            "mean_upper": hom_params.mean_ci_high,
             "unit_var": hom_params.unit_var,
             "pi": 1,
             "idx": list(range(len(hom_params.mean))),

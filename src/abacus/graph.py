@@ -14,7 +14,7 @@ from abacus.config import config
 from abacus.locus import Locus
 from abacus.logging import logger
 from abacus.read import FilteredRead, Read
-from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType, compute_error_rate
+from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType, Haplotype, compute_error_rate
 
 
 def sync_cigar(cigar: str) -> list[str]:
@@ -772,7 +772,7 @@ class ReadCall:
     mod_5mc_kmer_string: str
 
     # Grouped read call
-    haplotype: str = "none"
+    haplotype: Haplotype = Haplotype.NONE
     outlier_reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -792,12 +792,12 @@ class ReadCall:
         return self
 
     def add_outlier_reasons(self, reasons: list[str]) -> ReadCall:
-        self.haplotype = "outlier"
+        self.haplotype = Haplotype.OUTLIER
         self.outlier_reasons.extend(reasons)
 
         return self
 
-    def set_haplotype(self, haplotype: str) -> ReadCall:
+    def set_haplotype(self, haplotype: Haplotype) -> ReadCall:
         self.haplotype = haplotype
 
         return self

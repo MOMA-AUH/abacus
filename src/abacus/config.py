@@ -17,6 +17,10 @@ class Config:
     max_trim: int = 50
     error_rate_threshold: float = 0.2
 
+    # Output parameters
+    add_consensus_to_vcf: bool = False
+    add_contracted_consensus_to_vcf: bool = False
+
     # Haplotype parameters
     min_sd: float = 0.05
     min_var: float = field(init=False)

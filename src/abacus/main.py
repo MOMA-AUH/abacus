@@ -19,16 +19,17 @@ from abacus.group_summary import calculate_final_group_summaries
 from abacus.haplotyping import run_haplotyping, summarize_parameter_estimates
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
+from abacus.parameter_estimation import HeterozygousParameters, HomozygousParameters
 from abacus.preprocess import get_reads_in_locus
 from abacus.str_vcf import write_vcf
-from abacus.utils import Sex
+from abacus.utils import Haplotype, Sex
 
 ascii_art = r"""
 ╔═══════════════════════════════════════════════════════════════════╗
 ║    =|=                                                   =--|--=  ║
 ║   =-|-=                    --- ~•~ ---                    =-|-=   ║
 ║  =--|--=      _     ___     _      ___   _   _    ___      =|=    ║
-║   =-|-=      / \   | _ )   / \    / __/ | | | |  / __|    =-|-=   ║
+║   =-|-=      / \   | _ )   / \    / __/ | | | |  / __/    =-|-=   ║
 ║    =|=      / _ \  | _ \  / _ \  | (__  | |_| |  \__ \   =--|--=  ║
 ║   =-|-=    /_/ \_\ |___/ /_/ \_\  \___\  \___/   \___/    =-|-=   ║
 ║  =--|--=                                                   =|=    ║
@@ -157,6 +158,22 @@ def abacus(
             case_sensitive=False,
         ),
     ] = Sex.XX,
+    add_consensus_to_vcf: Annotated[
+        bool,
+        typer.Option(
+            "--add-consensus-to-vcf",
+            help="Add consensus calls to VCF file",
+            rich_help_panel=OUTPUTS,
+        ),
+    ] = config.add_consensus_to_vcf,
+    add_contracted_consensus_to_vcf: Annotated[
+        bool,
+        typer.Option(
+            "--add-contracted-consensus-to-vcf",
+            help="Add contracted consensus calls to VCF file",
+            rich_help_panel=OUTPUTS,
+        ),
+    ] = config.add_contracted_consensus_to_vcf,
     log_file: Annotated[
         Path,
         typer.Option(
@@ -268,8 +285,10 @@ def abacus(
     config.het_alpha = heterozygozity_alpha
     config.split_alpha = split_alpha
 
+    config.add_consensus_to_vcf = add_consensus_to_vcf
+    config.add_contracted_consensus_to_vcf = add_contracted_consensus_to_vcf
+
     # Welcome message
-    # TODO: Update logs with welcome, and loci messages
     logger.info(ascii_art)
 
     # Load loci data from JSON
@@ -281,6 +300,11 @@ def abacus(
         raise typer.Exit(code=1)
 
     # Initialize output data
+    het_params_dict: dict[str, HeterozygousParameters] = {}
+    hom_params_dict: dict[str, HomozygousParameters] = {}
+
+    locus_is_het_dict: dict[str, bool] = {}
+
     all_read_calls: list[ReadCall] = []
     all_filtered_reads: list[FilteredRead] = []
     all_consensus_calls: list[ConsensusCall] = []
@@ -336,8 +360,12 @@ def abacus(
 
         filtered_read_calls.extend(outlier_read_calls)
 
+        het_params_dict[locus.id] = het_params
+        hom_params_dict[locus.id] = hom_params
+        locus_is_het_dict[locus.id] = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2]
+
         # Summarize haplotype estimation
-        parameter_summary_df = summarize_parameter_estimates(grouped_read_calls, het_params, hom_params)
+        parameter_summary_df = summarize_parameter_estimates(het_params, hom_params)
 
         # Create raw consensus for each haplotype
         unique_haplotypes = {r.haplotype for r in grouped_read_calls}
@@ -430,6 +458,9 @@ def abacus(
         consensus_calls=all_consensus_calls,
         reference=ref,
         sample_id=sample_id,
+        het_params_dict=het_params_dict,
+        hom_params_dict=hom_params_dict,
+        locus_is_het_dict = locus_is_het_dict,
     )
 
     # Render report

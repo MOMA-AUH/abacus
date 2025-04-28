@@ -8,6 +8,7 @@ from spoa import poa
 
 from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
 from abacus.locus import Locus
+from abacus.utils import Haplotype
 
 
 @dataclass
@@ -15,9 +16,7 @@ class ConsensusCall(ReadCall):
     spanning_reads: int = 0
     flanking_reads: int = 0
 
-    # TODO: When assembly is used this should be a list (maybe one for left and right flanking, if not spanning available)
     consensus_string: str = field(init=False)
-    # TODO: Add EM "count", i.e. estimated means from EM algorithm
 
     def __post_init__(self: "ConsensusCall") -> None:
         self.consensus_string = contract_kmer_string(self.obs_kmer_string)
@@ -71,7 +70,7 @@ def contract_kmer_string(kmer_string: str) -> str:
     return contracted_kmer
 
 
-def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[ConsensusCall]:
+def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> list[ConsensusCall]:
     locus = read_calls[0].alignment.locus
 
     # Split read calls by alignment type
@@ -85,7 +84,6 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[C
     right_flanking_sequences: list[list[str]] = [s.obs_kmer_string.split("-") for s in right_flanking_read_calls]
 
     spanning_count: int = len(spanning_sequences)
-    # TODO: Should this be split?
     flanking_count: int = len(left_flanking_sequences) + len(right_flanking_sequences)
 
     # For flanking reads remove last kmer
@@ -164,7 +162,7 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: str) -> list[C
     return [
         ConsensusCall.from_read_call(
             read_call=consensus_read_call,
-            spanning_reads=spanning_count,  # TODO: These counts are not right!
+            spanning_reads=spanning_count,
             flanking_reads=flanking_count,
         )
         for consensus_read_call in consensus_read_calls
@@ -269,7 +267,7 @@ def get_heterozygote_labels_seq(
 
         # Find closest consensus and use this as haplotype
         # Initialize
-        closest_consensus = ""
+        closest_consensus = Haplotype.NONE
         dist_to_closest = np.inf
         for haplotype in unique_haplotypes:
             # Get consensus read calls for this haplotype

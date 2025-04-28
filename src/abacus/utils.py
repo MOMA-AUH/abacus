@@ -34,6 +34,14 @@ class Sex(StrEnum):
     XY = "XY"
 
 
+class Haplotype(StrEnum):
+    H1 = auto()
+    H2 = auto()
+    HOM = auto()
+    OUTLIER = auto()
+    NONE = auto()
+
+
 def compute_error_rate(s1: str, s2: str, indel_cost: float = 1, replace_cost: float = 1) -> float:
     # If reference and sequence are empty, return 0
     if not s1 and not s2:

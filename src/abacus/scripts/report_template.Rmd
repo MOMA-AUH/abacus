@@ -1125,7 +1125,7 @@ for (i in seq_len(nrow(regions))) {
   cat("\n\n")
   cat("#### Maximum likelihood estimates")
   cat("\n\n")
-  # TODO: Add CI
+
   cat("\n\n")
   cat("##### Mean")
   cat("\n\n")

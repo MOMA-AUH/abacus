@@ -18,12 +18,18 @@ class HeterozygousParameters:
     mean_h2: np.ndarray
     unit_var: np.ndarray
     pi: np.float64
+    mean_h1_ci_low: np.ndarray
+    mean_h1_ci_high: np.ndarray
+    mean_h2_ci_low: np.ndarray
+    mean_h2_ci_high: np.ndarray
 
 
 @dataclass
 class HomozygousParameters:
     mean: np.ndarray
     unit_var: np.ndarray
+    mean_ci_low: np.ndarray
+    mean_ci_high: np.ndarray
 
 
 def safe_log(x: np.ndarray | np.float64) -> np.ndarray | np.float64:
@@ -200,6 +206,10 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
             mean_h2=np.array([]),
             unit_var=np.array([]),
             pi=np.float64(0),
+            mean_h1_ci_low=np.array([]),
+            mean_h1_ci_high=np.array([]),
+            mean_h2_ci_low=np.array([]),
+            mean_h2_ci_high=np.array([]),
         )
 
     # Handle case no spanning reads
@@ -214,6 +224,10 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
             mean_h2=mean_h2,
             unit_var=np.full_like(mean_h1, 0.5),
             pi=np.float64(0.5),
+            mean_h1_ci_low=np.full_like(mean_h1, np.nan),
+            mean_h1_ci_high=np.full_like(mean_h1, np.nan),
+            mean_h2_ci_low=np.full_like(mean_h2, np.nan),
+            mean_h2_ci_high=np.full_like(mean_h2, np.nan),
         )
 
     # If any flanking reads are longer than the median spanning read, add them to the counts
@@ -298,6 +312,10 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
         mean_h2=robust_mean_h2,
         unit_var=unit_var,
         pi=pi,
+        mean_h1_ci_low=np.full_like(robust_mean_h1, np.nan),
+        mean_h1_ci_high=np.full_like(robust_mean_h1, np.nan),
+        mean_h2_ci_low=np.full_like(robust_mean_h2, np.nan),
+        mean_h2_ci_high=np.full_like(robust_mean_h2, np.nan),
     )
 
 
@@ -359,6 +377,10 @@ def estimate_heterozygous_parameters(
             mean_h2=np.array([]),
             unit_var=np.array([]),
             pi=np.float64(0),
+            mean_h1_ci_low=np.array([]),
+            mean_h1_ci_high=np.array([]),
+            mean_h2_ci_low=np.array([]),
+            mean_h2_ci_high=np.array([]),
         )
 
     # Step 1: Calculate initial estimates
@@ -386,12 +408,32 @@ def estimate_heterozygous_parameters(
     )
 
     # Step 4: Find best integer estimates around optimal estimate
-    return optimize_estimates_integers(
+    par_int = optimize_estimates_integers(
         read_calls,
         par_optim.mean_h1,
         par_optim.mean_h2,
         par_optim.unit_var,
         par_optim.pi,
+    )
+
+    # Step 5: Calculate confidence intervals
+    conf_mean_h1_lower, conf_mean_h1_upper, conf_mean_h2_lower, conf_mean_h2_upper = estimate_confidence_intervals_heterozygous(
+        read_calls,
+        par_int.mean_h1,
+        par_int.mean_h2,
+        par_int.unit_var,
+        par_int.pi,
+    )
+
+    return HeterozygousParameters(
+        mean_h1=par_int.mean_h1,
+        mean_h2=par_int.mean_h2,
+        unit_var=par_int.unit_var,
+        pi=par_int.pi,
+        mean_h1_ci_low=conf_mean_h1_lower,
+        mean_h1_ci_high=conf_mean_h1_upper,
+        mean_h2_ci_low=conf_mean_h2_lower,
+        mean_h2_ci_high=conf_mean_h2_upper,
     )
 
 
@@ -469,6 +511,10 @@ def optimize_estimates_integers(
         mean_h2=best_mean_h2,
         unit_var=best_unit_var,
         pi=best_pi,
+        mean_h1_ci_low=np.full_like(best_mean_h1, np.nan),
+        mean_h1_ci_high=np.full_like(best_mean_h1, np.nan),
+        mean_h2_ci_low=np.full_like(best_mean_h2, np.nan),
+        mean_h2_ci_high=np.full_like(best_mean_h2, np.nan),
     )
 
 
@@ -511,11 +557,20 @@ def optimize_estimates(
     )
 
     # Split optimized result into mean_h1, mean_h2, and unit_var
+    mean_h1_optim = np.array(optim_res.x[:dim])
+    mean_h2_optim = np.array(optim_res.x[dim : 2 * dim])
+    unit_var_optim = np.array(optim_res.x[2 * dim : 3 * dim])
+    pi_optim = np.float64(optim_res.x[-1])
+
     return HeterozygousParameters(
-        mean_h1=np.array(optim_res.x[:dim]),
-        mean_h2=np.array(optim_res.x[dim : 2 * dim]),
-        unit_var=np.array(optim_res.x[2 * dim : 3 * dim]),
-        pi=np.float64(optim_res.x[-1]),
+        mean_h1=mean_h1_optim,
+        mean_h2=mean_h2_optim,
+        unit_var=unit_var_optim,
+        pi=pi_optim,
+        mean_h1_ci_low=np.full_like(mean_h1_optim, np.nan),
+        mean_h1_ci_high=np.full_like(mean_h1_optim, np.nan),
+        mean_h2_ci_low=np.full_like(mean_h2_optim, np.nan),
+        mean_h2_ci_high=np.full_like(mean_h2_optim, np.nan),
     )
 
 
@@ -581,6 +636,10 @@ def refine_initial_estimates(
         mean_h2=mean_h2_refined,
         unit_var=unit_var_refined,
         pi=pi_refined,
+        mean_h1_ci_low=np.full_like(mean_h1_refined, np.nan),
+        mean_h1_ci_high=np.full_like(mean_h1_refined, np.nan),
+        mean_h2_ci_low=np.full_like(mean_h2_refined, np.nan),
+        mean_h2_ci_high=np.full_like(mean_h2_refined, np.nan),
     )
 
 
@@ -682,33 +741,35 @@ def estimate_homozygous_parameters(
         return HomozygousParameters(
             mean=np.array([]),
             unit_var=np.array([]),
+            mean_ci_low=np.array([]),
+            mean_ci_high=np.array([]),
         )
 
+    # Step 1: Get initial estimates
     # Handle case no spanning reads
-    if not spanning_counts.size:
+    if spanning_counts.size:
+        # If any flanking reads are longer than the median spanning read, add them to the counts
+        max_spanning_counts = np.max(spanning_counts, axis=0)
+        long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
+
+        # Add long flanking reads to spanning reads
+        counts = spanning_counts.copy()
+        if long_flanking_reads.size > 0:
+            counts = np.concatenate((counts, long_flanking_reads))
+
+        # Calculate initial estimates
+        mean_init = np.average(counts, axis=0)
+        unit_var_init = np.average((counts - mean_init) ** 2, axis=0) / (mean_init + 1e-5)
+    else:
         # Get longest flanking read based on sum of counts
         longest_flanking_idx = np.argmax(np.sum(flanking_counts, axis=1))
         longest_flanking = flanking_counts[longest_flanking_idx]
-        mean = np.maximum(longest_flanking, 1)
-        return HomozygousParameters(
-            mean=mean,
-            unit_var=np.full_like(mean, 0.5),
-        )
 
-    # If any flanking reads are longer than the median spanning read, add them to the counts
-    max_spanning_counts = np.max(spanning_counts, axis=0)
-    long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
+        # Calculate initial estimates
+        mean_init = np.maximum(longest_flanking, 1)
+        unit_var_init = np.full_like(mean_init, 0.5)
 
-    # Add long flanking reads to spanning reads
-    counts = spanning_counts.copy()
-    if long_flanking_reads.size > 0:
-        counts = np.concatenate((counts, long_flanking_reads))
-
-    # Calculate initial estimates
-    mean_init = np.average(counts, axis=0)
-    unit_var_init = np.average((counts - mean_init) ** 2, axis=0) / (mean_init + 1e-5)
-
-    # Optimize estimates
+    # Step 2: Optimize estimates
     mean_optim, unit_var_optim = optimize_homozygous_estimates(
         spanning_counts,
         flanking_counts,
@@ -717,7 +778,7 @@ def estimate_homozygous_parameters(
         unit_var_init,
     )
 
-    # Optimize estimates with integer means
+    # Step 3: Optimize estimates with integer means
     mean_int, unit_var_int = optimize_estimates_integers_homozygous(
         spanning_counts,
         flanking_counts,
@@ -726,9 +787,18 @@ def estimate_homozygous_parameters(
         unit_var_optim,
     )
 
+    # Step 4: Calculate confidence intervals
+    mean_ci_low, mean_ci_high = estimate_confidence_intervals_homozygous(
+        read_calls,
+        mean_int,
+        unit_var_int,
+    )
+
     return HomozygousParameters(
         mean=mean_int,
         unit_var=unit_var_int,
+        mean_ci_low=mean_ci_low,
+        mean_ci_high=mean_ci_high,
     )
 
 

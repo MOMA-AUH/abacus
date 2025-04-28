@@ -58,7 +58,6 @@ def load_loci_from_json(json_path: Path, ref_path: Path) -> list[Locus]:
     with json_path.open("r") as f:
         loci_json = json.load(f)
 
-    # TODO: Move to config
     required_fields = ["LocusId", "ReferenceRegion", "LocusStructure"]
 
     loci = []
