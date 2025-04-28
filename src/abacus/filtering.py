@@ -23,6 +23,7 @@ def filter_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[
     return good_read_calls, outlier_read_calls
 
 
+# TODO: Use median - 3 * IQR for outlier detection for STR quality, error rates, etc. - not hard thresholds from config
 def check_alignment_parameters(rc: ReadCall) -> None:
     # Check STR quality
     if rc.alignment.str_median_quality < config.min_str_qual:
