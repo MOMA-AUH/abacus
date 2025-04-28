@@ -1,5 +1,10 @@
 [
     {
+        "LocusId": "ABCD3",
+        "LocusStructure": "(GCC)*",
+        "ReferenceRegion": "chr1:94418421-94418442"
+    },
+    {
         "LocusId": "AFF2",
         "LocusStructure": "(GCC)*",
         "ReferenceRegion": "chrX:148500638-148500683"
@@ -367,5 +372,10 @@
             "YEATS2_TTTTA_5P",
             "YEATS2"
         ]
+    },
+    {
+        "LocusId": "ZFHX3",
+        "LocusStructure": "(RCC)*",
+        "ReferenceRegion": "chr16:72787694-72787757"
     }
 ]
