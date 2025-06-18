@@ -45,8 +45,21 @@ def get_reads_in_locus(bam: Path, locus: Locus) -> list[Read]:
     # Trim soft-clipped bases
     reads = [trim_soft_clipped_bases(read, config.max_trim) for read in reads]
 
-    # Filter reads with low quality bases
+    # Trim low quality bases
     reads = [trim_low_quality_end_bases(read) for read in reads]
+
+    # Make sure reads have unique names
+    read_names = set()
+    for read in reads:
+        # Check if the read name is already in the set
+        if read.name in read_names:
+            # If it is, append a suffix to make it unique
+            suffix = 1
+            while f"{read.name}_{suffix}" in read_names:
+                suffix += 1
+            read.name = f"{read.name}_{suffix}"
+        # Add the read name to the set
+        read_names.add(read.name)
 
     return reads
 
