@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from statistics import median
+from statistics import mean
 
 import numpy as np
 
@@ -14,7 +14,7 @@ from abacus.config import config
 from abacus.locus import Locus
 from abacus.logging import logger
 from abacus.read import FilteredRead, Read
-from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType, Haplotype, compute_error_rate
+from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType, Haplotype, compute_levenshtein_rate, compute_ref_divergence
 
 
 def sync_cigar(cigar: str) -> list[str]:
@@ -31,18 +31,23 @@ def sync_cigar(cigar: str) -> list[str]:
             # For match, equal, mismatch, and deletion: add operations 1:1
             res_cigar.extend([cigar_ops] * cigar_len)
         elif cigar_ops == "I":
-            # For insertion: mark the previous position with insertion
-            res_cigar[-1] = cigar_ops
+            # For insertion: Add the operation to the last position
+            res_cigar[-1] += cigar_ops * cigar_len
 
     return res_cigar
 
 
 def sync_with_cigar(input_list: list, cig: str) -> list[list]:
-    """Sync input list with CIGAR string"""
+    if not input_list:
+        return []
+
     cigar_pattern = r"(\d+)([MIDNSHPX=])"
     cigar_matches = re.findall(cigar_pattern, cig)
 
     res_list: list[list] = []
+
+    print("Res list before")
+    print(input_list)
 
     for item in cigar_matches:
         cigar_len = int(item[0])
@@ -58,6 +63,10 @@ def sync_with_cigar(input_list: list, cig: str) -> list[list]:
             res_list.extend([[] for _ in range(cigar_len)])
         elif cigar_ops == "I":
             # For insertion: add elements to the previous position
+            print("Res list after")
+            print(res_list)
+            print("input list")
+            print(input_list)
             res_list[-1].extend(input_list[:cigar_len])
             # Trim "used" input list
             input_list = input_list[cigar_len:]
@@ -123,10 +132,13 @@ class GraphAlignment(Read):
     str_cigar_synced: list[str] = field(init=False)
     str_mod_5mc_synced: list[str] = field(init=False)
     str_qualities: list[int] = field(init=False)
-    str_median_quality: float = field(init=False)
+    mean_str_quality: float = field(init=False)
+    q10_str_quality: int = field(init=False)
 
     reference: str = field(init=False)
     str_reference: str = field(init=False)
+
+    str_ref_divergence: float = field(init=False)
 
     # Properties of flanking regions
     has_left_anchor: bool = field(init=False)
@@ -179,6 +191,24 @@ class GraphAlignment(Read):
         )
 
     def __post_init__(self) -> None:
+        # Check if read has full STR and sufficient anchors
+        self.has_left_anchor = "left_anchor" in self.path and "left_anchor_overlap" in self.path
+        self.has_right_anchor = "right_anchor" in self.path and "right_anchor_overlap" in self.path
+
+        # TODO: REMOVE or change filtering behavior. This "disables" min_anchor_overlap
+        self.has_left_anchor = "left_anchor_overlap" in self.path
+        self.has_right_anchor = "right_anchor_overlap" in self.path
+
+        # Determine alignment type
+        if self.has_left_anchor and self.has_right_anchor:
+            self.type = AlignmentType.SPANNING
+        elif self.has_left_anchor:
+            self.type = AlignmentType.LEFT_FLANKING
+        elif self.has_right_anchor:
+            self.type = AlignmentType.RIGHT_FLANKING
+        else:
+            self.type = AlignmentType.NO_ANCHORS
+
         # Get sequence and qualities of the STR region
         # Remove unmapped regions outside of the alignment
         locus_sequence = self.sequence[self.query_start : self.query_end]
@@ -222,9 +252,8 @@ class GraphAlignment(Read):
         # Get sequence and qualities of the STR region
         self.str_sequence = "".join(self.str_sequence_synced)
         self.str_qualities = [q for sublist in self.str_qualities_synced for q in sublist]
-
-        # Calculate median quality
-        self.str_median_quality = median(self.str_qualities) if self.str_qualities else 0
+        self.mean_str_quality = mean(self.str_qualities) if self.str_qualities else 0
+        self.q10_str_quality = int(np.quantile(self.str_qualities, 0.1)) if self.str_qualities else 0
 
         # Build STR reference sequence from path
         self.reference = get_reference_sequence_from_path(self.path, self.locus)
@@ -235,23 +264,15 @@ class GraphAlignment(Read):
         # Trim with start and end from alignment
         self.reference = self.reference[self.path_start : self.path_end]
 
-        # Check if read has full STR and sufficient anchors
-        self.has_left_anchor = "left_anchor" in self.path and "left_anchor_overlap" in self.path
-        self.has_right_anchor = "right_anchor" in self.path and "right_anchor_overlap" in self.path
+        # Get the error rate of the STR region
+        str_cigar = "".join(self.str_cigar_synced)
 
-        # TODO: REMOVE or change filtering behavior. This "disables" min_anchor_overlap
-        self.has_left_anchor = "left_anchor_overlap" in self.path
-        self.has_right_anchor = "right_anchor_overlap" in self.path
+        # Trim indels from ends of CIGAR string - these are often artefacts of flanking reads
+        # Trim max bases/operations equal to the longest satellite
+        longest_satellite = max(len(s.sequence) for s in self.locus.satellites)
+        str_cigar = re.sub(rf"^[ID]{{1,{longest_satellite}}}|[ID]{{1,{longest_satellite}}}$", "", str_cigar)
 
-        # Determine alignment type
-        if self.has_left_anchor and self.has_right_anchor:
-            self.type = AlignmentType.SPANNING
-        elif self.has_left_anchor:
-            self.type = AlignmentType.LEFT_FLANKING
-        elif self.has_right_anchor:
-            self.type = AlignmentType.RIGHT_FLANKING
-        else:
-            self.type = AlignmentType.NO_ANCHORS
+        self.str_ref_divergence = compute_ref_divergence(str_cigar)
 
     def to_dict(self) -> dict:
         return {
@@ -260,7 +281,9 @@ class GraphAlignment(Read):
             "read_str_sequence": self.str_sequence,
             "read_str_qualities": self.str_qualities,
             "alignment_type": self.type,
-            "median_str_qual": self.str_median_quality,
+            "mean_str_qual": self.mean_str_quality,
+            "q10_str_qual": self.q10_str_quality,
+            "str_ref_divergence": self.str_ref_divergence,
         } | self.locus.to_dict()
 
 
@@ -584,7 +607,7 @@ def get_kmer_string(locus: Locus, synced_list: list[str], satellite_counts: list
             # Clip kmers
             synced_list = synced_list[len(sat) * cnt :]
 
-    return "-".join(kmers)
+    return "|".join(kmers)
 
 
 def graph_align_reads_to_locus(
@@ -658,7 +681,7 @@ def pad_with_right_anchor(seq: str, right_anchor: str) -> tuple[str, int]:
     for i in range(max_overlap, min_overlap, -1):
         seq_overlap = seq[-i:]
         anchor_overlap = right_anchor[:i]
-        error_rate = compute_error_rate(anchor_overlap, seq_overlap, indel_cost=0.25)
+        error_rate = compute_levenshtein_rate(anchor_overlap, seq_overlap, indel_cost=0.25)
         if error_rate < best_error_rate:
             best_error_rate = error_rate
             best_overlap = i
@@ -678,7 +701,7 @@ def pad_with_left_anchor(seq: str, left_anchor: str) -> tuple[str, int]:
     for i in range(max_overlap, min_overlap, -1):
         seq_overlap = seq[:i]
         anchor_overlap = left_anchor[-i:]
-        error_rate = compute_error_rate(anchor_overlap, seq_overlap)
+        error_rate = compute_levenshtein_rate(anchor_overlap, seq_overlap)
         if error_rate < best_error_rate:
             best_error_rate = error_rate
             best_overlap = i
@@ -764,12 +787,14 @@ class ReadCall:
     locus: Locus
     alignment: GraphAlignment
     satellite_count: list[int]
-    kmer_count_str: str
+
+    str_error_rate: float
 
     # Kmer strings (for visualization)
     obs_kmer_string: str
     ref_kmer_string: str
     mod_5mc_kmer_string: str
+    qual_kmer_string: str
 
     # Grouped read call
     haplotype: Haplotype = Haplotype.NONE
@@ -778,10 +803,12 @@ class ReadCall:
     def to_dict(self) -> dict:
         return self.alignment.to_dict() | {
             "kmer_count": self.satellite_count,
-            "kmer_count_str": self.kmer_count_str,
+            "kmer_count_str": "-".join(map(str, self.satellite_count)),
             "obs_kmer_string": self.obs_kmer_string,
             "ref_kmer_string": self.ref_kmer_string,
             "mod_5mc_kmer_string": self.mod_5mc_kmer_string,
+            "qual_kmer_string": self.qual_kmer_string,
+            "str_error_rate": self.str_error_rate,
             "haplotype": self.haplotype,
             "outlier_reasons": ";".join(self.outlier_reasons),
         }
@@ -833,17 +860,75 @@ def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], lis
             synced_list=aln.str_mod_5mc_synced,
             satellite_counts=satellite_counts,
         )
+        qual_kmer_string = get_kmer_string(
+            locus=locus,
+            synced_list=[qual_to_char(qual) for sublist in aln.str_qualities_synced for qual in sublist],
+            satellite_counts=satellite_counts,
+        )
+
+        # Estimate error rate
+        other_alns = [x for x in alignments if x.name != aln.name]
+        str_error_rate = estimate_error_rate(aln, other_alns)
 
         read_calls.append(
             ReadCall(
                 locus=locus,
                 alignment=aln,
                 satellite_count=satellite_counts,
-                kmer_count_str="-".join(map(str, satellite_counts)),
                 obs_kmer_string=obs_kmer_string,
                 ref_kmer_string=ref_kmer_string,
                 mod_5mc_kmer_string=mod_5mc_kmer_string,
+                qual_kmer_string=qual_kmer_string,
+                str_error_rate=str_error_rate,
             ),
         )
 
     return read_calls, unmapped_reads
+
+
+def estimate_error_rate(aln: GraphAlignment, other_alns: list[GraphAlignment]) -> float:
+    # Helper function to extract k-mers
+    def extract_kmers(sequences: list[str], k: int) -> list[str]:
+        kmers: list[str] = []
+        for seq in sequences:
+            # Skip sequences that are shorter than k
+            if len(seq) < k:
+                continue
+            # Extract k-mers
+            kmers.extend(seq[i : i + k] for i in range(len(seq) - k + 1))
+        return kmers
+
+    read = aln.str_sequence
+    background_reads = [aln.str_sequence for aln in other_alns]
+    k = 11  # Length of k-mers
+
+    # Step 0: Check if the read is empty
+    if not read:
+        return 0.0
+    if not background_reads:
+        return 0.0
+
+    # Step 1: Get all k-mers from the read of interest
+    read_kmers = extract_kmers([read], k)
+
+    # Step 2: Build a k-mer count dictionary from the background reads
+    background_kmers = extract_kmers(background_reads, k)
+    unique_background_kmers = set(background_kmers)
+
+    # Step 3: Count how many k-mers in the read are not found in the background
+    error_kmers = [kmer for kmer in read_kmers if kmer not in unique_background_kmers]
+    num_error_kmers = len(error_kmers)
+
+    # Step 4: Estimate erroneous bases. Each base affects (up to) k k-mers
+    n_errors = num_error_kmers / k
+
+    # Step 5: Total bases in the read
+    total_bases = len(read)
+
+    # Step 6: Per-base error rate
+    return n_errors / total_bases
+
+
+def qual_to_char(qual: int) -> str:
+    # Convert quality score to character
+    return chr(qual + 33) if qual > 0 else "!"  # ASCII 33 is the lowest quality score

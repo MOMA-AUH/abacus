@@ -8,7 +8,7 @@ from spoa import poa
 
 from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
 from abacus.locus import Locus
-from abacus.utils import Haplotype
+from abacus.utils import Haplotype, trim_sequences_for_comparison
 
 
 @dataclass
@@ -36,18 +36,19 @@ class ConsensusCall(ReadCall):
             haplotype=read_call.haplotype,
             outlier_reasons=read_call.outlier_reasons,
             satellite_count=read_call.satellite_count,
-            kmer_count_str=read_call.kmer_count_str,
             obs_kmer_string=read_call.obs_kmer_string,
             ref_kmer_string=read_call.ref_kmer_string,
             mod_5mc_kmer_string=read_call.mod_5mc_kmer_string,
+            qual_kmer_string=read_call.qual_kmer_string,
             spanning_reads=spanning_reads,
             flanking_reads=flanking_reads,
+            str_error_rate=0.0,
         )
 
 
 def contract_kmer_string(kmer_string: str) -> str:
     # Split kmer string
-    kmer_list = kmer_string.split("-")
+    kmer_list = kmer_string.split("|")
 
     # Contract kmer string
     contracted_kmer = ""
@@ -79,9 +80,9 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> 
     right_flanking_read_calls = [r for r in read_calls if r.alignment.type == AlignmentType.RIGHT_FLANKING]
 
     # Group sequences by haplotype
-    spanning_sequences: list[list[str]] = [s.obs_kmer_string.split("-") for s in spanning_read_calls]
-    left_flanking_sequences: list[list[str]] = [s.obs_kmer_string.split("-") for s in left_flanking_read_calls]
-    right_flanking_sequences: list[list[str]] = [s.obs_kmer_string.split("-") for s in right_flanking_read_calls]
+    spanning_sequences: list[list[str]] = [s.obs_kmer_string.split("|") for s in spanning_read_calls]
+    left_flanking_sequences: list[list[str]] = [s.obs_kmer_string.split("|") for s in left_flanking_read_calls]
+    right_flanking_sequences: list[list[str]] = [s.obs_kmer_string.split("|") for s in right_flanking_read_calls]
 
     spanning_count: int = len(spanning_sequences)
     flanking_count: int = len(left_flanking_sequences) + len(right_flanking_sequences)
@@ -254,7 +255,7 @@ def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: Alignme
     return consensus_read_calls[0]
 
 
-def get_heterozygote_labels_seq(
+def update_flanking_labels_based_on_consensus(
     read_calls: list[ReadCall],
     consensus_read_calls: list[ConsensusCall],
 ) -> list[ReadCall]:
@@ -313,65 +314,3 @@ def calc_dist_to_consensus(
         best_dist = min(best_dist, dist)
 
     return best_dist
-
-
-def trim_sequences_for_comparison(seq1: str, type1: AlignmentType, seq2: str, type2: AlignmentType) -> tuple[str, str]:
-    """Trim two sequences for appropriate comparison based on their alignment types.
-
-    Args:
-        seq1: First sequence string
-        type1: Alignment type of the first sequence
-        seq2: Second sequence string
-        type2: Alignment type of the second sequence
-
-    Returns:
-        tuple[str, str]: Trimmed versions of seq1 and seq2
-
-    """
-    seq1_start, seq1_end = 0, len(seq1)
-    seq2_start, seq2_end = 0, len(seq2)
-
-    # LEFT_FLANKING vs LEFT_FLANKING
-    if type1 == AlignmentType.LEFT_FLANKING and type2 == AlignmentType.LEFT_FLANKING:
-        min_length = min(len(seq1), len(seq2))
-        seq1_end = seq2_end = min_length
-
-    # LEFT_FLANKING vs SPANNING
-    elif type1 == AlignmentType.LEFT_FLANKING and type2 == AlignmentType.SPANNING:
-        trim_length = min(len(seq1), len(seq2))
-        seq2_end = trim_length
-    elif type1 == AlignmentType.SPANNING and type2 == AlignmentType.LEFT_FLANKING:
-        trim_length = min(len(seq1), len(seq2))
-        seq1_end = trim_length
-
-    # RIGHT_FLANKING vs SPANNING
-    elif type1 == AlignmentType.RIGHT_FLANKING and type2 == AlignmentType.SPANNING:
-        trim_length = min(len(seq1), len(seq2))
-        seq2_start = len(seq2) - trim_length
-    elif type1 == AlignmentType.SPANNING and type2 == AlignmentType.RIGHT_FLANKING:
-        trim_length = min(len(seq1), len(seq2))
-        seq1_start = len(seq1) - trim_length
-
-    # RIGHT_FLANKING vs RIGHT_FLANKING
-    elif type1 == AlignmentType.RIGHT_FLANKING and type2 == AlignmentType.RIGHT_FLANKING:
-        min_length = min(len(seq1), len(seq2))
-        seq1_start = len(seq1) - min_length
-        seq2_start = len(seq2) - min_length
-
-    # LEFT_FLANKING vs RIGHT_FLANKING
-    # No meaningful overlap, trim the beginning of the longer sequence
-    elif (type1, type2) == (AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING):
-        min_length = min(len(seq1), len(seq2))
-        seq1_end = min_length
-        seq2_start = len(seq2) - min_length
-
-    elif (type1, type2) == (AlignmentType.RIGHT_FLANKING, AlignmentType.LEFT_FLANKING):
-        min_length = min(len(seq1), len(seq2))
-        seq1_start = len(seq1) - min_length
-        seq2_end = min_length
-
-    # Apply trimming
-    seq1_trimmed = seq1[seq1_start:seq1_end]
-    seq2_trimmed = seq2[seq2_start:seq2_end]
-
-    return seq1_trimmed, seq2_trimmed

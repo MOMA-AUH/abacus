@@ -17,7 +17,6 @@ class HeterozygousParameters:
     mean_h1: np.ndarray
     mean_h2: np.ndarray
     unit_var: np.ndarray
-    pi: np.float64
     mean_h1_ci_low: np.ndarray
     mean_h1_ci_high: np.ndarray
     mean_h2_ci_low: np.ndarray
@@ -205,7 +204,6 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
             mean_h1=np.array([]),
             mean_h2=np.array([]),
             unit_var=np.array([]),
-            pi=np.float64(0),
             mean_h1_ci_low=np.array([]),
             mean_h1_ci_high=np.array([]),
             mean_h2_ci_low=np.array([]),
@@ -223,7 +221,6 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
             mean_h1=mean_h1,
             mean_h2=mean_h2,
             unit_var=np.full_like(mean_h1, 0.5),
-            pi=np.float64(0.5),
             mean_h1_ci_low=np.full_like(mean_h1, np.nan),
             mean_h1_ci_high=np.full_like(mean_h1, np.nan),
             mean_h2_ci_low=np.full_like(mean_h2, np.nan),
@@ -293,9 +290,6 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     unit_var = np.average(np.array([unit_var_h1, unit_var_h2, min_unit_var]), axis=0)
     unit_var = np.maximum(unit_var, config.min_var)
 
-    # Pi
-    pi = np.float64(0.51)
-
     # Make sure mean is at least 0.1
     robust_mean_h1 = np.maximum(robust_mean_h1, 0.1)
     robust_mean_h2 = np.maximum(robust_mean_h2, 0.1)
@@ -311,7 +305,6 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
         mean_h1=robust_mean_h1,
         mean_h2=robust_mean_h2,
         unit_var=unit_var,
-        pi=pi,
         mean_h1_ci_low=np.full_like(robust_mean_h1, np.nan),
         mean_h1_ci_high=np.full_like(robust_mean_h1, np.nan),
         mean_h2_ci_low=np.full_like(robust_mean_h2, np.nan),
@@ -376,7 +369,6 @@ def estimate_heterozygous_parameters(
             mean_h1=np.array([]),
             mean_h2=np.array([]),
             unit_var=np.array([]),
-            pi=np.float64(0),
             mean_h1_ci_low=np.array([]),
             mean_h1_ci_high=np.array([]),
             mean_h2_ci_low=np.array([]),
@@ -395,7 +387,6 @@ def estimate_heterozygous_parameters(
             par_refined.mean_h1,
             par_refined.mean_h2,
             par_refined.unit_var,
-            par_refined.pi,
         )
 
     # Step 3: Optimize estimates using L-BFGS-B
@@ -404,7 +395,6 @@ def estimate_heterozygous_parameters(
         par_refined.mean_h1,
         par_refined.mean_h2,
         par_refined.unit_var,
-        par_refined.pi,
     )
 
     # Step 4: Find best integer estimates around optimal estimate
@@ -413,7 +403,6 @@ def estimate_heterozygous_parameters(
         par_optim.mean_h1,
         par_optim.mean_h2,
         par_optim.unit_var,
-        par_optim.pi,
     )
 
     # Step 5: Calculate confidence intervals
@@ -422,14 +411,12 @@ def estimate_heterozygous_parameters(
         par_int.mean_h1,
         par_int.mean_h2,
         par_int.unit_var,
-        par_int.pi,
     )
 
     return HeterozygousParameters(
         mean_h1=par_int.mean_h1,
         mean_h2=par_int.mean_h2,
         unit_var=par_int.unit_var,
-        pi=par_int.pi,
         mean_h1_ci_low=conf_mean_h1_lower,
         mean_h1_ci_high=conf_mean_h1_upper,
         mean_h2_ci_low=conf_mean_h2_lower,
@@ -442,7 +429,6 @@ def optimize_estimates_integers(
     mean_h1_optim: np.ndarray,
     mean_h2_optim: np.ndarray,
     unit_var_optim: np.ndarray,
-    pi_optim: np.float64,
 ) -> HeterozygousParameters:
     # Unpack read calls
     spanning_counts, flanking_counts, is_left_flank = unpack_read_calls(read_calls)
@@ -473,15 +459,13 @@ def optimize_estimates_integers(
     best_mean_h1 = np.zeros(dim)
     best_mean_h2 = np.zeros(dim)
     best_unit_var = np.zeros(dim)
-    best_pi = np.float64(0)
 
     # Define bounds for optimization
     unit_var_bound = (config.min_var, None)
-    pi_bound = (1e-5, 1 - 1e-5)
 
     # Loop through all combinations of mean_h1 and mean_h2
     for mean_h1_int, mean_h2_int in product(mean_grid_h1, mean_grid_h2):
-        # Optimize variance and pi while keeping integer means fixed
+        # Optimize variance while keeping integer means fixed
         dim = mean_h1_int.shape[0]
         optim_res = minimize(
             fun=lambda x, mean_h1_int=mean_h1_int, mean_h2_int=mean_h2_int, dim=dim: -calculate_log_likelihood_heterozygous(
@@ -491,11 +475,10 @@ def optimize_estimates_integers(
                 mean_h1=mean_h1_int,
                 mean_h2=mean_h2_int,
                 unit_var=np.array(x[:dim]),
-                pi=np.float64(x[-1]),
             ),
-            x0=np.concatenate((unit_var_optim, np.array([pi_optim]))),
+            x0=unit_var_optim,
             method="L-BFGS-B",
-            bounds=[unit_var_bound] * dim + [pi_bound],
+            bounds=[unit_var_bound] * dim,
         )
 
         # Update best estimates
@@ -504,13 +487,11 @@ def optimize_estimates_integers(
             best_mean_h1 = mean_h1_int
             best_mean_h2 = mean_h2_int
             best_unit_var = np.array(optim_res.x[:dim])
-            best_pi = np.float64(optim_res.x[-1])
 
     return HeterozygousParameters(
         mean_h1=best_mean_h1,
         mean_h2=best_mean_h2,
         unit_var=best_unit_var,
-        pi=best_pi,
         mean_h1_ci_low=np.full_like(best_mean_h1, np.nan),
         mean_h1_ci_high=np.full_like(best_mean_h1, np.nan),
         mean_h2_ci_low=np.full_like(best_mean_h2, np.nan),
@@ -523,7 +504,6 @@ def optimize_estimates(
     mean_h1_init: np.ndarray,
     mean_h2_init: np.ndarray,
     unit_var_init: np.ndarray,
-    pi_init: np.float64,
 ) -> HeterozygousParameters:
     # Unpack read calls
     spanning_counts, flanking_counts, is_left_flank = unpack_read_calls(read_calls)
@@ -531,13 +511,11 @@ def optimize_estimates(
     # Define bounds for optimization
     mean_bound = (0, None)
     unit_var_bound = (config.min_var, None)
-    pi_bound = (1e-5, 1 - 1e-5)
 
     # Make sure initial estimates are within bounds
     mean_h1_init = np.clip(mean_h1_init, mean_bound[0], mean_bound[1])
     mean_h2_init = np.clip(mean_h2_init, mean_bound[0], mean_bound[1])
     unit_var_init = np.clip(unit_var_init, unit_var_bound[0], unit_var_bound[1])
-    pi_init = np.clip(pi_init, pi_bound[0], pi_bound[1])
 
     # Optimize log likelihood to find best mean
     dim = mean_h1_init.shape[0]
@@ -549,24 +527,21 @@ def optimize_estimates(
             mean_h1=np.array(x[:dim]),
             mean_h2=np.array(x[dim : 2 * dim]),
             unit_var=np.array(x[2 * dim : 3 * dim]),
-            pi=np.float64(x[-1]),
         ),
-        x0=np.concatenate((mean_h1_init, mean_h2_init, unit_var_init, np.array([pi_init]))),
+        x0=np.concatenate((mean_h1_init, mean_h2_init, unit_var_init)),
         method="L-BFGS-B",
-        bounds=[mean_bound] * dim * 2 + [unit_var_bound] * dim + [pi_bound],
+        bounds=[mean_bound] * dim * 2 + [unit_var_bound] * dim,
     )
 
     # Split optimized result into mean_h1, mean_h2, and unit_var
     mean_h1_optim = np.array(optim_res.x[:dim])
     mean_h2_optim = np.array(optim_res.x[dim : 2 * dim])
     unit_var_optim = np.array(optim_res.x[2 * dim : 3 * dim])
-    pi_optim = np.float64(optim_res.x[-1])
 
     return HeterozygousParameters(
         mean_h1=mean_h1_optim,
         mean_h2=mean_h2_optim,
         unit_var=unit_var_optim,
-        pi=pi_optim,
         mean_h1_ci_low=np.full_like(mean_h1_optim, np.nan),
         mean_h1_ci_high=np.full_like(mean_h1_optim, np.nan),
         mean_h2_ci_low=np.full_like(mean_h2_optim, np.nan),
@@ -579,7 +554,6 @@ def refine_initial_estimates(
     mean_h1: np.ndarray,
     mean_h2: np.ndarray,
     unit_var: np.ndarray,
-    pi: np.float64,
 ) -> HeterozygousParameters:
     # Unpack read calls
     spanning_counts, flanking_counts, is_left_flank = unpack_read_calls(read_calls)
@@ -590,7 +564,6 @@ def refine_initial_estimates(
         mean_h1,
         mean_h2,
         unit_var,
-        pi,
     )
     gamma_h1_flanking, gamma_h2_flanking = calculate_grouping_probabilities_flanking(
         flanking_counts,
@@ -598,7 +571,6 @@ def refine_initial_estimates(
         mean_h1,
         mean_h2,
         unit_var,
-        pi,
     )
 
     # Get initial estimates from spanning reads
@@ -629,13 +601,10 @@ def refine_initial_estimates(
     else:
         unit_var_refined = unit_var
 
-    # Get initial estimate for pi
-    pi_refined = np.float64(np.average(np.append(gamma_h1_spanning, gamma_h1_flanking)))
     return HeterozygousParameters(
         mean_h1=mean_h1_refined,
         mean_h2=mean_h2_refined,
         unit_var=unit_var_refined,
-        pi=pi_refined,
         mean_h1_ci_low=np.full_like(mean_h1_refined, np.nan),
         mean_h1_ci_high=np.full_like(mean_h1_refined, np.nan),
         mean_h2_ci_low=np.full_like(mean_h2_refined, np.nan),
@@ -648,10 +617,9 @@ def calculate_grouping_probabilities_spanning(
     mean_h1: np.ndarray,
     mean_h2: np.ndarray,
     unit_var: np.ndarray,
-    pi: np.float64,
 ) -> tuple[np.ndarray, np.ndarray]:
-    gamma_h1_spanning = safe_log(pi) + discrete_multivariate_normal_logpdf(spanning_counts, mean_h1, unit_var)
-    gamma_h2_spanning = safe_log(1 - pi) + discrete_multivariate_normal_logpdf(spanning_counts, mean_h2, unit_var)
+    gamma_h1_spanning = np.log(0.5) + discrete_multivariate_normal_logpdf(spanning_counts, mean_h1, unit_var)
+    gamma_h2_spanning = np.log(0.5) + discrete_multivariate_normal_logpdf(spanning_counts, mean_h2, unit_var)
 
     total_logp_spanning = np.logaddexp(gamma_h1_spanning, gamma_h2_spanning)
 
@@ -667,10 +635,9 @@ def calculate_grouping_probabilities_flanking(
     mean_h1: np.ndarray,
     mean_h2: np.ndarray,
     unit_var: np.ndarray,
-    pi: np.float64,
 ) -> tuple[np.ndarray, np.ndarray]:
-    gamma_h1_flanking = safe_log(pi) + flanking_logpdf(flanking_counts, mean_h1, unit_var, is_left_flank)
-    gamma_h2_flanking = safe_log(1 - pi) + flanking_logpdf(flanking_counts, mean_h2, unit_var, is_left_flank)
+    gamma_h1_flanking = np.log(0.5) + flanking_logpdf(flanking_counts, mean_h1, unit_var, is_left_flank)
+    gamma_h2_flanking = np.log(0.5) + flanking_logpdf(flanking_counts, mean_h2, unit_var, is_left_flank)
 
     total_logp_flanking = np.logaddexp(gamma_h1_flanking, gamma_h2_flanking)
 
@@ -896,7 +863,6 @@ def estimate_confidence_intervals_heterozygous(
     mean_h1: np.ndarray,
     mean_h2: np.ndarray,
     unit_var: np.ndarray,
-    pi: np.float64,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     # Handle empty arrays
     if not read_calls:
@@ -908,57 +874,55 @@ def estimate_confidence_intervals_heterozygous(
     # Find where log likelihood ratio is equal to chi2(0.95, 1)
     chi2_val = np.float64(chi2.ppf(0.95, 1))
 
-    def find_confidence_interval(mean: np.ndarray, pi: np.float64, is_h1: bool) -> tuple[np.ndarray, np.ndarray]:
+    def find_confidence_interval(mean: np.ndarray, is_h1: bool) -> tuple[np.ndarray, np.ndarray]:
         conf_lower = np.full(mean.shape, np.nan)
         conf_upper = np.full(mean.shape, np.nan)
 
-        if (is_h1 and pi > 0.01) or (not is_h1 and pi < 0.99):
-            for i in range(mean.shape[0]):
-                # Define objective function
-                def objective(x: np.float64, i: int) -> np.float64:
-                    # Alternative hypothesis
-                    ll_alt = calculate_log_likelihood_heterozygous(spanning_counts, flanking_counts, is_left_flank, mean_h1, mean_h2, unit_var, pi)
-                    # Null hypothesis
-                    mean_null = mean.copy()
-                    mean_null[i] = x
-                    ll_null = calculate_log_likelihood_heterozygous(
-                        spanning_counts,
-                        flanking_counts,
-                        is_left_flank,
-                        mean_null if is_h1 else mean_h1,
-                        mean_h2 if is_h1 else mean_null,
-                        unit_var,
-                        pi,
-                    )
-                    # Test statistic
-                    q_val = -2 * (ll_null - ll_alt)
+        for i in range(mean.shape[0]):
+            # Define objective function
+            def objective(x: np.float64, i: int) -> np.float64:
+                # Alternative hypothesis
+                ll_alt = calculate_log_likelihood_heterozygous(spanning_counts, flanking_counts, is_left_flank, mean_h1, mean_h2, unit_var)
+                # Null hypothesis
+                mean_null = mean.copy()
+                mean_null[i] = x
+                ll_null = calculate_log_likelihood_heterozygous(
+                    spanning_counts,
+                    flanking_counts,
+                    is_left_flank,
+                    mean_null if is_h1 else mean_h1,
+                    mean_h2 if is_h1 else mean_null,
+                    unit_var,
+                )
+                # Test statistic
+                q_val = -2 * (ll_null - ll_alt)
 
-                    return q_val - chi2_val
+                return q_val - chi2_val
 
-                # Find lower bound
-                if objective(np.float64(0), i) < 0:
-                    conf_lower[i] = 0
-                else:
-                    a = mean[i]
-                    while objective(a, i) < 0:
-                        a = a / 2
-                    b = mean[i]
-                    conf_lower[i] = brentq(objective, a, b, args=(i,))
-
-                # Find upper bound
+            # Find lower bound
+            if objective(np.float64(0), i) < 0:
+                conf_lower[i] = 0
+            else:
                 a = mean[i]
-                b = a
-                conf_upper[i] = np.inf
-                for j in range(1, 20):
-                    b = a + 2**j
-                    if objective(b, i) > 0:
-                        conf_upper[i] = brentq(objective, a, b, args=(i,))
-                        break
+                while objective(a, i) < 0:
+                    a = a / 2
+                b = mean[i]
+                conf_lower[i] = brentq(objective, a, b, args=(i,))
+
+            # Find upper bound
+            a = mean[i]
+            b = a
+            conf_upper[i] = np.inf
+            for j in range(1, 20):
+                b = a + 2**j
+                if objective(b, i) > 0:
+                    conf_upper[i] = brentq(objective, a, b, args=(i,))
+                    break
 
         return conf_lower, conf_upper
 
-    conf_mean_h1_lower, conf_mean_h1_upper = find_confidence_interval(mean_h1, pi, True)
-    conf_mean_h2_lower, conf_mean_h2_upper = find_confidence_interval(mean_h2, 1 - pi, False)
+    conf_mean_h1_lower, conf_mean_h1_upper = find_confidence_interval(mean_h1, True)
+    conf_mean_h2_lower, conf_mean_h2_upper = find_confidence_interval(mean_h2, False)
 
     return conf_mean_h1_lower, conf_mean_h1_upper, conf_mean_h2_lower, conf_mean_h2_upper
 
@@ -1055,17 +1019,16 @@ def calculate_log_likelihood_heterozygous(
     mean_h1: np.ndarray,
     mean_h2: np.ndarray,
     unit_var: np.ndarray,
-    pi: np.float64,
 ) -> np.float64:
     # Calculate logpdf for spanning reads
-    logpdf_h1_spanning = safe_log(pi) + discrete_multivariate_normal_logpdf(spanning_counts, mean_h1, unit_var)
-    logpdf_h2_spanning = safe_log(1 - pi) + discrete_multivariate_normal_logpdf(spanning_counts, mean_h2, unit_var)
+    logpdf_h1_spanning = np.log(0.5) + discrete_multivariate_normal_logpdf(spanning_counts, mean_h1, unit_var)
+    logpdf_h2_spanning = np.log(0.5) + discrete_multivariate_normal_logpdf(spanning_counts, mean_h2, unit_var)
 
     logpdf_spanning = np.logaddexp(logpdf_h1_spanning, logpdf_h2_spanning)
 
     # Calculate logpdf for flanking reads
-    logpdf_h1_flanking = safe_log(pi) + flanking_logpdf(flanking_counts, mean_h1, unit_var, is_left_flank)
-    logpdf_h2_flanking = safe_log(1 - pi) + flanking_logpdf(flanking_counts, mean_h2, unit_var, is_left_flank)
+    logpdf_h1_flanking = np.log(0.5) + flanking_logpdf(flanking_counts, mean_h1, unit_var, is_left_flank)
+    logpdf_h2_flanking = np.log(0.5) + flanking_logpdf(flanking_counts, mean_h2, unit_var, is_left_flank)
 
     logpdf_flanking = np.logaddexp(logpdf_h1_flanking, logpdf_h2_flanking)
 
