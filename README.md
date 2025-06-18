@@ -71,16 +71,32 @@ abacus \
 ### Configuration parameters
 The following configuration parameters allow fine-tuning of the analysis:
 
+#### Graph and Anchor Parameters
 - `--anchor-length`: Length of the left and right anchor sequences. Default: `500`.
 - `--min-anchor-overlap`: Minimum overlap between the read and the anchor sequence. Default: `200`.
-- `--min-str-qual`: Minimum median base quality in the STR region. Reads with lower quality will be filtered out. Default: `17`.
-- `--min-end-qual`: Minimum base quality at read ends. Used for trimming. Default: `15`.
+- `--min-end-qual`: Minimum base quality at read ends. Used for trimming. Default: `17`.
 - `--trim-window-size`: Window size for trimming low-quality bases. Default: `10`.
 - `--max-trim`: Maximum number of bases to trim from the ends of reads. Default: `50`.
-- `--error-rate-threshold`: Threshold for the error rate in the STR region. Reads with higher error rates will be filtered out. Default: `0.2`.
-- `--min-haplotype-depth`: Minimum allowed depth for each called haplotype. If the depth is lower, the locus will be called as homozygous. Default: `3`.
+
+#### Quality Control Parameters
+- `--min-str-qual`: Minimum mean base quality in the STR region. Reads with lower quality will be filtered out. Default: `20`.
+- `--tol-str-qual`: Tolerance for mean base quality in the STR region. Default: `30`.
+- `--min-q10-str-quality`: Minimum Q10 base quality in STR region. Default: `15`.
+- `--tol-q10-str-quality`: Tolerance for Q10 base quality in STR region. Default: `30`.
+- `--max-error-rate`: Maximum allowed error rate in the STR region. Reads with higher error rates will be filtered out. Default: `0.01`.
+- `--tol-error-rate`: Tolerance for error rate in the STR region. Default: `0.005`.
+- `--max-ref-divergence`: Maximum allowed reference divergence in the STR region. Default: `0.34`.
+- `--min-n-outlier-detection`: Minimum number of reads required for outlier detection. Default: `10`.
+
+#### Haplotype Parameters
+- `--min-haplotyping-depth`: Minimum allowed depth for each called haplotype. If the depth is lower, the locus will be called as homozygous. Default: `10`.
 - `--heterozygozity-alpha`: Sensitivity cutoff for the heterozygosity test. This test focuses on differences in length between haplotypes. Default: `0.05`.
-- `--split-alpha`: Sensitivity cutoff for the split haplotype test. This test focuses on differences in read depth between haplotypes. Default: `0.01`.
+
+#### Output Options
+- `--log-file`: Path to the log file. Default: `abacus.log`.
+- `--keep-temp-files`: Keep temporary files generated during analysis. Default: `False`.
+- `--add-consensus-to-vcf`: Add consensus calls to the VCF output. Default: `False`.
+- `--add-contracted-consensus-to-vcf`: Add contracted consensus calls to the VCF output. Default: `False`.
 
 ## The STR catalouge
 
