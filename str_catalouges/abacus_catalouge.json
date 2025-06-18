@@ -77,6 +77,11 @@
         "ReferenceRegion": "chr16:66490398-66490453"
     },
     {
+        "LocusId": "BEAN1_alt2",
+        "LocusStructure": "(TRRAA)*",
+        "ReferenceRegion": "chr16:66490398-66490453"
+    },
+    {
         "LocusId": "C9ORF72",
         "LocusStructure": "(GGCCCC)*",
         "ReferenceRegion": "chr9:27573528-27573546"
@@ -145,6 +150,11 @@
             "EIF4A3",
             "EIF4A3_CACA20"
         ]
+    },
+    {
+        "LocusId": "EIF4A3_alt",
+        "LocusStructure": "(CCTCGCTGTGCCGCTGCCGA)*",
+        "ReferenceRegion":"chr17:80147003-80147139"
     },
     {
         "LocusId": "FGF14",
