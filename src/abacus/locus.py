@@ -6,6 +6,7 @@ from pathlib import Path
 from pyfaidx import Fasta
 
 from abacus.config import config
+from abacus.logging import logger
 
 
 @dataclass
@@ -74,15 +75,20 @@ def load_loci_from_json(json_path: Path, ref_path: Path) -> list[Locus]:
         # Process STR pattern
         satellite_seqs, satellites_skippable, breaks = process_str_pattern(item["LocusStructure"])
 
+        if not satellite_seqs:
+            error_message = f"No valid satellite pattern found in LocusStructure: {item['LocusStructure']}, LocusId: {locus_id}"
+            logger.error(error_message)
+            continue
+
         # Process reference region and ensure it's a list
         reference_region = item["ReferenceRegion"] if isinstance(item["ReferenceRegion"], list) else [item["ReferenceRegion"]]
         locus_location, satellite_locations = process_region(reference_region)
 
         # Get satellite ids
-        satelitte_ids = item["VariantId"] if "VariantId" in item else [f"{locus_id}.{i + 1}" for i in range(len(satellite_seqs))]
+        satellite_ids = item["VariantId"] if "VariantId" in item else [f"{locus_id}.{i + 1}" for i in range(len(satellite_seqs))]
 
         # Create satellites
-        satellites = create_satellites(satellite_seqs, satellites_skippable, satellite_locations, satelitte_ids, locus_id)
+        satellites = create_satellites(satellite_seqs, satellites_skippable, satellite_locations, satellite_ids, locus_id)
 
         # Get region around STR
         left_anchor = str(ref[locus_location.chrom][(locus_location.start - config.anchor_len) : locus_location.start])
