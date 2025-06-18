@@ -79,6 +79,13 @@ consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/
 clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/haplotypes.csv"
 test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/summary.csv"
 par_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/par_summary.csv"
+
+reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//reads.csv"
+filtered_reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//filtered_reads.csv"
+consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//consensus.csv"
+clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//haplotypes.csv"
+test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//summary.csv"
+par_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//par_summary.csv"
 ```
 
 ```{r Load data}
@@ -96,7 +103,10 @@ ALIGNMENT_TYPES <- c("left_flanking", "spanning", "right_flanking")
 # Colors
 HEADER_BACKGROUND <- "grey87"
 STRIPED_BACKGROUND <- "grey97"
-ATTENTION_COLOR = "#FF5733"
+ATTENTION_COLOR <- "#FF5733"
+
+HAPLOTYPE_COLORS <- c("#308EFF", "#30CDFF", "#30FF60", ATTENTION_COLOR)
+names(HAPLOTYPE_COLORS) <- c("h1", "h2", "hom", "outlier")
 ```
 
 ```{r Functions}
@@ -107,7 +117,7 @@ wrangle_reads_data <- function(reads_df) {
       # Fix missing
       obs_kmer_string = if_else(is.na(obs_kmer_string), "", obs_kmer_string),
       # Count kmers
-      n_kmer = str_count(obs_kmer_string, "-") + 1,
+      n_kmer = str_count(obs_kmer_string, fixed("|")) + 1,
       # Convert alignment_type to factor
       alignment_type_fct = factor(alignment_type, levels = ALIGNMENT_TYPES),
       alignment_type_txt = if_else(
@@ -125,7 +135,7 @@ wrangle_reads_data <- function(reads_df) {
       alignment_type_fct,
       if_else(
         alignment_type == "right_flanking",
-        desc(n_kmer),
+        dplyr::desc(n_kmer),
         n_kmer
       ),
       obs_kmer_string
@@ -158,16 +168,33 @@ mod_ascii_to_prob <- function(mod_ascii) {
   return(mod_prob)
 }
 
+ascii_to_qual <- function(ascii) {
+  # Check if mod_ascii is empty
+  if (nchar(ascii) == 0) {
+    return(0)
+  }
+  # Convert to numeric
+  ascii_int <- ascii %>%
+    charToRaw() %>%
+    as.numeric()
+  # Correct for ASCII values
+  quals <- ascii_int - 33
+  # Return mean quality
+  qual <- mean(quals, na.rm = TRUE)
+  return(qual)
+}
+
 wrangle_reads_to_kmers <- function(reads_df) {
   reads_df %>%
     # Get one line per kmer
     mutate(
-      kmer = str_split(obs_kmer_string, "-"),
-      ref_kmer = str_split(ref_kmer_string, "-"),
-      mod_kmer = str_split(mod_5mc_kmer_string, "-")
+      kmer = str_split(obs_kmer_string, fixed("|")),
+      ref_kmer = str_split(ref_kmer_string, fixed("|")),
+      mod_kmer = str_split(mod_5mc_kmer_string, fixed("|")),
+      qual_kmer = str_split(qual_kmer_string, fixed("|")),
     ) %>%
     unnest_longer(
-      col = c(kmer, ref_kmer, mod_kmer),
+      col = c(kmer, ref_kmer, mod_kmer, qual_kmer),
       values_to = "{col}",
       indices_to = "{col}_idx"
     ) %>%
@@ -175,12 +202,14 @@ wrangle_reads_to_kmers <- function(reads_df) {
     mutate(
       kmer = if_else(is.na(kmer), "", kmer),
       ref_kmer = if_else(is.na(ref_kmer), "", ref_kmer),
-      mod_kmer = if_else(is.na(mod_kmer), "", mod_kmer)
+      mod_kmer = if_else(is.na(mod_kmer), "", mod_kmer),
+      qual_kmer = if_else(is.na(qual_kmer), "", qual_kmer),
     ) %>%
     # Translated mod kmer to probability from ASCII value (33-43 -> 0,10,20,...,100)
     rowwise() %>%
     mutate(
-      mod_prob = mod_ascii_to_prob(mod_kmer)
+      mod_prob = mod_ascii_to_prob(mod_kmer),
+      qual = ascii_to_qual(qual_kmer)
     )
 }
 
@@ -205,7 +234,7 @@ generate_kmer_color_palette <- function(kmers) {
 }
 
 # Function to create kmer plots
-create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette = NULL) {
+create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette, shade_by_qual = FALSE) {
   kmer_plot_df <- kmer_df %>%
     # Get max per haplotype
     group_by(haplotype) %>%
@@ -246,13 +275,15 @@ create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette = NULL) {
       aes(
         x = start, xend = end,
         y = read_id, yend = read_id,
-        alpha = alignment_type_txt
+        # alpha = alignment_type_txt
       ),
       lwd = 1,
+      # Round ends
+      lineend = "round",
       data = hz_lines_df
-    ) +
-    scale_alpha_manual(values = c("Spanning" = 1, "Flanking" = 0.4)) +
-    labs(alpha = "Alignment type")
+    )
+  # scale_alpha_manual(values = c("Spanning" = 1, "Flanking" = 0.4)) +
+  # labs(alpha = "Alignment type")
 
   # Get "dimensionality" of plot
   n_reads <- nrow(hz_lines_df)
@@ -267,7 +298,7 @@ create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette = NULL) {
     }
 
     # Add "Other" (grey) to color palette in end
-    kmer_color_palette <- c(kmer_color_palette, c("Other" = "grey"))
+    kmer_color_palette["Other"] <- "grey"
 
     kmer_plot_df <- kmer_plot_df %>%
       mutate(
@@ -278,31 +309,52 @@ create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette = NULL) {
       )
 
     # Add points/tiles and color by kmer
-    if (n_reads < 50 && n_kmers < 60) {
+    if (n_reads < 50 && n_kmers < 50) {
       plot <- plot +
         geom_point(
           aes(
-            x = cor_kmer_idx, y = read_id,
-            col = kmer
+            x = cor_kmer_idx,
+            y = read_id,
+            col = kmer,
+            alpha = qual
           ),
           size = 5,
           data = kmer_plot_df
         ) +
         # Add color palette
-        scale_color_manual(values = kmer_color_palette) +
-        labs(color = "K-mer\n(ord. by freq.)")
+        scale_color_manual(
+          values = kmer_color_palette,
+          name = "K-mer\n(ord. by freq.)"
+        )
     } else {
       plot <- plot +
         geom_tile(
           aes(
-            x = cor_kmer_idx, y = read_id,
-            fill = kmer
+            x = cor_kmer_idx,
+            y = read_id,
+            fill = kmer,
+            alpha = qual
           ),
           data = kmer_plot_df
         ) +
         # Add color palette
-        scale_fill_manual(values = kmer_color_palette) +
-        labs(fill = "K-mer\n(ord. by freq.)")
+        scale_fill_manual(
+          values = kmer_color_palette,
+          name = "K-mer\n(ord. by freq.)"
+        )
+    }
+
+    # Handle if alpha is used
+    if (shade_by_qual) {
+      plot <- plot +
+        scale_alpha_continuous(
+          limits = c(20, 40),
+          name = "Quality"
+        )
+    } else {
+      plot <- plot +
+        scale_alpha_continuous(limits = c(-1, -1)) +
+        guides(alpha = "none")
     }
   } else if (color_by == "mod") {
     # Add points/tiles and color by mod probability
@@ -427,8 +479,8 @@ add_colors_to_consensus_strings <- function(consensus_strings, kmer_color_palett
 
 generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
   # Bin count to min max 100 bins
-  NBINS <- min(100, max(counts_df$count))
-  BIN_SZ <- ceiling(max(counts_df$count) / NBINS)
+  NBINS <- min(100, max(counts_df$count, 1))
+  BIN_SZ <- ceiling(max(counts_df$count, 1) / NBINS)
 
   counts_df <- counts_df %>%
     mutate(
@@ -453,18 +505,20 @@ generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
 
   # Add distributions
   if (nrow(density_df) > 0) {
-    # Fix colors
-    haplotype_colors <- brewer.pal(3, "Set1")
-    names(haplotype_colors) <- c("hom", "h1", "h2")
     # Fix line type
     haplotype_linetype <- c("hom" = "dashed", "h1" = "solid", "h2" = "solid")
 
     # Scale density to max count
     if (nrow(density_df) > 0) {
+      max_n <- counts_df %>%
+        group_by(count) %>%
+        summarise(n = sum(n)) %>%
+        pull(n) %>%
+        max()
       density_df <- density_df %>%
         group_by(haplotype) %>%
         mutate(
-          d = d / max(d) * max(counts_df$n)
+          d = d / max(d) * !!max_n
         ) %>%
         ungroup()
     }
@@ -473,9 +527,9 @@ generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
       geom_line(
         data = density_df,
         aes(x = x, y = d, col = haplotype, linetype = haplotype),
-        linewidth = 0.5
+        linewidth = 0.75
       ) +
-      scale_color_manual(values = haplotype_colors) +
+      scale_color_manual(values = HAPLOTYPE_COLORS) +
       scale_linetype_manual(values = haplotype_linetype, guide = "none")
   }
 
@@ -521,7 +575,7 @@ data.frame(
 
 # Test summary
 
-```{r Summary Table, results = TRUE}
+```{r Wrangle data}
 test_df <- test_summary_df %>%
   select(locus_id, is_significant)
 
@@ -550,12 +604,24 @@ stripped_row_index <- signif_par_summary_df %>%
   unnest(x) %>%
   pull(x)
 
-wide_ci_row_index <- signif_par_summary_df %>%
+is_ci_row_wide_vec <- signif_par_summary_df %>%
   mutate(
-    is_ci_wide = mean_upper - mean_lower > 2
+    is_ci_wide = mean_upper - mean_lower > 2,
+    # Fix NA
+    is_ci_wide = if_else(is.na(is_ci_wide), FALSE, is_ci_wide)
   ) %>%
   pull(is_ci_wide)
+```
 
+```{r Color comment , results = "asis"}
+if (sum(is_ci_row_wide_vec) > 0) {
+  cat("\n\n")
+  cat("**Note:** Some confidence intervals are wide (>2) and are highlighted in orange. This indicates that the estimate may be uncertain.")
+  cat("\n\n")
+}
+```
+
+```{r Summary Table, results = TRUE}
 signif_par_summary_df %>%
   # Round to 2 decimals
   mutate_if(is.numeric, ~ round(., 2)) %>%
@@ -586,21 +652,13 @@ signif_par_summary_df %>%
   column_spec(
     5:6,
     color = if_else(
-      wide_ci_row_index,
+      is_ci_row_wide_vec,
       ATTENTION_COLOR,
       "black"
     ),
-    bold = wide_ci_row_index
+    bold = is_ci_row_wide_vec
   ) %>%
   collapse_rows(columns = c(1, 2), valign = "middle", target = 1, )
-```
-
-```{r Color comment , results = "asis"}
-if (length(wide_ci_row_index) > 0) {
-  cat("\n\n")
-  cat("**Note:** Some confidence intervals are wide (>2) and are highlighted in orange. This indicates that the estimate may be uncertain.")
-  cat("\n\n")
-}
 ```
 
 ```{r Build report, results = "asis"}
@@ -702,7 +760,7 @@ for (i in seq_len(nrow(regions))) {
   ref_kmers <- kmer_haplotyped_df %>%
     filter(!is.na(ref_kmer)) %>%
     count(ref_kmer) %>%
-    arrange(desc(n)) %>%
+    arrange(dplyr::desc(n)) %>%
     pull(ref_kmer)
 
   # Most observed kmers
@@ -710,14 +768,17 @@ for (i in seq_len(nrow(regions))) {
     kmer_haplotyped_df %>%
     # Remove outlier reads, NA and empty kmers
     filter(haplotype != "outlier", !is.na(kmer), kmer != "") %>%
-    count(kmer) %>%
-    # Remove unique kmers (assumed to be errors)
-    filter(n > 1) %>%
-    # Get top kmers
-    arrange(desc(n)) %>%
-    pull(kmer) %>%
     # Remove kmers that are in ref_kmers
-    setdiff(ref_kmers)
+    filter(!kmer %in% ref_kmers) %>%
+    # Count kmers occurrences
+    group_by(kmer) %>%
+    summarise(
+      n = n(),
+      n_uniqe_read = n_distinct(read_id),
+    ) %>%
+    # Get top kmers
+    arrange(dplyr::desc(n_uniqe_read), dplyr::desc(n)) %>%
+    pull(kmer)
 
   # Select kmers for color palette
   n_colors <- 12
@@ -728,7 +789,7 @@ for (i in seq_len(nrow(regions))) {
   kmer_color_palette <- generate_kmer_color_palette(top_kmers)
 
   cat("\n\n")
-  cat("#### Sequence (N=", n_haplotyped_reads, ")", sep = "")
+  cat("#### Sequence")
   cat("\n\n")
 
   if (no_haplotype_reads) {
@@ -738,6 +799,16 @@ for (i in seq_len(nrow(regions))) {
     print(kmer_plot)
   }
 
+  cat("\n\n")
+  cat("#### Sequence w. QUAL")
+  cat("\n\n")
+
+  if (no_haplotype_reads) {
+    cat("There are no haplotyped reads for this locus.")
+  } else {
+    kmer_plot <- create_kmer_plot(kmer_haplotyped_df, "kmer", kmer_color_palette, shade_by_qual = TRUE)
+    print(kmer_plot)
+  }
 
   cat("\n\n")
   cat("#### Reference")
@@ -773,13 +844,29 @@ for (i in seq_len(nrow(regions))) {
     # Outlier color pallette
     top_outlier_kmers <- kmer_outlier_df %>%
       filter(!is.na(kmer)) %>%
+      # Remove long non-reference kmers
+      filter(nchar(kmer) < 25 | kmer %in% ref_kmers) %>%
       count(kmer) %>%
-      arrange(desc(n)) %>%
+      arrange(dplyr::desc(n)) %>%
       pull(kmer) %>%
       head(n_colors)
 
+    # Generate color palette
     outlier_color_palette <- generate_kmer_color_palette(top_outlier_kmers)
-    kmer_plot <- create_kmer_plot(kmer_outlier_df, "kmer", outlier_color_palette)
+    new_outlier_color_palette <- c()
+
+    # Find overlapping and new kmers compared to kmer_color_palette
+    overlapping_kmers <- intersect(names(outlier_color_palette), names(kmer_color_palette))
+    new_kmers <- setdiff(names(outlier_color_palette), overlapping_kmers)
+
+    # Re-use color palette from top_kmers
+    new_outlier_color_palette[overlapping_kmers] <- kmer_color_palette[overlapping_kmers]
+
+    # Add unused colors to new kmers
+    unused_colors <- setdiff(outlier_color_palette, new_outlier_color_palette)
+    new_outlier_color_palette[new_kmers] <- unused_colors
+
+    kmer_plot <- create_kmer_plot(kmer_outlier_df, "kmer", new_outlier_color_palette)
     print(kmer_plot)
   }
 
@@ -844,9 +931,36 @@ for (i in seq_len(nrow(regions))) {
     collapse_rows(columns = 1, valign = "middle") %>%
     cat()
 
+
   cat("\n\n")
   cat("### Additional read information {.tabset .tabset-pills}")
   cat("\n\n")
+
+  cat("\n\n")
+  cat("#### QC plot")
+  cat("\n\n")
+
+  qc_plot <- reads_region_df %>%
+    ggplot(
+      aes(
+        x = mean_str_qual,
+        y = str_error_rate,
+        col = haplotype,
+      )
+    ) +
+    geom_point(
+      alpha = 0.5, size = 3
+    ) +
+    # Labels
+    labs(
+      x = "Mean STR quality",
+      y = "STR error rate"
+    ) +
+    guides(
+      col = guide_legend(title = "Haplotype")
+    ) +
+    scale_color_manual(values = HAPLOTYPE_COLORS)
+  print(qc_plot)
 
   cat("\n\n")
   cat("#### Passed (N=", n_haplotyped_reads, ")", sep = "")
@@ -859,15 +973,24 @@ for (i in seq_len(nrow(regions))) {
     cat("There are no haplotyped reads for this locus.")
   } else {
     passed_reads_region_df %>%
+      # Round numeric values
+      mutate(
+        mean_str_qual = round(mean_str_qual, 1),
+        q10_str_qual = round(q10_str_qual, 1),
+        str_error_rate = round(str_error_rate, 3),
+        str_ref_divergence = round(str_ref_divergence, 3)
+      ) %>%
       select(
         "Haplotype" = haplotype,
         "Read ID" = read_id,
         "Query Name" = query_name,
         "Alignment Type" = alignment_type,
-        "Median STR Qual" = median_str_qual,
+        "Mean STR Qual" = mean_str_qual,
+        "Q10 STR Qual" = q10_str_qual,
+        "STR Error Rate" = str_error_rate,
+        "STR Ref. Divergence" = str_ref_divergence,
         "Kmer Count" = kmer_count_str
       ) %>%
-      mutate_if(is.numeric, ~ round(., 3)) %>%
       kbl(
         align = "c"
       ) %>%
@@ -891,17 +1014,24 @@ for (i in seq_len(nrow(regions))) {
       filter(haplotype == "outlier") %>%
       # Change "," to newline in outlier_reasons
       mutate(
-        outlier_reasons = str_replace_all(outlier_reasons, ";", "\n")
+        outlier_reasons = str_replace_all(outlier_reasons, ";", "\n"),
+        # Round numeric values
+        mean_str_qual = round(mean_str_qual, 1),
+        q10_str_qual = round(q10_str_qual, 1),
+        str_error_rate = round(str_error_rate, 3),
+        str_ref_divergence = round(str_ref_divergence, 3)
       ) %>%
       select(
         "Read ID" = read_id,
         "Query Name" = query_name,
         "Alignment Type" = alignment_type,
         "Outlier Reasons" = outlier_reasons,
-        "Median STR Qual" = median_str_qual,
+        "Mean STR Qual" = mean_str_qual,
+        "Q10 STR Qual" = q10_str_qual,
+        "STR Error Rate" = str_error_rate,
+        "STR Ref. Divergence" = str_ref_divergence,
         "Kmer Count" = kmer_count_str
       ) %>%
-      mutate_if(is.numeric, ~ round(., 3)) %>%
       kbl(
         align = "c"
       ) %>%
@@ -1081,6 +1211,7 @@ for (i in seq_len(nrow(regions))) {
 
       length_plot_df <- counts_index_df %>%
         filter(haplotype != "outlier")
+
       if (nrow(length_plot_df) > 0) {
         length_plot <- generate_length_plot(length_plot_df, density_index_df, satellite, BIN_SZ)
 
@@ -1170,34 +1301,6 @@ for (i in seq_len(nrow(regions))) {
     kbl(align = "c") %>%
     kable_styling("bordered", full_width = TRUE) %>%
     collapse_rows(columns = 1:2, valign = "middle", target = 1) %>%
-    row_spec(
-      0,
-      background = HEADER_BACKGROUND
-    ) %>%
-    cat()
-
-  cat("\n\n")
-  cat("##### Pi")
-  cat("\n\n")
-
-  par_summary_region_df %>%
-    mutate(
-      model = if_else(haplotype == "hom", "Homozygote", "Heterozygote")
-    ) %>%
-    arrange(model, haplotype, idx) %>%
-    filter(
-      haplotype %in% c("h1", "h2")
-    ) %>%
-    select(
-      "Model" = model,
-      "Haplotype" = haplotype,
-      "Pi" = pi
-    ) %>%
-    distinct() %>%
-    mutate_if(is.numeric, ~ round(., 2)) %>%
-    kbl(align = "c") %>%
-    kable_styling("bordered", full_width = TRUE) %>%
-    collapse_rows(columns = 1, valign = "middle") %>%
     row_spec(
       0,
       background = HEADER_BACKGROUND
