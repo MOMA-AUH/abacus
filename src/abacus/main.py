@@ -89,12 +89,12 @@ def abacus(
             resolve_path=True,
         ),
     ],
-    str_catalouge: Annotated[
+    str_catalog: Annotated[
         Path,
         typer.Option(
-            "--str-catalouge",
+            "--str-catalog",
             "-s",
-            help="STR catalouge JSON file",
+            help="STR catalog JSON file",
             rich_help_panel=INPUTS,
             exists=True,
             file_okay=True,
@@ -352,12 +352,12 @@ def abacus(
     logger.info(ascii_art)
 
     # Load loci data from JSON
-    loci = load_loci_from_json(str_catalouge, ref)
+    loci = load_loci_from_json(str_catalog, ref)
 
     # Subset loci if provided
     if loci_subset:
         if set(loci_subset).isdisjoint([locus.id for locus in loci]):
-            logger.error("No loci in subset found in STR catalouge")
+            logger.error("No loci in subset found in STR catalog")
             raise typer.Exit(code=1)
 
         loci = [locus for locus in loci if locus.id in loci_subset]
@@ -535,7 +535,7 @@ def abacus(
                         params=list( \
                             sample_id = '{sample_id}', \
                             input_bam = '{bam}', \
-                            str_catalouge = '{str_catalouge}', \
+                            str_catalog = '{str_catalog}', \
                             reads_csv = '{reads_csv}', \
                             filtered_reads_csv = '{filtered_reads_csv}', \
                             consensus_csv = '{consensus_csv}', \
