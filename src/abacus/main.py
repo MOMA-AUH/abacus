@@ -55,7 +55,6 @@ app = typer.Typer(
     add_completion=False,
 )
 
-# Version callback unfortunately breaks help renedering with click 8.x.
 def version_callback(value: bool):
     if value:
         typer.echo(f"Abacus version {__version__}")
