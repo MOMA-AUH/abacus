@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 import pandas as pd
 import typer
 
+from abacus import __version__
 from abacus.config import config
 from abacus.consensus import ConsensusCall, create_consensus_calls, update_flanking_labels_based_on_consensus
 from abacus.filtering import filter_read_calls
@@ -54,6 +55,10 @@ app = typer.Typer(
     add_completion=False,
 )
 
+def version_callback(value: bool):
+    if value:
+        typer.echo(f"Abacus version {__version__}")
+        raise typer.Exit()
 
 @app.command(
     help="[bold]Abacus[/bold]: A tool for STR genotyping, haplotyping and visualization 🧬",
@@ -319,7 +324,16 @@ def abacus(
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.het_alpha,
+    version: Optional[bool] =
+    typer.Option(None,
+                 "--version",
+                 callback=version_callback,
+                 is_flag=True,
+                 is_eager=True,
+                 help="Show version and exit.",
+                 ),
 ) -> None:
+
     # Setup logging to file
     set_log_file_handler(logger, log_file)
 
