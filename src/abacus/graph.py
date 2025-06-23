@@ -46,9 +46,6 @@ def sync_with_cigar(input_list: list, cig: str) -> list[list]:
 
     res_list: list[list] = []
 
-    print("Res list before")
-    print(input_list)
-
     for item in cigar_matches:
         cigar_len = int(item[0])
         cigar_ops = item[1]
@@ -63,10 +60,6 @@ def sync_with_cigar(input_list: list, cig: str) -> list[list]:
             res_list.extend([[] for _ in range(cigar_len)])
         elif cigar_ops == "I":
             # For insertion: add elements to the previous position
-            print("Res list after")
-            print(res_list)
-            print("input list")
-            print(input_list)
             res_list[-1].extend(input_list[:cigar_len])
             # Trim "used" input list
             input_list = input_list[cigar_len:]
