@@ -5,3 +5,8 @@ testing
 build
 .pytest_cache
 **/._*
+*_outputs/
+run_N575_FGF14_samples.sh
+*.log
+*.out
+
