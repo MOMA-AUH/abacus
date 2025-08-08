@@ -573,7 +573,7 @@ data.frame(
   column_spec(1, background = HEADER_BACKGROUND, bold = TRUE)
 ```
 
-# Test summary
+<!--  # Test summary - leftout because we're only allowed to look a specific gene(s) -->
 
 ```{r Wrangle data}
 test_df <- test_summary_df %>%
@@ -613,7 +613,7 @@ is_ci_row_wide_vec <- signif_par_summary_df %>%
   pull(is_ci_wide)
 ```
 
-```{r Color comment , results = "asis"}
+```{r Color comment , results = "asis",eval=FALSE,include=FALSE}
 if (sum(is_ci_row_wide_vec) > 0) {
   cat("\n\n")
   cat("**Note:** Some confidence intervals are wide (>2) and are highlighted in orange. This indicates that the estimate may be uncertain.")
@@ -621,7 +621,7 @@ if (sum(is_ci_row_wide_vec) > 0) {
 }
 ```
 
-```{r Summary Table, results = TRUE}
+```{r Summary Table, results = TRUE,eval=FALSE,include=FALSE}
 signif_par_summary_df %>%
   # Round to 2 decimals
   mutate_if(is.numeric, ~ round(., 2)) %>%
@@ -665,6 +665,7 @@ signif_par_summary_df %>%
 cat("\n\n")
 cat("# Choose a region {.tabset .tabset-pills}")
 cat("\n\n")
+cat('<span style="color:red;">**WARNING! ALL ABACUS GENES ARE INCLUDED IN THE REPORT. REMEBER TO ONLY LOOK AT THE GENE(S) THAT YOU HAVE PERMISSION FOR, i.e. GENE(S) THAT IS/ARE REQUESTED!**</span>')
 
 # Get destinct regions (for looping)
 regions <- reads_df %>%
@@ -705,6 +706,13 @@ for (i in seq_len(nrow(regions))) {
 
 
   # Create heading - Note this is a tab
+  # TDA: adding a tab before the first region, specifying that only the specific gene(s) that is/are requested can be viewed!
+  if( i == 1){
+  cat("\n\n")
+  cat('## **Genes:** {.tabset .tabset-pills}')
+  cat("\n\n")
+  
+}
   cat("\n\n")
   cat("##", selected_region$locus_id)
   cat("\n\n")
