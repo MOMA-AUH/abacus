@@ -8,7 +8,7 @@ output:
 params:
   sample_id: ""
   input_bam: ""
-  str_catalouge: ""
+  str_catalog: ""
   reads_csv: ""
   consensus_csv: ""
   filtered_reads_csv: ""
@@ -40,7 +40,7 @@ library(kableExtra)
 # Sample information
 sample_id <- params$sample_id
 input_bam <- params$input_bam
-str_catalouge <- params$str_catalouge
+str_catalog <- params$str_catalog
 
 # Unpack input variables
 reads_csv <- params$reads_csv
@@ -62,7 +62,7 @@ test_summary_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/s
 # Variables
 sample_id <- "test"
 input_bam <- "path/to/bam"
-str_catalouge <- "path/to/str_catalogue"
+str_catalog <- "path/to/str_catalog"
 
 # Data files
 reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/reads.csv"
@@ -557,13 +557,13 @@ data.frame(
   sample_id = sample_id,
   date = format(Sys.time(), "%Y/%m/%d %H:%M %Z"),
   bam = basename(input_bam),
-  json = basename(str_catalouge)
+  json = basename(str_catalog)
 ) %>%
   select(
     "Sample ID" = sample_id,
     "Date" = date,
     "BAM file" = bam,
-    "STR catalouge" = json
+    "STR catalog" = json
   ) %>%
   # Transpose
   t() %>%

@@ -9,7 +9,7 @@
 
 Abacus is a tool for analyzing STR (Short Tandem Repeat) data from Long-Read Sequencing technologies. It is designed to work with data from the Oxford Nanopore Technologies (ONT) platform, but has also been tested with data from the Pacific Biosciences (PacBio) platform. The main goal of Abacus is to provide a user-friendly interface for analyzing STR data and to provide a comprehensive report of the analysis results.
 
-Abacus works by first converting the entries of an STR catalogue (JSON) into graphs, which are then used to analyze the reads from an aligned BAM file. Each read in the BAM file is first mapped to the graph using [minigraph](https://github.com/lh3/minigraph), and the number of repeats of each satellite is calculated based on the resulting path. The reads are then grouped according to the satellite repeat counts, and the STR alleles (haplotypes) are called based on these groups. The analysis results are then saved in an HTML report file, which contains information about the STR loci, the called STR alleles, and visualizations of the data.
+Abacus works by first converting the entries of an STR catalog (JSON) into graphs, which are then used to analyze the reads from an aligned BAM file. Each read in the BAM file is first mapped to the graph using [minigraph](https://github.com/lh3/minigraph), and the number of repeats of each satellite is calculated based on the resulting path. The reads are then grouped according to the satellite repeat counts, and the STR alleles (haplotypes) are called based on these groups. The analysis results are then saved in an HTML report file, which contains information about the STR loci, the called STR alleles, and visualizations of the data.
 
 ## Installation
 To set up the environment for this project, follow these steps:
@@ -36,7 +36,7 @@ To run Abacus, you need to provide the following arguments:
 
 - `--bam`: The path to the BAM file that contains aligned reads from the Long-Read Sequencing data.
 - `--ref`: The path to the reference FASTA file that was used to align the reads in the BAM file.
-- `--str-catalouge`: The path to the STR catalogue (JSON) that contains the information about the STR loci that you want to analyze. See the [provided examples](./str_catalouges/) in the repository.
+- `--str-catalog`: The path to the STR catalog (JSON) that contains the information about the STR loci that you want to analyze. See the [provided examples](./str_catalogs/) in the repository.
 - `--report`: The path to the HTML file where the analysis results will be saved.
 - `--vcf`: The path to the VCF file where the STR genotyping results will be saved.
 - `--sample-id`: The identifier of the sample that you are analyzing.
@@ -48,7 +48,7 @@ To run Abacus, you need to provide the following arguments:
 abacus \
     --bam input.bam \
     --ref reference.fa \
-    --str-catalouge str_catalogue.json \
+    --str-catalog str_catalog.json \
     --report output.html \
     --vcf output.vcf \
     --sample-id my_sample
@@ -59,7 +59,7 @@ abacus \
 abacus \
     --bam input.bam \
     --ref reference.fa \
-    --str-catalouge str_catalogue.json \
+    --str-catalog str_catalog.json \
     --report output.html \
     --vcf output.vcf \
     --sample-id my_sample \
@@ -98,15 +98,15 @@ The following configuration parameters allow fine-tuning of the analysis:
 - `--add-consensus-to-vcf`: Add consensus calls to the VCF output. Default: `False`.
 - `--add-contracted-consensus-to-vcf`: Add contracted consensus calls to the VCF output. Default: `False`.
 
-## The STR catalouge
+## The STR catalog
 
-The STR catalogue is a JSON file that contains information about the STR loci that you want to analyze. Each entry in the catalogue should contain the following information:
+The STR catalog is a JSON file that contains information about the STR loci that you want to analyze. Each entry in the catalog should contain the following information:
 
 - `LocusId`: The identifier of the STR locus. This can be any string that uniquely identifies the locus. It is used to refer to the locus in the analysis results.
 - `LocusStructure`: The structure of the STR locus, where each repeat unit is enclosed in parentheses and followed by an asterisk. For example, the structure of the ATXN1 locus: `(CTG)*`. The structure can contain any number of repeat units of any length and can contain [IUPAC](https://en.wikipedia.org/wiki/International_Union_of_Pure_and_Applied_Chemistry) base symbols, such as `N` or `Y`. The structure can also contain non-repeating sequences, such as flanking regions or interruptions. For example, the structure of the HTT locus: `(CAG)*CAACAG(CCG)*`, where `CAACAG` is a non-repeating sequence.
 - `ReferenceRegion`: The genomic region of the STR locus in the reference genome. This can be a single region of the entire structure of the STR locus, or a list of regions that cover the entire structure of the STR locus. The regions should be in the format `chr:start-end`, where `chr` is the chromosome name and `start` and `end` are the start and end positions of the region, respectively.
 
-In `str_catalouges/moma_repeat_variants_catalogue_240521.json` you can find a comprehensive list of STRs that are known to be variable in the human genome, which can be used as a starting point for your analysis. You can also create your own STR catalogue by following the format described above. Underneath is an example of the structure of the STR catalogue:
+In `str_catalogs/moma_repeat_variants_catalog_240521.json` you can find a comprehensive list of STRs that are known to be variable in the human genome, which can be used as a starting point for your analysis. You can also create your own STR catalog by following the format described above. Underneath is an example of the structure of the STR catalog:
 
 ```json
 [
@@ -127,7 +127,7 @@ In `str_catalouges/moma_repeat_variants_catalogue_240521.json` you can find a co
 ```
 
 ## Notes on FGF14
-FGF14 is a complex locus with multiple haplotypes and a large number of variants. In the provided catalouge [provided examples](./str_catalouges/abacus_catalouge.json) we have included a `FGF14_complex` entry that contains the following information:
+FGF14 is a complex locus with multiple haplotypes and a large number of variants. In the provided catalog [provided examples](./str_catalogs/abacus_catalog.json) we have included a `FGF14_complex` entry that contains the following information:
 
 ```json
 [
