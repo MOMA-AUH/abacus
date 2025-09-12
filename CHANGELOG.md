@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Fallback to `loqus_id` if there is only one satellite id, and no `VariantId` (#16)
 ### Fixed
-- Typo catalog. Formally interface breaking, but we are still on version 0.0.x (#15)
+- Typo catalog. Normally an interface breaking change, but we are still on semantic version 0.0.x (#15)
 
 ## [0.0.0]
 ### Added 
@@ -24,5 +24,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated report
 - Updated README
 ### Fixed
-- no coverage bug
+- No coverage bug
 - UIPAC handling bug
