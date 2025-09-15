@@ -7,8 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     
 ## [Unreleased]
 ### Added
-- Added a version endpoint (#14)
-- Added a Changelog (#13)
+- A version endpoint (#14)
+- A Changelog (#13)
+- A Dockerfile (#12)
 ### Changed
 - Fallback to `loqus_id` if there is only one satellite id, and no `VariantId` (#16)
 ### Fixed
