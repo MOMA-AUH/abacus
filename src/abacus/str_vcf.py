@@ -119,7 +119,7 @@ def create_vcf_records(
         info_fields = [
             f"END={satellite.location.end}",
             f"LOCUSID={locus.id}",
-            f"RU={satellite.sequence}",
+            f"RU={','.join(satellite.sequences)}",
             f"REPID={satellite.id}",
         ]
         info_field = ";".join(info_fields)
@@ -187,10 +187,15 @@ def create_vcf_records(
                 # Extract the path and extract the relevant nodes
                 path = consensus_call.alignment.path
                 path = [node for node in path if "sub_" in node or "satellite_" in node or "break" in node]
+
+                # Filter sub-satellites from the path
+                filtered_path = [node for node in path if not node.startswith("sub_")]
+
                 # Find the index of the current satellite in the path
-                index_list = ["satellite" in node and int(node.removeprefix("sub_").removeprefix("satellite_").split("_")[0]) == i for node in path]
+                index_list = ["satellite" in node and int(node.removeprefix("satellite_").split("_")[0]) == i for node in filtered_path]
+
                 # Filter the kmer list based on the satellite index list
-                kmer_list = consensus_call.obs_kmer_string.split("-")
+                kmer_list = consensus_call.obs_kmer_string.split("|")
                 subset_kmer_lists.append([kmer_list[idx] for idx, is_satellite in enumerate(index_list) if is_satellite])
 
             # Consensus string
@@ -204,7 +209,7 @@ def create_vcf_records(
 
             if config.add_contracted_consensus_to_vcf:
                 # Contracted consensus call fields
-                contracted_consensus_fields = [contract_kmer_string("-".join(kmer_list)) for kmer_list in subset_kmer_lists]
+                contracted_consensus_fields = [contract_kmer_string("|".join(kmer_list)) for kmer_list in subset_kmer_lists]
                 contracted_consensus_field = ",".join(contracted_consensus_fields)
 
                 # Add to format field

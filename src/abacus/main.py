@@ -476,7 +476,7 @@ def abacus(
                 {
                     "locus_id": locus.id,
                     "idx": sat_idx,
-                    "satellite": locus.satellites[sat_idx].sequence,
+                    "satellite": "|".join(locus.satellites[sat_idx].sequences),
                 },
                 index=[0],
             )

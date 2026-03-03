@@ -5,7 +5,15 @@ import pysam
 import pytest
 
 from abacus.config import config
-from abacus.graph import Locus, Read, get_graph_alignments, get_kmer_string, get_reference_sequence_from_path, get_satellite_counts_from_path
+from abacus.graph import (
+    Locus,
+    Read,
+    create_repeat_graph,
+    get_graph_alignments,
+    get_kmer_string,
+    get_reference_sequence_from_path,
+    get_satellite_counts_from_path,
+)
 from abacus.locus import Location, Satellite, create_satellites, process_str_pattern
 
 
@@ -261,15 +269,15 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
         pytest.param(
             "(CAG)*",
             "CAG" * 10,
-            "-".join(["CAG"] * 10),
-            "-".join(["CAG"] * 10),
+            "|".join(["CAG"] * 10),
+            "|".join(["CAG"] * 10),
             id="Single satellite x 10",
         ),
         pytest.param(
             "(CAG)*",
             "CAG" * 4 + "TTT" + "CAG" * 5,
             "-".join(["CAG"] * 10),
-            "-".join(["CAG"] * 4 + ["TTT"] + ["CAG"] * 5),
+            "|".join(["CAG"] * 4 + ["TTT"] + ["CAG"] * 5),
             id="Single w error satellite x 10",
         ),
     ],
@@ -383,9 +391,10 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
     ],
 )
 def test_get_reference_sequence_from_path(path: list[str], reference_seq: str, expected_reference: str):
-    # Create a dummy locus
+    # Create a dummy locus and the corresponding repeat graph
     locus = create_synthetic_simple_locus(reference_seq)
-    reference = get_reference_sequence_from_path(path, locus)
+    graph = create_repeat_graph(locus)
+    reference = get_reference_sequence_from_path(path, locus, graph)
     assert reference == expected_reference
 
 
@@ -413,7 +422,7 @@ def create_synthetic_simple_locus(satellite_seq: str):
         satellites=[
             Satellite(
                 id="test",
-                sequence=satellite_seq,
+                sequences=[satellite_seq],
                 location=Location("chr1", 1000, 2000),
                 skippable=False,
             ),

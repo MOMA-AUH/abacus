@@ -37,7 +37,7 @@ def create_synthetic_locus(satellite_seqs: list[str], breaks: list[str] | None =
         satellites.append(
             Satellite(
                 id=f"test_{i}",
-                sequence=seq,
+                sequences=[seq],
                 location=Location("chr1", start_pos, end_pos),
                 skippable=(len(satellite_seqs) > 1),  # Only skippable in complex loci
             ),

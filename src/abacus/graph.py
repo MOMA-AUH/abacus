@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean
 
+import networkx as nx
 import numpy as np
 
 from abacus.config import config
@@ -67,41 +68,16 @@ def sync_with_cigar(input_list: list, cig: str) -> list[list]:
     return res_list
 
 
-# TODO: Add test for this and extract into function
-def get_reference_sequence_from_path(path: list[str], locus: Locus) -> str:
-    # Add left anchor
-    reference = locus.left_anchor
-    # Run through the path and add breaks and satellites
-    for node in path:
-        # Breaks are simple, just add the break sequence and move on
-        if node.startswith("break"):
-            break_idx = int(node.split("_")[1])
-            break_seq = locus.breaks[break_idx]
-            reference += break_seq
-            continue
+def get_reference_sequence_from_path(path: list[str], locus: Locus, graph: nx.DiGraph) -> str:
+    """Reconstruct the reference sequence for an alignment path through the graph.
 
-        # Satellites and sub-satellites
-        # Add the satellite sequence
-        if node.startswith("satellite"):
-            satellite_idx = int(node.split("_")[1])
-            satellite_seq = locus.satellites[satellite_idx].sequence
-            reference += satellite_seq
-
-        # Handle ambiguous bases
-        if node.startswith(("satellite", "sub_satellite")) and any(node.endswith(s) for s in ["_A", "_T", "_C", "_G"]):
-            # Ambiguous base
-            base = node[-1]
-            index = node.removeprefix("sub_").removeprefix("satellite_")
-            satellite_idx = int(index.split("_")[0])
-            satellite_length = len(locus.satellites[satellite_idx].sequence)
-            # Look at the last bases of the reference sequence and replace the first ambiguous base
-            for i in range(len(reference) - satellite_length, len(reference)):
-                c = reference[i]
-                if c in AMBIGUOUS_BASES_DICT:
-                    reference = reference[:i] + base + reference[i + 1 :]
-                    break
-    # Add right anchor
-    return reference + locus.right_anchor
+    Concatenates node sequences for all non-anchor nodes and wraps with the full anchors.
+    Each node already stores its resolved sequence (ambiguous bases are individual nodes),
+    so no post-hoc patching is needed.
+    """
+    anchor_nodes = {"left_anchor", "left_anchor_overlap", "right_anchor_overlap", "right_anchor"}
+    str_region = "".join(graph.nodes[node]["sequence"] for node in path if node not in anchor_nodes)
+    return locus.left_anchor + str_region + locus.right_anchor
 
 
 @dataclass
@@ -118,6 +94,8 @@ class GraphAlignment(Read):
     path: list[str]
 
     cigar: str
+
+    graph: nx.DiGraph = field(repr=False)
 
     # Properties of STR region
     str_sequence: str = field(init=False)
@@ -141,7 +119,7 @@ class GraphAlignment(Read):
     type: AlignmentType = field(init=False)
 
     @classmethod
-    def from_gaf_line(cls, read: Read, gaf_line: str) -> GraphAlignment:
+    def from_gaf_line(cls, read: Read, gaf_line: str, graph: nx.DiGraph) -> GraphAlignment:
         # GAF format: https://github.com/lh3/gfatools/blob/master/doc/rGFA.md#the-graph-alignment-format-gaf
         fields = gaf_line.split("\t")
 
@@ -181,6 +159,7 @@ class GraphAlignment(Read):
             path_start=path_start,
             path_end=path_end,
             cigar=cigar,
+            graph=graph,
         )
 
     def __post_init__(self) -> None:
@@ -249,7 +228,7 @@ class GraphAlignment(Read):
         self.q10_str_quality = int(np.quantile(self.str_qualities, 0.1)) if self.str_qualities else 0
 
         # Build STR reference sequence from path
-        self.reference = get_reference_sequence_from_path(self.path, self.locus)
+        self.reference = get_reference_sequence_from_path(self.path, self.locus, self.graph)
 
         # Trim the anchors to get the STR reference sequence
         self.str_reference = self.reference[len(self.locus.left_anchor) : -len(self.locus.right_anchor)]
@@ -262,7 +241,7 @@ class GraphAlignment(Read):
 
         # Trim indels from ends of CIGAR string - these are often artefacts of flanking reads
         # Trim max bases/operations equal to the longest satellite
-        longest_satellite = max(len(s.sequence) for s in self.locus.satellites)
+        longest_satellite = max(max(len(seq) for seq in s.sequences) for s in self.locus.satellites)
         str_cigar = re.sub(rf"^[ID]{{1,{longest_satellite}}}|[ID]{{1,{longest_satellite}}}$", "", str_cigar)
 
         self.str_ref_divergence = compute_ref_divergence(str_cigar)
@@ -287,224 +266,206 @@ def get_satellite_counts_from_path(path: list[str], locus: Locus) -> list[int]:
     return [len([node for node in path if node.startswith(f"satellite_{i}")]) for i in range(len(locus.satellites))]
 
 
-# TODO: Implement skip connections when creating the graph for alignment of flanking readsm i.e. left flanking needs skip connection for all nodes to the right anchor
-def create_repeat_graph_gfa_from_locus(locus: Locus) -> str:
-    # TODO: Make this into a parameter so that you can check for anchor -> this mens the overlap is big enough
+# TODO: Implement skip connections when creating the graph for alignment of flanking reads, i.e. left flanking needs skip connection for all nodes to the right anchor
+def graph_to_gfa(graph: nx.DiGraph) -> str:
+    """Convert a NetworkX DiGraph to a GFA-format string.
 
+    Nodes must have a 'sequence' attribute. All edges use forward strand (+) and
+    default overlap of '0M'.
+    """
+    node_lines = [f"S\t{node_id}\t{attrs['sequence']}" for node_id, attrs in graph.nodes(data=True)]
+    edge_lines = [f"L\t{src}\t+\t{dst}\t+\t0M" for src, dst in graph.edges()]
+
+    return "\n".join(node_lines) + "\n" + "\n".join(edge_lines)
+
+
+def _parse_iupac_sequence(sequence: str) -> list[list[str]]:
+    """Parse a satellite sequence into segments, expanding IUPAC ambiguous bases.
+
+    Returns a list of segments. Each segment is a list of strings:
+    - Single-element: unambiguous sequence chunk, e.g. ["ACGT"]
+    - Multi-element: ambiguous position with all possible bases, e.g. ["A", "G"] for R
+    """
+    segments: list[list[str]] = []
+    current = ""
+    for base in sequence:
+        if base in AMBIGUOUS_BASES_DICT:
+            if current:
+                segments.append([current])
+                current = ""
+            segments.append(AMBIGUOUS_BASES_DICT[base])
+        else:
+            current += base
+    if current:
+        segments.append([current])
+    return segments
+
+
+def _add_satellite_copy_to_graph(
+    graph: nx.DiGraph,
+    sub_satellites: list[list[str]],
+    node_prefix: str,
+    previous_nodes: list[str],
+) -> list[str]:
+    """Add one copy of a satellite to the graph, returning the frontier (last) node ids.
+
+    For a simple single-segment satellite, one node is added with id = node_prefix.
+    For multi-segment or ambiguous satellites, nodes get _k suffixes and possible base suffixes.
+    The caller is responsible for adding self-loop edges if needed (repeat graph).
+    """
+    # Simple case: single unambiguous segment — use node_prefix directly (no _0 suffix)
+    if len(sub_satellites) == 1 and len(sub_satellites[0]) == 1:
+        graph.add_node(node_prefix, sequence=sub_satellites[0][0])
+        for prev in previous_nodes:
+            graph.add_edge(prev, node_prefix)
+        return [node_prefix]
+
+    # Multi-segment or ambiguous case: chain sub-nodes with _k suffixes
+    current_nodes = list(previous_nodes)
+    for k, segment in enumerate(sub_satellites):
+        node_id_base = f"{'sub_' if k > 0 else ''}{node_prefix}_{k}"
+        next_nodes = []
+
+        if len(segment) > 1:
+            # Ambiguous position: one node per possible base
+            for base in segment:
+                node_id = f"{node_id_base}_{base}"
+                graph.add_node(node_id, sequence=base)
+                for prev in current_nodes:
+                    graph.add_edge(prev, node_id)
+                next_nodes.append(node_id)
+        else:
+            graph.add_node(node_id_base, sequence=segment[0])
+            for prev in current_nodes:
+                graph.add_edge(prev, node_id_base)
+            next_nodes.append(node_id_base)
+
+        current_nodes = next_nodes
+
+    return current_nodes
+
+
+def _get_satellite_first_nodes(sub_satellites: list[list[str]], node_prefix: str) -> list[str]:
+    """Return the first node ids of a satellite (used to construct self-loops in repeat graphs)."""
+    # Simple case: single unambiguous segment
+    if len(sub_satellites) == 1 and len(sub_satellites[0]) == 1:
+        return [node_prefix]
+    # First segment is ambiguous: one node per base
+    if len(sub_satellites[0]) > 1:
+        return [f"{node_prefix}_0_{base}" for base in sub_satellites[0]]
+    # First segment is unambiguous
+    return [f"{node_prefix}_0"]
+
+
+def _add_break_to_graph(
+    graph: nx.DiGraph,
+    break_seq: str,
+    node_prefix: str,
+    previous_nodes: list[str],
+) -> list[str]:
+    """Add break nodes to the graph, expanding any IUPAC ambiguous bases.
+
+    Reuses _parse_iupac_sequence and _add_satellite_copy_to_graph — no self-loop is
+    added since breaks are traversed exactly once. Returns the new frontier node ids.
+    """
+    sub_segments = _parse_iupac_sequence(break_seq)
+    return _add_satellite_copy_to_graph(graph, sub_segments, node_prefix, previous_nodes)
+
+
+def create_repeat_graph(locus: Locus) -> nx.DiGraph:
+    """Build a directed repeat graph for a locus using NetworkX.
+
+    Each satellite is represented as a node (or sub-nodes for IUPAC ambiguity) with a
+    self-loop to allow multiple copies. Breaks are single-pass nodes between satellites.
+    """
+    # TODO: Make this into a parameter so that you can check for anchor -> this means the overlap is big enough
     left_anchor = locus.left_anchor[: -config.min_anchor_overlap]
     left_anchor_overlap = locus.left_anchor[-config.min_anchor_overlap :]
-
     right_anchor = locus.right_anchor[config.min_anchor_overlap :]
     right_anchor_overlap = locus.right_anchor[: config.min_anchor_overlap]
 
-    # Initialize lists
-    nodes = [
-        f"S\tleft_anchor\t{left_anchor}\n",
-        f"S\tleft_anchor_overlap\t{left_anchor_overlap}\n",
-    ]
-    edges = ["L\tleft_anchor\t+\tleft_anchor_overlap\t+\t0M\n"]
+    graph = nx.DiGraph()
+    graph.add_node("left_anchor", sequence=left_anchor)
+    graph.add_node("left_anchor_overlap", sequence=left_anchor_overlap)
+    graph.add_edge("left_anchor", "left_anchor_overlap")
     previous_nodes = ["left_anchor_overlap"]
 
-    for i in range(len(locus.satellites)):
-        # Add break if present
-        if locus.breaks[i]:
-            edges.extend([f"L\t{prev_node}\t+\tbreak_{i}\t+\t0M\n" for prev_node in previous_nodes])
-            nodes.append(f"S\tbreak_{i}\t{locus.breaks[i]}\n")
-            previous_nodes = [f"break_{i}"]
+    for i, (satellite, pre_break) in enumerate(zip(locus.satellites, locus.breaks)):
+        if pre_break:
+            previous_nodes = _add_break_to_graph(graph, pre_break, f"break_{i}", previous_nodes)
 
-        # Handle satellite
-        current_satellite = locus.satellites[i]
+        # Each alternative gets its own set of nodes and self-loop, all branching from
+        # the same previous_nodes and feeding into the same next frontier.
+        all_last_nodes: list[str] = []
+        for alt_idx, alt_seq in enumerate(satellite.sequences):
+            alt_prefix = f"satellite_{i}" if len(satellite.sequences) == 1 else f"satellite_{i}_alt{alt_idx}"
+            sub_satellites = _parse_iupac_sequence(alt_seq)
+            last_nodes = _add_satellite_copy_to_graph(graph, sub_satellites, alt_prefix, previous_nodes)
+            first_nodes = _get_satellite_first_nodes(sub_satellites, alt_prefix)
+            for last, first in itertools.product(last_nodes, first_nodes):
+                graph.add_edge(last, first)  # self-loop for repeat copies
+            all_last_nodes.extend(last_nodes)
 
-        # Check in ambiguous bases in satellite
-        if all(base not in AMBIGUOUS_BASES_DICT for base in current_satellite.sequence):
-            satellite_id = f"satellite_{i}"
-            # Add satellite
-            nodes.append(f"S\t{satellite_id}\t{current_satellite.sequence}\n")
-            # Add edge from previous nodes to satellite
-            edges.extend([f"L\t{prev_node}\t+\t{satellite_id}\t+\t0M\n" for prev_node in previous_nodes])
-            # Connect satellite to itself
-            edges.append(f"L\t{satellite_id}\t+\t{satellite_id}\t+\t0M\n")
+        previous_nodes = previous_nodes + all_last_nodes if satellite.skippable else all_last_nodes
 
-            if current_satellite.skippable:
-                # Add edges from satellite to previous nodes
-                previous_nodes.append(f"{satellite_id}")
-            else:
-                # Reset previous nodes
-                previous_nodes = [f"{satellite_id}"]
-
-        else:
-            sub_satellites: list[list[str]] = []
-            sub_satellite = ""
-            for base in current_satellite.sequence:
-                if base in AMBIGUOUS_BASES_DICT:
-                    if sub_satellite:
-                        sub_satellites.append([sub_satellite])
-                        sub_satellite = ""
-                    sub_satellites.append(AMBIGUOUS_BASES_DICT[base])
-                else:
-                    sub_satellite += base
-            if sub_satellite:
-                sub_satellites.append([sub_satellite])
-
-            # Internal edges
-            previous_sub_satellites = list(previous_nodes)
-            for j, sub_satellite in enumerate(sub_satellites):
-                cur_nodes = []
-                prefix = "sub_" if j > 0 else ""
-                cur_satallite_id = f"{prefix}satellite_{i}_{j}"
-
-                # For ambiguous bases add anchor and edge for each base A, T, C, G
-                if len(sub_satellite) > 1:
-                    for base in sub_satellite:
-                        edges.extend(f"L\t{prev_sub_sat}\t+\t{cur_satallite_id}_{base}\t+\t0M\n" for prev_sub_sat in previous_sub_satellites)
-                        nodes.append(f"S\t{cur_satallite_id}_{base}\t{base}\n")
-
-                        cur_nodes.append(f"{cur_satallite_id}_{base}")
-                else:
-                    edges.extend(f"L\t{prev_sub_sat}\t+\t{cur_satallite_id}\t+\t0M\n" for prev_sub_sat in previous_sub_satellites)
-
-                    nodes.append(f"S\t{cur_satallite_id}\t{sub_satellite[0]}\n")
-                    cur_nodes.append(f"{cur_satallite_id}")
-
-                previous_sub_satellites = cur_nodes
-
-            # Get first and last sub satellites
-            first_sub_satellites = [f"satellite_{i}_0"]
-            if len(sub_satellites[0]) > 1:
-                first_sub_satellites = [f"satellite_{i}_0_{base}" for base in sub_satellites[0]]
-
-            prefix = "sub_" if len(sub_satellites) > 1 else ""
-            last_sub_satellites = [f"{prefix}satellite_{i}_{len(sub_satellites) - 1}"]
-            if len(sub_satellites[-1]) > 1:
-                last_sub_satellites = [f"{prefix}satellite_{i}_{len(sub_satellites) - 1}_{base}" for base in sub_satellites[-1]]
-
-            # Connect last sub satellite(s) to first sub satellite(s) ie. to itself
-            edges.extend(
-                f"L\t{last_sub_satellite}\t+\t{first_sub_satellite}\t+\t0M\n"
-                for first_sub_satellite, last_sub_satellite in itertools.product(first_sub_satellites, last_sub_satellites)
-            )
-
-            if current_satellite.skippable:
-                # Add last sub satellite to previous nodes
-                previous_nodes.extend(last_sub_satellites)
-            else:
-                # Reset previous nodes
-                previous_nodes = last_sub_satellites
-
-    # Add last break if present
     if locus.breaks[-1]:
-        for prev_node in previous_nodes:
-            edges.extend([f"L\t{prev_node}\t+\tbreak_{len(locus.breaks) - 1}\t+\t0M\n"])
-        nodes.append(f"S\tbreak_{len(locus.breaks) - 1}\t{locus.breaks[-1]}\n")
-        previous_nodes = [f"break_{len(locus.breaks) - 1}"]
+        previous_nodes = _add_break_to_graph(graph, locus.breaks[-1], f"break_{len(locus.breaks) - 1}", previous_nodes)
 
-    # Add right anchor
+    graph.add_node("right_anchor_overlap", sequence=right_anchor_overlap)
     for prev_node in previous_nodes:
-        edges.extend([f"L\t{prev_node}\t+\tright_anchor_overlap\t+\t0M\n"])
-    nodes.append(f"S\tright_anchor_overlap\t{right_anchor_overlap}\n")
+        graph.add_edge(prev_node, "right_anchor_overlap")
+    graph.add_node("right_anchor", sequence=right_anchor)
+    graph.add_edge("right_anchor_overlap", "right_anchor")
 
-    edges.append("L\tright_anchor_overlap\t+\tright_anchor\t+\t0M\n")
-    nodes.append(f"S\tright_anchor\t{right_anchor}\n")
-
-    # Create GFA string
-    return "\n".join(nodes) + "\n" + "\n".join(edges)
+    return graph
 
 
-def create_linear_graph_gfa(locus: Locus, satellite_counts: list[int]) -> str:
+def create_linear_graph(locus: Locus, satellite_counts: list[int]) -> nx.DiGraph:
+    """Build a directed linear graph for a locus with a fixed number of satellite copies.
+
+    Unlike create_repeat_graph, each satellite copy gets its own node (no self-loops),
+    so the graph encodes a specific repeat length per satellite.
+    """
     left_anchor = locus.left_anchor[: -config.min_anchor_overlap]
     left_anchor_overlap = locus.left_anchor[-config.min_anchor_overlap :]
-
     right_anchor = locus.right_anchor[config.min_anchor_overlap :]
     right_anchor_overlap = locus.right_anchor[: config.min_anchor_overlap]
 
-    # Initialize lists
-    nodes = [
-        f"S\tleft_anchor\t{left_anchor}\n",
-        f"S\tleft_anchor_overlap\t{left_anchor_overlap}\n",
-    ]
-    edges = ["L\tleft_anchor\t+\tleft_anchor_overlap\t+\t0M\n"]
+    graph = nx.DiGraph()
+    graph.add_node("left_anchor", sequence=left_anchor)
+    graph.add_node("left_anchor_overlap", sequence=left_anchor_overlap)
+    graph.add_edge("left_anchor", "left_anchor_overlap")
     previous_nodes = ["left_anchor_overlap"]
 
-    for i in range(len(locus.satellites)):
-        # Add break if present
-        if locus.breaks[i]:
-            edges.extend(f"L\t{prev_node}\t+\tbreak_{i}\t+\t0M\n" for prev_node in previous_nodes)
-            nodes.append(f"S\tbreak_{i}\t{locus.breaks[i]}\n")
-            previous_nodes = [f"break_{i}"]
+    for i, (satellite, pre_break) in enumerate(zip(locus.satellites, locus.breaks)):
+        if pre_break:
+            previous_nodes = _add_break_to_graph(graph, pre_break, f"break_{i}", previous_nodes)
 
-        # Handle satellite
-        current_satellite = locus.satellites[i]
-        current_satellite_count = satellite_counts[i]
+        for j in range(satellite_counts[i]):
+            # Each copy of each alternative gets its own node; chain copies sequentially
+            all_last_nodes = []
+            for alt_idx, alt_seq in enumerate(satellite.sequences):
+                alt_prefix = f"satellite_{i}_{j}" if len(satellite.sequences) == 1 else f"satellite_{i}_{j}_alt{alt_idx}"
+                sub_satellites = _parse_iupac_sequence(alt_seq)
+                all_last_nodes.extend(_add_satellite_copy_to_graph(graph, sub_satellites, alt_prefix, previous_nodes))
+            previous_nodes = all_last_nodes
 
-        # Check in ambiguous bases in satellite
-        if all(base not in AMBIGUOUS_BASES_DICT for base in current_satellite.sequence):
-            for j in range(current_satellite_count):
-                satellite_id = f"satellite_{i}_{j}"
-                # Add satellite to nodes
-                nodes.append(f"S\t{satellite_id}\t{current_satellite.sequence}\n")
-                # Add edge from previous nodes to satellite
-                edges.extend(f"L\t{prev_node}\t+\t{satellite_id}\t+\t0M\n" for prev_node in previous_nodes)
-                # Set previous nodes to satellite
-                previous_nodes = [f"{satellite_id}"]
-
-        else:
-            sub_satellites: list[list[str]] = []
-            sub_satellite = ""
-            for base in current_satellite.sequence:
-                if base in AMBIGUOUS_BASES_DICT:
-                    if sub_satellite:
-                        sub_satellites.append([sub_satellite])
-                        sub_satellite = ""
-                    sub_satellites.append(AMBIGUOUS_BASES_DICT[base])
-                else:
-                    sub_satellite += base
-            if sub_satellite:
-                sub_satellites.append([sub_satellite])
-
-            # Internal edges
-            previous_sub_satellites = list(previous_nodes)
-            for j in range(current_satellite_count):
-                for k, sub_satellite in enumerate(sub_satellites):
-                    cur_nodes = []
-                    prefix = "sub_" if k > 0 else ""
-                    cur_satallite_id = f"{prefix}satellite_{i}_{j}_{k}"
-                    # For ambiguous bases add anchor and edge for each base, e.g. A, T, C, G for N
-                    if len(sub_satellite) > 1:
-                        for base in sub_satellite:
-                            edges.extend(f"L\t{prev_sub_sat}\t+\t{cur_satallite_id}_{base}\t+\t0M\n" for prev_sub_sat in previous_sub_satellites)
-                            nodes.append(f"S\t{cur_satallite_id}_{base}\t{base}\n")
-
-                            cur_nodes.append(f"{cur_satallite_id}_{base}")
-                    else:
-                        edges.extend(f"L\t{prev_sub_sat}\t+\t{cur_satallite_id}\t+\t0M\n" for prev_sub_sat in previous_sub_satellites)
-
-                        nodes.append(f"S\t{cur_satallite_id}\t{sub_satellite[0]}\n")
-                        cur_nodes.append(f"{cur_satallite_id}")
-
-                    previous_sub_satellites = cur_nodes
-                # Set previous nodes to last sub satellite
-                previous_nodes = cur_nodes
-
-    # Add last break if present
     if locus.breaks[-1]:
-        edges.extend(f"L\t{prev_node}\t+\tbreak_{len(locus.breaks) - 1}\t+\t0M\n" for prev_node in previous_nodes)
-        nodes.append(f"S\tbreak_{len(locus.breaks) - 1}\t{locus.breaks[-1]}\n")
-        previous_nodes = [f"break_{len(locus.breaks) - 1}"]
+        previous_nodes = _add_break_to_graph(graph, locus.breaks[-1], f"break_{len(locus.breaks) - 1}", previous_nodes)
 
-    # Add right anchor
-    edges.extend(f"L\t{prev_node}\t+\tright_anchor_overlap\t+\t0M\n" for prev_node in previous_nodes)
-    nodes.append(f"S\tright_anchor_overlap\t{right_anchor_overlap}\n")
+    graph.add_node("right_anchor_overlap", sequence=right_anchor_overlap)
+    for prev_node in previous_nodes:
+        graph.add_edge(prev_node, "right_anchor_overlap")
+    graph.add_node("right_anchor", sequence=right_anchor)
+    graph.add_edge("right_anchor_overlap", "right_anchor")
 
-    edges.append("L\tright_anchor_overlap\t+\tright_anchor\t+\t0M\n")
-    nodes.append(f"S\tright_anchor\t{right_anchor}\n")
-
-    # Create GFA string
-    return "\n".join(nodes) + "\n" + "\n".join(edges)
+    return graph
 
 
 def get_graph_alignments(reads: list[Read], locus: Locus) -> list[GraphAlignment]:
-    # Create graph from locus
-    graph_str = create_repeat_graph_gfa_from_locus(locus)
+    # Create graph from locus and convert to GFA string for minigraph
+    repeat_graph = create_repeat_graph(locus)
+    graph_str = graph_to_gfa(repeat_graph)
 
     # Create a temporary directory
     with tempfile.TemporaryDirectory() as _temp_dir:
@@ -566,14 +527,14 @@ def get_graph_alignments(reads: list[Read], locus: Locus) -> list[GraphAlignment
         if gaf_lines is None:
             continue
 
-        graph_alignments.append(GraphAlignment.from_gaf_line(read=read, gaf_line=gaf_lines))
+        graph_alignments.append(GraphAlignment.from_gaf_line(read=read, gaf_line=gaf_lines, graph=repeat_graph))
 
     return graph_alignments
 
 
 def get_kmer_string(locus: Locus, synced_list: list[str], satellite_counts: list[int]) -> str:
     # Get satellite sequences and counts
-    satellite_seqs = [sat.sequence for sat in locus.satellites]
+    satellite_seqs = [sat.sequences[0] for sat in locus.satellites]
 
     # Get breaks
     breaks = locus.breaks
