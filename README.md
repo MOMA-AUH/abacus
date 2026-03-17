@@ -9,7 +9,7 @@
 
 Abacus is a tool for analyzing STR (Short Tandem Repeat) data from Long-Read Sequencing technologies. It is designed to work with data from the Oxford Nanopore Technologies (ONT) platform, but has also been tested with data from the Pacific Biosciences (PacBio) platform. The main goal of Abacus is to provide a user-friendly interface for analyzing STR data and to provide a comprehensive report of the analysis results.
 
-Abacus works by first converting the entries of an STR catalog (JSON) into graphs, which are then used to analyze the reads from an aligned BAM file. Each read in the BAM file is first mapped to the graph using [minigraph](https://github.com/lh3/minigraph), and the number of repeats of each satellite is calculated based on the resulting path. The reads are then grouped according to the satellite repeat counts, and the STR alleles (haplotypes) are called based on these groups. The analysis results are then saved in an HTML report file, which contains information about the STR loci, the called STR alleles, and visualizations of the data.
+Abacus works by first converting the entries of an STR catalog (JSON) into graphs, which are then used to analyze the reads from an aligned BAM or CRAM file. Each read in the BAM or CRAM file is first mapped to the graph using [minigraph](https://github.com/lh3/minigraph), and the number of repeats of each satellite is calculated based on the resulting path. The reads are then grouped according to the satellite repeat counts, and the STR alleles (haplotypes) are called based on these groups. The analysis results are then saved in an HTML report file, which contains information about the STR loci, the called STR alleles, and visualizations of the data.
 
 ## Installation
 To set up the environment for this project, follow these steps:
@@ -34,8 +34,8 @@ To set up the environment for this project, follow these steps:
 ## Basic usage
 To run Abacus, you need to provide the following arguments:
 
-- `--bam`: The path to the BAM file that contains aligned reads from the Long-Read Sequencing data.
-- `--ref`: The path to the reference FASTA file that was used to align the reads in the BAM file.
+- `--bam`: The path to the BAM or CRAM file that contains aligned reads from the Long-Read Sequencing data.
+- `--ref`: The path to the reference FASTA file that was used to align the reads in the BAM or CRAM file.
 - `--str-catalog`: The path to the STR catalog (JSON) that contains the information about the STR loci that you want to analyze. See the [provided examples](./str_catalogs/) in the repository.
 - `--report`: The path to the HTML file where the analysis results will be saved.
 - `--vcf`: The path to the VCF file where the STR genotyping results will be saved.

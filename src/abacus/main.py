@@ -73,7 +73,7 @@ def abacus(
         typer.Option(
             "--bam",
             "-i",
-            help="Input BAM file",
+            help="Input BAM or CRAM file",
             rich_help_panel=INPUTS,
             exists=True,
             file_okay=True,
@@ -418,7 +418,7 @@ def abacus(
 
         # Get reads in locus
         t0 = time.perf_counter()
-        reads = get_reads_in_locus(bam, locus)
+        reads = get_reads_in_locus(bam, locus, ref)
         logger.debug(f"[TIMING] {locus.id} get_reads_in_locus: {time.perf_counter()-t0:.3f}s  ({len(reads)} reads)")
 
         # Handle ploidy

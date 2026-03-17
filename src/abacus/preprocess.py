@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 import pysam
 
@@ -7,9 +8,10 @@ from abacus.locus import Locus
 from abacus.read import Read
 
 
-def get_reads_in_locus(bam: Path, locus: Locus) -> list[Read]:
+def get_reads_in_locus(bam: Path, locus: Locus, ref: Path) -> list[Read]:
     # Get alignments overlapping the region
-    with pysam.AlignmentFile(str(bam), "rb") as bamfile:
+    mode: Literal["rb", "rc"] = "rc" if str(bam).lower().endswith(".cram") else "rb"
+    with pysam.AlignmentFile(str(bam), mode, reference_filename=str(ref)) as bamfile:
         alignments = list(bamfile.fetch(locus.location.chrom, locus.location.start, locus.location.end))
 
         # Return empty list if no alignments found
