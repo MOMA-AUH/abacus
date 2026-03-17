@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A Changelog (#13)
 - A Dockerfile (#12)
 ### Changed
+- Updated path logic to include an OR ("|") operator for satalites. Behind the scenes the graph is now built with networkx for easier maintainance.
+- Renamed `str_catalouges` directory to `str_catalogs` (fixing typo)
 - Fallback to `loqus_id` if there is only one satellite id, and no `VariantId` (#16)
 ### Fixed
 - Typo catalog. Normally an interface breaking change, but we are still on semantic version 0.0.x (#15)
