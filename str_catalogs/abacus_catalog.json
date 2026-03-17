@@ -163,7 +163,7 @@
     },
     {
         "LocusId": "FGF14_complex",
-        "LocusStructure": "(TAGTCATAGTACCCCAA)*(GAA)*",
+        "LocusStructure": "(TAGTCATAGTACCCCAA)*(GAA|GCA)*",
         "ReferenceRegion": [
             "chr13:102161565-102161565",
             "chr13:102161565-102161726"
@@ -172,6 +172,11 @@
     {
         "LocusId": "FMR1",
         "LocusStructure": "(CGG)*",
+        "ReferenceRegion": "chrX:147912050-147912110"
+    },
+    {
+        "LocusId": "FMR1_alt",
+        "LocusStructure": "(CGG|AGG)*",
         "ReferenceRegion": "chrX:147912050-147912110"
     },
     {
