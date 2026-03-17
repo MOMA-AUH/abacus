@@ -394,17 +394,26 @@ def create_repeat_graph(locus: Locus) -> nx.DiGraph:
         if pre_break:
             previous_nodes = _add_break_to_graph(graph, pre_break, f"break_{i}", previous_nodes)
 
-        # Each alternative gets its own set of nodes and self-loop, all branching from
-        # the same previous_nodes and feeding into the same next frontier.
+        # Each alternative gets its own set of nodes, all branching from the same
+        # previous_nodes and feeding into the same next frontier.
+        # Cross-edges between alternatives are added so the aligner can switch
+        # between alternatives on each new copy (e.g. CGG→CAA→CGG in one read).
         all_last_nodes: list[str] = []
+        all_first_nodes: list[str] = []
         for alt_idx, alt_seq in enumerate(satellite.sequences):
             alt_prefix = f"satellite_{i}" if len(satellite.sequences) == 1 else f"satellite_{i}_alt{alt_idx}"
             sub_satellites = _parse_iupac_sequence(alt_seq)
             last_nodes = _add_satellite_copy_to_graph(graph, sub_satellites, alt_prefix, previous_nodes)
             first_nodes = _get_satellite_first_nodes(sub_satellites, alt_prefix)
-            for last, first in itertools.product(last_nodes, first_nodes):
-                graph.add_edge(last, first)  # self-loop for repeat copies
             all_last_nodes.extend(last_nodes)
+            all_first_nodes.extend(first_nodes)
+
+        # Connect every last node to every first node across all alternatives.
+        # This gives both self-loops (same alt → same alt) and cross-alternative
+        # transitions (alt0 → alt1, alt1 → alt0), so the aligner can freely mix
+        # alternatives within a single repeat run.
+        for last, first in itertools.product(all_last_nodes, all_first_nodes):
+            graph.add_edge(last, first)
 
         previous_nodes = previous_nodes + all_last_nodes if satellite.skippable else all_last_nodes
 
@@ -493,10 +502,6 @@ def get_graph_alignments(reads: list[Read], locus: Locus) -> list[GraphAlignment
                 "-c",
                 "-j",
                 "0.3",
-                # "-k",
-                # "11",
-                # "-w",
-                # "9",
                 "-x",
                 "lr",
                 "-o",
