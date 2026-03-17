@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from itertools import product
 
@@ -9,6 +10,7 @@ from scipy.stats import chi2, norm
 
 from abacus.config import config
 from abacus.graph import ReadCall
+from abacus.logging import logger
 from abacus.utils import AlignmentType
 
 
@@ -376,9 +378,12 @@ def estimate_heterozygous_parameters(
         )
 
     # Step 1: Calculate initial estimates
+    t0 = time.perf_counter()
     par_init = calculate_initial_estimates(read_calls)
+    logger.debug(f"[TIMING] param_est het step1 calculate_initial_estimates: {time.perf_counter()-t0:.3f}s")
 
     # Step 2: Refine initial estimates using EM-like updates
+    t0 = time.perf_counter()
     par_refined = par_init
     n_refinements = 2
     for _ in range(n_refinements):
@@ -388,30 +393,37 @@ def estimate_heterozygous_parameters(
             par_refined.mean_h2,
             par_refined.unit_var,
         )
+    logger.debug(f"[TIMING] param_est het step2 refine_initial_estimates ({n_refinements}x): {time.perf_counter()-t0:.3f}s")
 
     # Step 3: Optimize estimates using L-BFGS-B
+    t0 = time.perf_counter()
     par_optim = optimize_estimates(
         read_calls,
         par_refined.mean_h1,
         par_refined.mean_h2,
         par_refined.unit_var,
     )
+    logger.debug(f"[TIMING] param_est het step3 optimize_estimates (L-BFGS-B): {time.perf_counter()-t0:.3f}s")
 
     # Step 4: Find best integer estimates around optimal estimate
+    t0 = time.perf_counter()
     par_int = optimize_estimates_integers(
         read_calls,
         par_optim.mean_h1,
         par_optim.mean_h2,
         par_optim.unit_var,
     )
+    logger.debug(f"[TIMING] param_est het step4 optimize_estimates_integers: {time.perf_counter()-t0:.3f}s")
 
     # Step 5: Calculate confidence intervals
+    t0 = time.perf_counter()
     conf_mean_h1_lower, conf_mean_h1_upper, conf_mean_h2_lower, conf_mean_h2_upper = estimate_confidence_intervals_heterozygous(
         read_calls,
         par_int.mean_h1,
         par_int.mean_h2,
         par_int.unit_var,
     )
+    logger.debug(f"[TIMING] param_est het step5 estimate_confidence_intervals: {time.perf_counter()-t0:.3f}s")
 
     return HeterozygousParameters(
         mean_h1=par_int.mean_h1,
@@ -737,6 +749,7 @@ def estimate_homozygous_parameters(
         unit_var_init = np.full_like(mean_init, 0.5)
 
     # Step 2: Optimize estimates
+    t0 = time.perf_counter()
     mean_optim, unit_var_optim = optimize_homozygous_estimates(
         spanning_counts,
         flanking_counts,
@@ -744,8 +757,10 @@ def estimate_homozygous_parameters(
         mean_init,
         unit_var_init,
     )
+    logger.debug(f"[TIMING] param_est hom step2 optimize_homozygous_estimates: {time.perf_counter()-t0:.3f}s")
 
     # Step 3: Optimize estimates with integer means
+    t0 = time.perf_counter()
     mean_int, unit_var_int = optimize_estimates_integers_homozygous(
         spanning_counts,
         flanking_counts,
@@ -753,13 +768,16 @@ def estimate_homozygous_parameters(
         mean_optim,
         unit_var_optim,
     )
+    logger.debug(f"[TIMING] param_est hom step3 optimize_estimates_integers_homozygous: {time.perf_counter()-t0:.3f}s")
 
     # Step 4: Calculate confidence intervals
+    t0 = time.perf_counter()
     mean_ci_low, mean_ci_high = estimate_confidence_intervals_homozygous(
         read_calls,
         mean_int,
         unit_var_int,
     )
+    logger.debug(f"[TIMING] param_est hom step4 estimate_confidence_intervals: {time.perf_counter()-t0:.3f}s")
 
     return HomozygousParameters(
         mean=mean_int,

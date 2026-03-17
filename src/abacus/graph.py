@@ -4,6 +4,7 @@ import itertools
 import re
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean
@@ -496,6 +497,7 @@ def get_graph_alignments(reads: list[Read], locus: Locus) -> list[GraphAlignment
         input_graph_gfa.write_text(graph_str)
 
         # Run the command and redirect the output to a log file
+        _t0 = time.perf_counter()
         process = subprocess.run(
             [
                 "minigraph",
@@ -513,6 +515,7 @@ def get_graph_alignments(reads: list[Read], locus: Locus) -> list[GraphAlignment
             capture_output=True,
             text=True,
         )
+        logger.debug(f"[TIMING] minigraph alignment: {time.perf_counter()-_t0:.3f}s  ({len(reads)} reads)")
 
         # Log the stdout and stderr
         logger.debug("minigraph stdout: %s", process.stdout)

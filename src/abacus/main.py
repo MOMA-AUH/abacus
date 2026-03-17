@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging as _logging
 import subprocess
+import time
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -332,10 +334,25 @@ def abacus(
                  is_eager=True,
                  help="Show version and exit.",
                  ),
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-V",
+            help="Print debug timing info for each processing step",
+            rich_help_panel=OPTIONS,
+        ),
+    ] = False,
 ) -> None:
 
     # Setup logging to file
     set_log_file_handler(logger, log_file)
+
+    # Enable DEBUG output on console when verbose flag is set
+    if verbose:
+        for handler in logger.handlers:
+            if isinstance(handler, _logging.StreamHandler) and not isinstance(handler, _logging.FileHandler):
+                handler.setLevel(_logging.DEBUG)
 
     # Setup configuration
     config.anchor_len = anchor_length
@@ -393,13 +410,16 @@ def abacus(
     # Process each locus
     logger.info("Processing loci...")
     for locus in loci:
+        locus_t0 = time.perf_counter()
         logger.info("Current locus:")
         logger.info(f"- ID: {locus.id}")
         logger.info(f"- Structure: {locus.structure}")
         logger.info(f"- Position: {locus.location.chrom}:{locus.location.start}-{locus.location.end}")
 
         # Get reads in locus
+        t0 = time.perf_counter()
         reads = get_reads_in_locus(bam, locus)
+        logger.debug(f"[TIMING] {locus.id} get_reads_in_locus: {time.perf_counter()-t0:.3f}s  ({len(reads)} reads)")
 
         # Handle ploidy
         # Set ploidy to 1 if locus is not covered by enough reads
@@ -416,16 +436,22 @@ def abacus(
             ploidy = 2
 
         # Call STR in individual reads
+        t0 = time.perf_counter()
         read_calls, unmapped_reads = get_read_calls(reads, locus)
+        logger.debug(f"[TIMING] {locus.id} get_read_calls: {time.perf_counter()-t0:.3f}s  ({len(read_calls)} calls, {len(unmapped_reads)} unmapped)")
 
         # Filter read calls
+        t0 = time.perf_counter()
         good_read_calls, removed_read_calls = filter_read_calls(read_calls=read_calls)
+        logger.debug(f"[TIMING] {locus.id} filter_read_calls: {time.perf_counter()-t0:.3f}s  ({len(good_read_calls)} kept, {len(removed_read_calls)} removed)")
 
         # Group read calls
+        t0 = time.perf_counter()
         grouped_read_calls, outlier_read_calls, het_params, hom_params, test_summary_res_df = run_haplotyping(
             read_calls=good_read_calls,
             ploidy=ploidy,
         )
+        logger.debug(f"[TIMING] {locus.id} run_haplotyping: {time.perf_counter()-t0:.3f}s  ({len(grouped_read_calls)} grouped, {len(outlier_read_calls)} outliers)")
 
         # Add outlier read calls to removed read calls
         removed_read_calls.extend(outlier_read_calls)
@@ -439,6 +465,7 @@ def abacus(
         parameter_summary_df = summarize_parameter_estimates(het_params, hom_params)
 
         # Create raw consensus for each haplotype
+        t0 = time.perf_counter()
         unique_haplotypes = {r.haplotype for r in grouped_read_calls}
         raw_consensus_calls: list[ConsensusCall] = []
         for haplotype in unique_haplotypes:
@@ -457,6 +484,7 @@ def abacus(
         for haplotype in unique_haplotypes:
             haplotyped_read_calls = [r for r in grouped_read_calls if r.haplotype == haplotype]
             final_consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype))
+        logger.debug(f"[TIMING] {locus.id} consensus: {time.perf_counter()-t0:.3f}s")
 
         # Add consensus calls to output
         all_consensus_calls.extend(final_consensus_calls)
@@ -494,6 +522,8 @@ def abacus(
         all_haplotyping_df.append(haplotyping_df)
         all_summaries_df.append(test_summary_res_df)
         all_par_summaries_df.append(parameter_summary_df)
+
+        logger.debug(f"[TIMING] {locus.id} TOTAL: {time.perf_counter()-locus_t0:.3f}s")
 
     # Create output directory
     tmp_dir = report.parent / f"tmp_abacus_{sample_id}"

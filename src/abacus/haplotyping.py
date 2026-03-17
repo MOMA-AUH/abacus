@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2
 
 from abacus.config import config
 from abacus.graph import ReadCall
+from abacus.logging import logger
 from abacus.parameter_estimation import (
     HeterozygousParameters,
     HomozygousParameters,
@@ -34,29 +37,45 @@ def run_haplotyping(
 
     # Initialize
     all_outlier_read_calls: list[ReadCall] = []
+    t0 = time.perf_counter()
     hom_params = estimate_homozygous_parameters(read_calls)
+    logger.debug(f"[TIMING] haplotyping estimate_homozygous_parameters: {time.perf_counter()-t0:.3f}s")
+
+    t0 = time.perf_counter()
     het_params = estimate_heterozygous_parameters(read_calls)
+    logger.debug(f"[TIMING] haplotyping estimate_heterozygous_parameters (initial): {time.perf_counter()-t0:.3f}s")
 
     # Initialize grouping
+    t0 = time.perf_counter()
     grouped_read_calls = group_read_calls(read_calls, het_params, ploidy)
+    logger.debug(f"[TIMING] haplotyping group_read_calls (initial): {time.perf_counter()-t0:.3f}s")
 
     # Check for singleton clusters, and keep removing them until there are none left or the number of read calls is below the minimum threshold
     singleton_read_calls = check_for_singleton_clusters(grouped_read_calls)
+    _outlier_iter = 0
     while len(singleton_read_calls) > 0 and len(grouped_read_calls) > config.min_n_outlier_detection:
+        _outlier_iter += 1
         # If there are singleton read calls, they are outliers - remove them
         for outlier in singleton_read_calls:
             all_outlier_read_calls.append(outlier)
             grouped_read_calls.remove(outlier)
 
         # Re-estimate parameters
+        t0 = time.perf_counter()
         hom_params = estimate_homozygous_parameters(grouped_read_calls)
         het_params = estimate_heterozygous_parameters(grouped_read_calls)
+        logger.debug(f"[TIMING] haplotyping re-estimate parameters (outlier iter {_outlier_iter}): {time.perf_counter()-t0:.3f}s")
 
         # Re-group read calls
+        t0 = time.perf_counter()
         grouped_read_calls = group_read_calls(grouped_read_calls, het_params, ploidy)
+        logger.debug(f"[TIMING] haplotyping group_read_calls (outlier iter {_outlier_iter}): {time.perf_counter()-t0:.3f}s")
 
         # Check for singleton clusters again
         singleton_read_calls = check_for_singleton_clusters(grouped_read_calls)
+
+    if _outlier_iter > 0:
+        logger.debug(f"[TIMING] haplotyping outlier detection: {_outlier_iter} iteration(s), {len(all_outlier_read_calls)} outliers removed")
 
     if ploidy == 1:
         het_params_nan = HeterozygousParameters(
@@ -83,11 +102,13 @@ def run_haplotyping(
         return grouped_read_calls, all_outlier_read_calls, het_params_nan, hom_params, test_summary_df
 
     # Test for heterozygosity
+    t0 = time.perf_counter()
     log_lik_hom, log_lik_hetero, n_par_hom, n_par_hetero, test_statistic, df, heterozygosity_p_value = test_heterozygosity(
         grouped_read_calls,
         het_params,
         hom_params,
     )
+    logger.debug(f"[TIMING] haplotyping test_heterozygosity: {time.perf_counter()-t0:.3f}s")
 
     # Set haplotype to "hom" if heterozygosity test is not significant
     heterozygosity_test_significant = bool(heterozygosity_p_value < config.het_alpha)
