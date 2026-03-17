@@ -5,18 +5,19 @@ from typing import Literal
 
 import pytest
 
+from abacus import config
 from abacus.graph import (
     Read,
     get_read_calls,
 )
 from abacus.haplotyping import run_haplotyping
 from abacus.locus import Location, Locus, Satellite
-from abacus.utils import AlignmentType
+from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType
 
 
-def create_random_anchor(length: int = 1000) -> str:
+def create_random_anchor() -> str:
     """Create a random anchor sequence."""
-    return "".join(random.choices("ATCG", k=length))
+    return "".join(random.choices("ATCG", k=config.Config.anchor_len))
 
 
 def create_synthetic_locus(satellite_seqs: list[str], breaks: list[str] | None = None):
@@ -108,6 +109,10 @@ def create_synthetic_read(
         full_sequence = left_anchor + sequence
     else:  # RIGHT_FLANKING
         full_sequence = sequence + right_anchor
+
+    # Translate UIPAC codes in sequence to ACGT (choose first option for each code)
+    for iupac_code, bases in AMBIGUOUS_BASES_DICT.items():
+        full_sequence = full_sequence.replace(iupac_code, bases[0])
 
     # Create synthetic read
     return Read(
@@ -665,6 +670,15 @@ def test_haplotyping_integration(
     # Check if groups sizes match expected
     assert group_counts == expected_group_sizes, f"Test case failed: Expected {expected_group_sizes}, got {group_counts}"
 
+    # Check if observed kmer strings match expected (from input)
+    for i, count in enumerate(spanning_counts):
+        expected_seq = create_sequence_from_counts(count, satellite_seqs, breaks)
+        read_call = next((rc for rc in read_calls if rc.alignment.name == f"spanning_{i}"), None)
+        assert read_call is not None, f"Read call for spanning_{i} not found"
+        assert expected_seq == read_call.alignment.str_sequence, (
+            f"Expected sequence in read {read_call.alignment.name} was {expected_seq}, got {read_call.obs_kmer_string}"
+        )
+
     # Check if means match expected
     if expected_means is not None:
         # Heterozygous case
@@ -680,3 +694,81 @@ def test_haplotyping_integration(
             assert homozygous_parameters.mean.tolist() == expected_means["hom"], (
                 f"Expected homozygous mean {expected_means['hom']}, got {homozygous_parameters.mean[0]}"
             )
+
+
+@pytest.mark.parametrize(
+    ("alt1", "alt2", "count_h1", "count_h2", "n_reads"),
+    [
+        pytest.param("CAG", "CAA", 10, 15, 10, id="OR: CAG vs CAA, heterozygous counts"),
+        pytest.param("CAG", "CAA", 10, 10, 10, id="OR: CAG vs CAA, homozygous counts"),
+        pytest.param("GGCCCC", "GGCCCCC", 12, 20, 8, id="OR: different-length alts, heterozygous"),
+    ],
+)
+def test_haplotyping_or_operator(
+    alt1: str,
+    alt2: str,
+    count_h1: int,
+    count_h2: int,
+    n_reads: int,
+) -> None:
+    """Test that the OR operator in locus structures (e.g. (ALT1|ALT2)+) correctly
+    counts repeats regardless of which alternative is matched, and that haplotyping
+    can separate two groups that differ only in their repeat count (not their motif).
+    """
+    random.seed(42)
+
+    left_anchor = create_random_anchor()
+    right_anchor = create_random_anchor()
+
+    locus = Locus(
+        id="test_or",
+        structure=f"({alt1}|{alt2})+",
+        location=Location(chrom="chr1", start=1000, end=1060),
+        satellites=[
+            Satellite(
+                id="test_0",
+                sequences=[alt1, alt2],
+                location=Location("chr1", 1000, 1060),
+                skippable=False,
+            ),
+        ],
+        breaks=["", ""],
+        left_anchor=left_anchor,
+        right_anchor=right_anchor,
+    )
+
+    def make_read(name: str, sequence: str) -> Read:
+        full_seq = left_anchor + sequence + right_anchor
+        return Read(
+            name=name,
+            sequence=full_seq,
+            qualities=[30] * len(full_seq),
+            mod_5mc_probs="!" * len(full_seq),
+            strand="+",
+            n_soft_clipped_left=0,
+            n_soft_clipped_right=0,
+            locus=locus,
+        )
+
+    reads: list[Read] = []
+    # Group 1: reads using alt1 with count_h1 repeats
+    for i in range(n_reads):
+        reads.append(make_read(f"alt1_{i}", alt1 * count_h1))
+    # Group 2: reads using alt2 with count_h2 repeats
+    for i in range(n_reads):
+        reads.append(make_read(f"alt2_{i}", alt2 * count_h2))
+
+    read_calls, _ = get_read_calls(reads, locus)
+    grouped_reads, outlier_reads, heterozygous_parameters, homozygous_parameters, _ = run_haplotyping(read_calls, ploidy=2)
+
+    group_counts: dict[str, int] = {}
+    for read in grouped_reads + outlier_reads:
+        group_counts[read.haplotype] = group_counts.get(read.haplotype, 0) + 1
+
+    if count_h1 == count_h2:
+        assert group_counts == {"hom": n_reads * 2}, f"Expected homozygous grouping with {n_reads * 2} reads, got {group_counts}"
+        assert homozygous_parameters.mean.tolist() == [float(count_h1)], f"Expected homozygous mean [{count_h1}.0], got {homozygous_parameters.mean.tolist()}"
+    else:
+        assert group_counts == {"h1": n_reads, "h2": n_reads}, f"Expected {{'h1': {n_reads}, 'h2': {n_reads}}}, got {group_counts}"
+        assert heterozygous_parameters.mean_h1.tolist() == [float(count_h1)], f"Expected h1 mean [{count_h1}.0], got {heterozygous_parameters.mean_h1.tolist()}"
+        assert heterozygous_parameters.mean_h2.tolist() == [float(count_h2)], f"Expected h2 mean [{count_h2}.0], got {heterozygous_parameters.mean_h2.tolist()}"
