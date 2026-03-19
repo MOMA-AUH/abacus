@@ -511,15 +511,16 @@ def get_graph_alignments(reads: list[Read], locus: Locus) -> list[GraphAlignment
                 input_graph_gfa,
                 input_fastq,
             ],
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
         )
-        logger.debug(f"[TIMING] minigraph alignment: {time.perf_counter()-_t0:.3f}s  ({len(reads)} reads)")
-
-        # Log the stdout and stderr
-        logger.debug("minigraph stdout: %s", process.stdout)
-        logger.debug("minigraph stderr: %s", process.stderr)
+        logger.debug(f"[TIMING] minigraph alignment: {time.perf_counter() - _t0:.3f}s  ({len(reads)} reads)")
+        if process.returncode != 0:
+            logger.error("minigraph stdout:\n%s", process.stdout)
+            logger.debug("minigraph stderr:\n%s", process.stderr)
+            msg = f"minigraph failed with return code {process.returncode}"
+            raise RuntimeError(msg)
 
         # Get the output from file
         with Path.open(output_gaf) as f:

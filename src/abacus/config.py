@@ -1,6 +1,6 @@
 # This file contains the configuration parameters for the abacus module
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
@@ -39,6 +39,10 @@ class Config:
 
     def __post_init__(self):
         self.min_var = self.min_sd**2
+
+    def to_dict(self) -> dict:
+        """Convert the Config dataclass to a dictionary."""
+        return asdict(self)
 
     # Output files
     log_file: Path = Path("abacus.log")
