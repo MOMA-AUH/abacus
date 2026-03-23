@@ -15,6 +15,10 @@ params:
   clustering_summary_csv: ""
   test_summary_csv: ""
   par_summary_csv: ""
+  min_mean_str_quality: 20
+  min_q10_str_quality: 15
+  max_error_rate: 0.01
+  max_ref_divergence: 0.34
 ---
 
 ```{r Setup, include=FALSE}
@@ -957,7 +961,15 @@ for (i in seq_len(nrow(regions))) {
 
 
   cat("\n\n")
-  cat("### Consensus")
+  cat("### Additional read information {.tabset .tabset-pills}")
+  cat("\n\n")
+
+  cat("\n\n")
+  cat("#### QC plot")
+  cat("\n\n")
+
+  cat("\n\n")
+  cat("#### Consensus")
   cat("\n\n")
 
   consensus_region_df <- consensus_df %>%
@@ -979,9 +991,6 @@ for (i in seq_len(nrow(regions))) {
     cat("There is no consensus sequence for this locus.")
   }
 
-  # Consensus table
-  cat("\n\n")
-  cat("#### Consensus sequences")
   cat("\n\n")
 
   if (nrow(consensus_region_df) > 0) {
@@ -1010,33 +1019,47 @@ for (i in seq_len(nrow(regions))) {
   }
 
   cat("\n\n")
-  cat("### Additional read information {.tabset .tabset-pills}")
-  cat("\n\n")
 
-  cat("\n\n")
-  cat("#### QC plot")
-  cat("\n\n")
+  qc_thresholds_df <- tibble(
+    metric = factor(
+      c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence"),
+      levels = c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence")
+    ),
+    threshold = c(
+      params$min_mean_str_quality,
+      params$min_q10_str_quality,
+      params$max_error_rate,
+      params$max_ref_divergence
+    )
+  )
 
   qc_plot <- reads_region_df %>%
-    ggplot(
-      aes(
-        x = mean_str_qual,
-        y = str_error_rate,
-        col = haplotype,
+    pivot_longer(
+      cols = c(mean_str_qual, q10_str_qual, str_error_rate, str_ref_divergence),
+      names_to = "metric",
+      values_to = "value"
+    ) %>%
+    mutate(
+      metric = factor(metric,
+        levels = c("mean_str_qual", "q10_str_qual", "str_error_rate", "str_ref_divergence"),
+        labels = c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence")
       )
+    ) %>%
+    ggplot(aes(x = haplotype, y = value, col = haplotype)) +
+    geom_hline(
+      data = qc_thresholds_df,
+      aes(yintercept = threshold),
+      linetype = "dashed", color = "grey40", linewidth = 0.6
     ) +
-    geom_point(
-      alpha = 0.5, size = 3
-    ) +
-    # Labels
-    labs(
-      x = "Mean STR quality",
-      y = "STR error rate"
-    ) +
-    guides(
-      col = guide_legend(title = "Haplotype")
-    ) +
-    scale_color_manual(values = HAPLOTYPE_COLORS)
+    geom_jitter(width = 0.25, height = 0, alpha = 0.5, size = 3) +
+    facet_wrap(~metric, ncol = 4, scales = "free_y") +
+    labs(x = NULL, y = NULL) +
+    guides(col = guide_legend(title = "Haplotype")) +
+    scale_color_manual(values = HAPLOTYPE_COLORS) +
+    theme(
+      axis.text.x = element_text(angle = 30, hjust = 1),
+      legend.position = "bottom"
+    )
   print(qc_plot)
 
   cat("\n\n")

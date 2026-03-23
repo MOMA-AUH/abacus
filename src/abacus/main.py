@@ -639,7 +639,11 @@ def abacus(
                             consensus_csv = '{consensus_csv}', \
                             clustering_summary_csv = '{haplotypes_csv}', \
                             test_summary_csv = '{summary_csv}', \
-                            par_summary_csv = '{par_summary_csv}' \
+                            par_summary_csv = '{par_summary_csv}', \
+                            min_mean_str_quality = {config.min_mean_str_quality}, \
+                            min_q10_str_quality = {config.min_q10_str_quality}, \
+                            max_error_rate = {config.max_error_rate}, \
+                            max_ref_divergence = {config.max_ref_divergence} \
                         ) \
                     ) \
                     """,
