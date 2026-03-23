@@ -663,9 +663,8 @@ signif_par_summary_df %>%
 
 ```{r Build report, results = "asis"}
 cat("\n\n")
-cat("# Choose a region {.tabset .tabset-pills}")
+cat("# {.tabset .tabset-pills}")
 cat("\n\n")
-cat('<span style="color:red;">**WARNING! ALL ABACUS GENES ARE INCLUDED IN THE REPORT. REMEBER TO ONLY LOOK AT THE GENE(S) THAT YOU HAVE PERMISSION FOR, i.e. GENE(S) THAT IS/ARE REQUESTED!**</span>')
 
 # Get destinct regions (for looping)
 regions <- reads_df %>%
@@ -706,13 +705,30 @@ for (i in seq_len(nrow(regions))) {
 
 
   # Create heading - Note this is a tab
-  # TDA: adding a tab before the first region, specifying that only the specific gene(s) that is/are requested can be viewed!
-  if( i == 1){
-  cat("\n\n")
-  cat('## **Genes:** {.tabset .tabset-pills}')
-  cat("\n\n")
-  
-}
+  # Home tab: shown before the first gene tab
+  if (i == 1) {
+    cat("\n\n")
+    cat('## Home')
+    cat("\n\n")
+    cat(paste0(
+      '<div class="alert alert-warning" role="alert" style="border-left: 5px solid #f0ad4e; background-color: #fff8e1; padding: 12px 16px;">',
+      '<strong>&#9888; Notice:</strong> This report includes all genes analyzed by Abacus. ',
+      'Please only review the gene(s) you have been given permission for, i.e., the gene(s) that were requested.',
+      '</div>'
+    ))
+    cat("\n\n")
+    cat(paste0(
+      '### How to use this report\n\n',
+      'Use the tabs above to navigate between genes. Each gene tab contains:\n\n',
+      '- A read-level STR plot (coloured by observed k-mer, reference k-mer, or methylation probability)\n',
+      '- Tables summarizing the STR structure, read counts for each haplotype\n',
+      '- Plot and table showing the QC filtered reads, and the reasons for filtering\n',
+      '- A plot showing the consensus STR structure, with the repeat counts for each haplotype\n',
+      '- A table summarizing the statistical test results for each haplotype, including confidence intervals of model parameters\n',
+      '- An IGV link to open the locus directly in a local IGV session\n'
+    ))
+    cat("\n\n")
+  }
   cat("\n\n")
   cat("##", selected_region$locus_id)
   cat("\n\n")
@@ -941,6 +957,59 @@ for (i in seq_len(nrow(regions))) {
 
 
   cat("\n\n")
+  cat("### Consensus")
+  cat("\n\n")
+
+  consensus_region_df <- consensus_df %>%
+    semi_join(selected_region, by = join_by(locus_id)) %>%
+    wrangle_reads_data() %>%
+    arrange(haplotype)
+
+  cat("From each haplotype, a consensus sequence is generated. The consensus sequence is created as the 'median' of the observed sequences. The consensus sequence is shown in the table below, together an abacus plot showing the inividual $k$-mers.")
+
+  # Create Abacus plots
+
+  if (nrow(consensus_region_df) > 0) {
+    consensus_kmer_df <- consensus_region_df %>%
+      wrangle_reads_to_kmers()
+
+    consensus_kmer_plot <- create_kmer_plot(consensus_kmer_df, "kmer", kmer_color_palette)
+    print(consensus_kmer_plot)
+  } else {
+    cat("There is no consensus sequence for this locus.")
+  }
+
+  # Consensus table
+  cat("\n\n")
+  cat("#### Consensus sequences")
+  cat("\n\n")
+
+  if (nrow(consensus_region_df) > 0) {
+    consensus_region_df %>%
+      mutate(
+        consensus_strings = add_colors_to_consensus_strings(consensus_strings, kmer_color_palette)
+      ) %>%
+      select(
+        "Haplotype" = haplotype,
+        "Read ID" = read_id,
+        "Alignment Type" = alignment_subtype_txt,
+        "Consensus" = consensus_strings
+      ) %>%
+      kbl(
+        align = "c", escape = FALSE
+      ) %>%
+      kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
+      row_spec(
+        0,
+        background = HEADER_BACKGROUND
+      ) %>%
+      collapse_rows(columns = 1, valign = "middle") %>%
+      cat()
+  } else {
+    cat("There is no consensus sequence for this locus. \n")
+  }
+
+  cat("\n\n")
   cat("### Additional read information {.tabset .tabset-pills}")
   cat("\n\n")
 
@@ -1072,59 +1141,6 @@ for (i in seq_len(nrow(regions))) {
       cat()
   } else {
     cat("There is no filtered reads for this locus. \n")
-  }
-
-  cat("\n\n")
-  cat("### Consensus")
-  cat("\n\n")
-
-  consensus_region_df <- consensus_df %>%
-    semi_join(selected_region, by = join_by(locus_id)) %>%
-    wrangle_reads_data() %>%
-    arrange(haplotype)
-
-  cat("From each haplotype, a consensus sequence is generated. The consensus sequence is created as the 'median' of the observed sequences. The consensus sequence is shown in the table below, together an abacus plot showing the inividual $k$-mers.")
-
-  # Create Abacus plots
-
-  if (nrow(consensus_region_df) > 0) {
-    consensus_kmer_df <- consensus_region_df %>%
-      wrangle_reads_to_kmers()
-
-    consensus_kmer_plot <- create_kmer_plot(consensus_kmer_df, "kmer", kmer_color_palette)
-    print(consensus_kmer_plot)
-  } else {
-    cat("There is no consensus sequence for this locus.")
-  }
-
-  # Consensus table
-  cat("\n\n")
-  cat("#### Consensus sequences")
-  cat("\n\n")
-
-  if (nrow(consensus_region_df) > 0) {
-    consensus_region_df %>%
-      mutate(
-        consensus_strings = add_colors_to_consensus_strings(consensus_strings, kmer_color_palette)
-      ) %>%
-      select(
-        "Haplotype" = haplotype,
-        "Read ID" = read_id,
-        "Alignment Type" = alignment_subtype_txt,
-        "Consensus" = consensus_strings
-      ) %>%
-      kbl(
-        align = "c", escape = FALSE
-      ) %>%
-      kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
-      row_spec(
-        0,
-        background = HEADER_BACKGROUND
-      ) %>%
-      collapse_rows(columns = 1, valign = "middle") %>%
-      cat()
-  } else {
-    cat("There is no consensus sequence for this locus. \n")
   }
 
   cat("\n\n")
