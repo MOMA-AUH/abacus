@@ -71,6 +71,70 @@ def contract_kmer_string(kmer_string: str) -> str:
     return contracted_kmer
 
 
+def build_kmer_char_maps(sequences: list[list[str]]) -> tuple[dict[str, str], dict[str, str]]:
+    """Build bidirectional kmer <-> unique character translation maps.
+
+    Characters start from chr(47) to avoid '-' (chr(45)) used by poa as gap character.
+    Returns (kmer_to_unique_char, unique_char_to_kmer).
+    """
+    all_observed_kmers = sorted({kmer for seq in sequences for kmer in seq})
+    kmer_to_unique_char = {kmer: chr(47 + i) for i, kmer in enumerate(all_observed_kmers)}
+    unique_char_to_kmer = {v: k for k, v in kmer_to_unique_char.items()}
+    return kmer_to_unique_char, unique_char_to_kmer
+
+
+def find_most_variable_msa_position(
+    msa: list[str],
+    missing_end_char: str,
+    ignore_chars: list[str],
+) -> tuple[int, dict[str, int]]:
+    """Find the MSA column most useful for splitting reads into two groups.
+
+    For each column, counts character frequencies (excluding gaps '-',
+    missing_end_char, and ignore_chars). Returns the column index where the
+    count of the 2nd most common character is highest.
+
+    Returns (position_index, char_counts_at_that_position).
+    Returns (-1, {}) if no suitable position exists.
+    """
+    if not msa:
+        return -1, {}
+
+    # Define characters to ignore when counting
+    skip_chars = set(ignore_chars) | {missing_end_char, "-"}
+
+    # Initialize tracking variables
+    best_pos = -1
+    best_second_count = -1
+    best_char_counts: dict[str, int] = {}
+
+    # Iterate over columns in MSA
+    for col in range(len(msa[0])):
+        char_counts: dict[str, int] = defaultdict(int)
+
+        # Count characters in this column, skipping specified characters
+        for row in msa:
+            c = row[col]
+            if c not in skip_chars:
+                char_counts[c] += 1
+
+        # Need at least 2 different characters to consider this position for splitting
+        if len(char_counts) < 2:
+            continue
+
+        # Get counts of characters sorted by frequency
+        sorted_counts = sorted(char_counts.values(), reverse=True)
+        second_count = sorted_counts[1]
+
+        # Check if this column has a higher 2nd most common character count
+        if second_count > best_second_count:
+            best_second_count = second_count
+            best_pos = col
+            best_char_counts = dict(char_counts)
+
+    return best_pos, best_char_counts
+
+
 def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> list[ConsensusCall]:
     locus = read_calls[0].alignment.locus
 
@@ -92,12 +156,8 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> 
     right_flanking_sequences = [seq[1:] for seq in right_flanking_sequences]
 
     # Get dictionaries to translate kmers <-> unique characters
-    # Add dictionary for anchor kmers
     all_sequences = spanning_sequences + left_flanking_sequences + right_flanking_sequences
-    all_observed_kmers = sorted({kmer for seq in all_sequences for kmer in seq})
-    # Start from 46 to avoid special characters - esp. "-" used by poa!
-    kmer_to_unique_char = {kmer: chr(47 + i) for i, kmer in enumerate(all_observed_kmers)}
-    uniqe_char_to_kmer = {v: k for k, v in kmer_to_unique_char.items()}
+    kmer_to_unique_char, uniqe_char_to_kmer = build_kmer_char_maps(all_sequences)
 
     # Translate kmer strings to unique character strings
     translated_spanning_sequences: list[str] = ["".join(kmer_to_unique_char[kmer] for kmer in seq) for seq in spanning_sequences]

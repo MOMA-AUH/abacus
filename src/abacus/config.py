@@ -36,6 +36,7 @@ class Config:
     min_sd: float = 0.05
     min_var: float = field(init=False)
     het_alpha: float = 0.05
+    equal_length_alpha: float = 0.05
 
     def __post_init__(self):
         self.min_var = self.min_sd**2

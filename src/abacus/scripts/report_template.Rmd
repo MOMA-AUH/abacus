@@ -577,16 +577,19 @@ data.frame(
   column_spec(1, background = HEADER_BACKGROUND, bold = TRUE)
 ```
 
-<!--  # Test summary - leftout because we're only allowed to look a specific gene(s) -->
-
 ```{r Wrangle data}
 test_df <- test_summary_df %>%
-  select(locus_id, is_significant)
+  select(locus_id, is_significant, backup_test_run, backup_test_significant)
 
 signif_par_summary_df <- all_par_summary_df %>%
   # Filter on significant estimates
   left_join(test_df, by = join_by(locus_id)) %>%
-  filter((is_significant & haplotype != "hom") | (!is_significant) & haplotype == "hom") %>%
+  mutate(backup_split = backup_test_run & !backup_test_significant) %>%
+  filter(
+    (is_significant  & haplotype != "hom") |         # primary het test detected split
+    (backup_split    & haplotype != "hom") |         # equal-length sequence split detected
+    (!is_significant & !backup_split & haplotype == "hom")  # homozygous
+  ) %>%
   # Arrange by satellite and haplotype
   arrange(locus_id, idx, haplotype)
 
@@ -615,54 +618,6 @@ is_ci_row_wide_vec <- signif_par_summary_df %>%
     is_ci_wide = if_else(is.na(is_ci_wide), FALSE, is_ci_wide)
   ) %>%
   pull(is_ci_wide)
-```
-
-```{r Color comment , results = "asis",eval=FALSE,include=FALSE}
-if (sum(is_ci_row_wide_vec) > 0) {
-  cat("\n\n")
-  cat("**Note:** Some confidence intervals are wide (>2) and are highlighted in orange. This indicates that the estimate may be uncertain.")
-  cat("\n\n")
-}
-```
-
-```{r Summary Table, results = TRUE,eval=FALSE,include=FALSE}
-signif_par_summary_df %>%
-  # Round to 2 decimals
-  mutate_if(is.numeric, ~ round(., 2)) %>%
-  # Select parameters, round and print
-  select(
-    "Locus ID" = locus_id,
-    "Satellite" = satellite,
-    "Haplotype" = haplotype,
-    "Count estimate" = mean,
-    "95% CI Lower" = mean_lower,
-    "95% CI Upper" = mean_upper
-  ) %>%
-  kbl(
-    align = "c"
-  ) %>%
-  column_spec(1, italic = TRUE) %>%
-  kable_styling("bordered", full_width = TRUE) %>%
-  row_spec(
-    0,
-    background = HEADER_BACKGROUND
-  ) %>%
-  # Add background color to every other row
-  row_spec(
-    stripped_row_index,
-    background = STRIPED_BACKGROUND
-  ) %>%
-  # If confidence interval is wide, highlight the text in the corresponding cell
-  column_spec(
-    5:6,
-    color = if_else(
-      is_ci_row_wide_vec,
-      ATTENTION_COLOR,
-      "black"
-    ),
-    bold = is_ci_row_wide_vec
-  ) %>%
-  collapse_rows(columns = c(1, 2), valign = "middle", target = 1, )
 ```
 
 ```{r Build report, results = "asis"}
@@ -707,19 +662,20 @@ for (i in seq_len(nrow(regions))) {
   n_outlier_reads <- nrow(reads_region_df %>% filter(haplotype == "outlier"))
   n_filtered_reads <- nrow(filtered_reads_region_df)
 
+  # Add notice at top of report
+  cat("\n\n")
+  cat(paste0(
+    '<div class="alert alert-warning" role="alert" style="border-left: 5px solid #f0ad4e; background-color: #fff8e1; padding: 12px 16px;">',
+    '<strong>&#9888; Notice:</strong> This report includes all genes analyzed by Abacus. ',
+    'Please only review the gene(s) you have been given permission for, i.e., the gene(s) that were requested.',
+    '</div>'
+  ))
 
   # Create heading - Note this is a tab
   # Home tab: shown before the first gene tab
   if (i == 1) {
     cat("\n\n")
     cat('## Home')
-    cat("\n\n")
-    cat(paste0(
-      '<div class="alert alert-warning" role="alert" style="border-left: 5px solid #f0ad4e; background-color: #fff8e1; padding: 12px 16px;">',
-      '<strong>&#9888; Notice:</strong> This report includes all genes analyzed by Abacus. ',
-      'Please only review the gene(s) you have been given permission for, i.e., the gene(s) that were requested.',
-      '</div>'
-    ))
     cat("\n\n")
     cat(paste0(
       '### How to use this report\n\n',
@@ -968,58 +924,6 @@ for (i in seq_len(nrow(regions))) {
   cat("#### QC plot")
   cat("\n\n")
 
-  cat("\n\n")
-  cat("#### Consensus")
-  cat("\n\n")
-
-  consensus_region_df <- consensus_df %>%
-    semi_join(selected_region, by = join_by(locus_id)) %>%
-    wrangle_reads_data() %>%
-    arrange(haplotype)
-
-  cat("From each haplotype, a consensus sequence is generated. The consensus sequence is created as the 'median' of the observed sequences. The consensus sequence is shown in the table below, together an abacus plot showing the inividual $k$-mers.")
-
-  # Create Abacus plots
-
-  if (nrow(consensus_region_df) > 0) {
-    consensus_kmer_df <- consensus_region_df %>%
-      wrangle_reads_to_kmers()
-
-    consensus_kmer_plot <- create_kmer_plot(consensus_kmer_df, "kmer", kmer_color_palette)
-    print(consensus_kmer_plot)
-  } else {
-    cat("There is no consensus sequence for this locus.")
-  }
-
-  cat("\n\n")
-
-  if (nrow(consensus_region_df) > 0) {
-    consensus_region_df %>%
-      mutate(
-        consensus_strings = add_colors_to_consensus_strings(consensus_strings, kmer_color_palette)
-      ) %>%
-      select(
-        "Haplotype" = haplotype,
-        "Read ID" = read_id,
-        "Alignment Type" = alignment_subtype_txt,
-        "Consensus" = consensus_strings
-      ) %>%
-      kbl(
-        align = "c", escape = FALSE
-      ) %>%
-      kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
-      row_spec(
-        0,
-        background = HEADER_BACKGROUND
-      ) %>%
-      collapse_rows(columns = 1, valign = "middle") %>%
-      cat()
-  } else {
-    cat("There is no consensus sequence for this locus. \n")
-  }
-
-  cat("\n\n")
-
   qc_thresholds_df <- tibble(
     metric = factor(
       c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence"),
@@ -1167,6 +1071,56 @@ for (i in seq_len(nrow(regions))) {
   }
 
   cat("\n\n")
+  cat("### Consensus")
+  cat("\n\n")
+
+  consensus_region_df <- consensus_df %>%
+    semi_join(selected_region, by = join_by(locus_id)) %>%
+    wrangle_reads_data() %>%
+    arrange(haplotype)
+
+  cat("From each haplotype, a consensus sequence is generated. The consensus sequence is created as the 'median' of the observed sequences. The consensus sequence is shown in the table below, together an abacus plot showing the inividual $k$-mers.")
+
+  # Create Abacus plots
+
+  if (nrow(consensus_region_df) > 0) {
+    consensus_kmer_df <- consensus_region_df %>%
+      wrangle_reads_to_kmers()
+
+    consensus_kmer_plot <- create_kmer_plot(consensus_kmer_df, "kmer", kmer_color_palette)
+    print(consensus_kmer_plot)
+  } else {
+    cat("There is no consensus sequence for this locus.")
+  }
+
+  cat("\n\n")
+
+  if (nrow(consensus_region_df) > 0) {
+    consensus_region_df %>%
+      mutate(
+        consensus_strings = add_colors_to_consensus_strings(consensus_strings, kmer_color_palette)
+      ) %>%
+      select(
+        "Haplotype" = haplotype,
+        "Read ID" = read_id,
+        "Alignment Type" = alignment_subtype_txt,
+        "Consensus" = consensus_strings
+      ) %>%
+      kbl(
+        align = "c", escape = FALSE
+      ) %>%
+      kable_styling(c("bordered", "striped"), full_width = TRUE) %>%
+      row_spec(
+        0,
+        background = HEADER_BACKGROUND
+      ) %>%
+      collapse_rows(columns = 1, valign = "middle") %>%
+      cat()
+  } else {
+    cat("There is no consensus sequence for this locus. \n")
+  }
+
+  cat("\n\n")
   cat("### Histogram plots {.tabset .tabset-pills}")
   cat("\n\n")
 
@@ -1295,6 +1249,10 @@ for (i in seq_len(nrow(regions))) {
   cat("### Heterozygozity test summary")
   cat("\n\n")
 
+  cat("\n\n")
+  cat("#### Length-based heterozygosity test")
+  cat("\n\n")
+
   cat("This table shows the result from a statistical test for heterozygozity. The hypothesis ($H_A$) is that the sample is heterozygote i.e. that the data comes from two discrete normal distributions and the null hypothesis ($H_0$) is that the sample is homozygote i.e. that the data can be grouped into one gaussian cluster. The test performed is a log likelihood ratio test, where the statistic is assumed to be $\\chi^2$-distributed where the degrees of freedom is the difference in free paramteres under the two hypotheses. The value for the maximized log likelihood functions and the number of free parameteres under the two hypotheses, the test staistic, degrees of freedom, $p$-value and conclusion is shown in the following table.")
 
   test_summary_region_df %>%
@@ -1326,11 +1284,11 @@ for (i in seq_len(nrow(regions))) {
     cat()
 
   cat("\n\n")
-  cat("#### Maximum likelihood estimates")
+  cat("##### Maximum likelihood estimates")
   cat("\n\n")
 
   cat("\n\n")
-  cat("##### Mean")
+  cat("###### Mean")
   cat("\n\n")
 
   par_summary_region_df %>%
@@ -1356,7 +1314,7 @@ for (i in seq_len(nrow(regions))) {
 
 
   cat("\n\n")
-  cat("##### Variance")
+  cat("###### Variance")
   cat("\n\n")
 
   par_summary_region_df %>%
@@ -1379,5 +1337,49 @@ for (i in seq_len(nrow(regions))) {
       background = HEADER_BACKGROUND
     ) %>%
     cat()
+
+  # Equal-length sequence split test section
+  if (isTRUE(test_summary_region_df$backup_test_run[1])) {
+    cat("\n\n")
+    cat("#### Sequence-based heterozygosity test")
+    cat("\n\n")
+
+    cat("When the length-based heterozygosity test is not significant, a sequence-based backup test is performed. The most variable position in the multiple sequence alignment is identified, and a binomial test ($H_0: p = 0.5$) is applied to the counts of the two most common kmers at that position. A **non-significant** result ($p \\geq \\alpha$) means the observed split is consistent with a 50/50 ratio, indicating two alleles with the same length but different sequences — reads are then re-tagged H1/H2. A significant result ($p < \\alpha$) means the ratio deviates from 50/50 and no split is made.")
+    cat("\n\n")
+
+    backup_row <- test_summary_region_df %>%
+      select(
+        "Kmer H1" = backup_test_kmer_h1,
+        "Kmer H2" = backup_test_kmer_h2,
+        "Position (kmer range)" = backup_test_position_min,
+        "Position max" = backup_test_position_max,
+        "Count H1" = backup_test_n_h1,
+        "Count H2" = backup_test_n_h2,
+        "P-value" = backup_test_p_value,
+        "Significant" = backup_test_significant
+      ) %>%
+      mutate(
+        `Position (kmer range)` = paste0(`Position (kmer range)`, "\u2013", `Position max`),
+        `P-value` = signif(`P-value`, 3),
+        Conclusion = if_else(
+          Significant,
+          "No sequence split detected",
+          "Equal-length heterozygote"
+        )
+      ) %>%
+      select(-`Position max`)
+
+    backup_row %>%
+      kbl(align = "c") %>%
+      kable_styling("bordered", full_width = TRUE) %>%
+      row_spec(0, background = HEADER_BACKGROUND) %>%
+      cat()
+
+    if (!isTRUE(test_summary_region_df$backup_test_significant[1])) {
+      cat("\n\n")
+      cat("**Note:** The test was not significant (p \u2265 \u03b1), indicating a 50/50 split. Reads have been re-tagged as H1/H2 based on this test. All other sections of this report reflect the updated haplotype assignments.")
+      cat("\n\n")
+    }
+  }
 }
 ```

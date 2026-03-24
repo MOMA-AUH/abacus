@@ -457,6 +457,14 @@ def abacus(
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.het_alpha,
+    equal_length_alpha: Annotated[
+        float,
+        typer.Option(
+            "--equal-length-alpha",
+            help="Sensitivity cutoff for the equal-length sequence split test. This backup test detects heterozygosity via sequence differences when haplotype lengths are equal.",
+            rich_help_panel=CONFIGURATION,
+        ),
+    ] = config.equal_length_alpha,
     version: bool | None = typer.Option(
         None,
         "--version",
@@ -506,6 +514,7 @@ def abacus(
     config.max_trim = max_trim
     config.min_haplotyping_depth = min_haplotyping_depth
     config.het_alpha = heterozygozity_alpha
+    config.equal_length_alpha = equal_length_alpha
 
     # QC
     config.min_mean_str_quality = min_mean_str_quality

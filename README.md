@@ -9,7 +9,20 @@
 
 Abacus is a tool for analyzing STR (Short Tandem Repeat) data from Long-Read Sequencing technologies. It is designed to work with data from the Oxford Nanopore Technologies (ONT) platform, but has also been tested with data from the Pacific Biosciences (PacBio) platform. The main goal of Abacus is to provide a user-friendly interface for analyzing STR data and to provide a comprehensive report of the analysis results.
 
-Abacus works by first converting the entries of an STR catalog (JSON) into graphs, which are then used to analyze the reads from an aligned BAM or CRAM file. Each read in the BAM or CRAM file is first mapped to the graph using [minigraph](https://github.com/lh3/minigraph), and the number of repeats of each satellite is calculated based on the resulting path. The reads are then grouped according to the satellite repeat counts, and the STR alleles (haplotypes) are called based on these groups. The analysis results are then saved in an HTML report file, which contains information about the STR loci, the called STR alleles, and visualizations of the data.
+Abacus works by first converting the entries of an STR catalog (JSON) into graphs, which are then used to analyze the reads from an aligned BAM or CRAM file. Each read in the BAM or CRAM file is first mapped to the graph using [minigraph](https://github.com/lh3/minigraph), and the number of repeats of each satellite is calculated based on the resulting path. The reads are then grouped according to the satellite repeat counts, and the STR alleles (haplotypes) are called based on these groups.
+
+### Haplotyping algorithm
+
+Haplotyping is performed in two stages:
+
+1. **Length-based heterozygosity test**: A log-likelihood ratio test compares a homozygous model (one Gaussian cluster of repeat counts) against a heterozygous model (two Gaussian clusters). If the test is significant, reads are assigned to H1 or H2 based on which cluster they most likely belong to.
+
+2. **Equal-length sequence split test** (backup): When the length-based test is not significant — i.e., haplotypes appear to have equal repeat counts — Abacus performs a sequence-level backup test. A multiple sequence alignment (POA) is built from all reads, and the most variable kmer position is identified. A binomial test (H₀: p = 0.5) is applied to the counts of the two most common kmers at that position. If the test is not significant (p ≥ alpha), the split is consistent with a 50/50 ratio, and the locus is called as a heterozygote with equal-length but sequence-distinct alleles. Reads are then tagged H1 or H2 based on which kmer they carry at that position; reads with neither kmer are tagged as outliers (`not_split_base`). A significant result (p < alpha) means the ratio deviates from 50/50 and no split is made. This test is controlled by `--equal-length-alpha`.
+
+
+### Reporting results
+
+The analysis results are saved in an HTML report file, which contains information about the STR loci, the called STR alleles, and visualizations of the data. Furthermore the STR genotyping results are also saved in a VCF file, which contains the called STR alleles. The flags `--add-consensus-to-vcf` and `--add-contracted-consensus-to-vcf` can be used to add the consensus calls to the VCF output.
 
 ## Installation
 To set up the environment for this project, follow these steps:
@@ -91,6 +104,7 @@ The following configuration parameters allow fine-tuning of the analysis:
 #### Haplotype Parameters
 - `--min-haplotyping-depth`: Minimum allowed depth for each called haplotype. If the depth is lower, the locus will be called as homozygous. Default: `10`.
 - `--heterozygozity-alpha`: Sensitivity cutoff for the heterozygosity test. This test focuses on differences in length between haplotypes. Default: `0.05`.
+- `--equal-length-alpha`: Sensitivity cutoff for the equal-length sequence split test. This backup test detects heterozygosity via sequence differences when haplotype lengths are equal. Default: `0.05`.
 
 #### Output Options
 - `--log-file`: Path to the log file. Default: `abacus.log`.
