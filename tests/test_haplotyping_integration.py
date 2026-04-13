@@ -308,19 +308,19 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ["", ""],
             [
                 # Haplotype 1
-                *["CTG" * 27] * 3,
-                *["CTG" * 28] * 3,
+                *["CTG" * 27] * 1,
+                *["CTG" * 28] * 6,
                 *["CTG" * 29] * 2,
                 # Haplotype 2
-                *["CTG" * 30] * 2,
-                *["CTG" * 31] * 7,
+                *["CTG" * 30] * 1,
+                *["CTG" * 31] * 8,
                 *["CTG" * 32] * 2,
                 # Outlier
                 "CTG" * 35,
             ],
             [],
             [],
-            {"h1": 8, "h2": 11, "outlier": 1},
+            {"h1": 9, "h2": 11, "outlier": 1},
             {"h1": [28.0], "h2": [31.0]},
             id="Outlier-Long outlier that should be separated from H2",
         ),
@@ -534,13 +534,32 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
                 *["CAG" * 16 + "CCG" * 9 + "CTG" * 20] * 2,
                 *["CAG" * 16 + "CCG" * 9 + "CTG" * 21] * 4,
                 "CAG" * 16 + "CCG" * 10 + "CTG" * 20,
+                # Outlier
                 "CAG" * 16 + "CCG" * 9 + "CTG" * 24,
             ],
             [],
             [],
-            {"h1": 8, "h2": 12},
-            {"h1": [15.0, 9.0, 18.0], "h2": [16.0, 9.0, 21.0]},
+            {"h1": 8, "h2": 11, "outlier": 1},
+            {"h1": [15.0, 9.0, 18.0], "h2": [16.0, 9.0, 20.0]},
             id="Case 13: CNBP",
+        ),
+        pytest.param(
+            ["GCN"],
+            ["", ""],
+            [
+                # Haplotype 1
+                *["GCC" * 10] * 24,
+                # Haplotype 2
+                *["GCC" * 13] * 3,
+                *["GCC" * 14] * 35,
+                # Outlier
+                *["GCC" * 1] * 1,
+            ],
+            [],
+            [],
+            {"h1": 24, "h2": 38, "outlier": 1},
+            {"h1": [10.0], "h2": [14.0]},
+            id="Case 15: PABPN1 issue (#18)",
         ),
     ],
 )

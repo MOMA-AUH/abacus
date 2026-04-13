@@ -400,14 +400,14 @@ def abacus(
             rich_help_panel=QC_OPTIONS,
         ),
     ] = config.min_n_outlier_detection,
-    length_outlier_tolerance_pct: Annotated[
+    tol_length_outlier_pct: Annotated[
         float,
         typer.Option(
             "--length-outlier-tolerance",
             help="Tolerance in % of median STR base-pair length; reads within this range around the haplotype median are always kept from length outlier removal",
             rich_help_panel=QC_OPTIONS,
         ),
-    ] = config.length_outlier_tolerance_pct,
+    ] = config.tol_length_outlier_pct,
     # Configuration
     anchor_length: Annotated[
         int,
@@ -534,7 +534,7 @@ def abacus(
     config.max_ref_divergence = max_ref_divergence
 
     config.min_n_outlier_detection = min_n_outlier_detection
-    config.length_outlier_tolerance_pct = length_outlier_tolerance_pct
+    config.tol_length_outlier_pct = tol_length_outlier_pct
 
     # VCF options
     config.add_consensus_to_vcf = add_consensus_to_vcf

@@ -100,7 +100,7 @@ def detect_length_outliers(
     """
     clean: list[ReadCall] = []
     length_outliers: list[ReadCall] = []
-    tolerance = config.length_outlier_tolerance_pct
+    tolerance = config.tol_length_outlier_pct
 
     haplotype_groups = {rc.haplotype for rc in grouped_read_calls if rc.haplotype in (Haplotype.H1, Haplotype.H2, Haplotype.HOM)}
 
@@ -125,9 +125,9 @@ def detect_length_outliers(
             upper_tol = med * (1.0 + tolerance)
 
             candidates = [
-                (rc, length) for rc, length in zip(spanning, lengths)
-                if (length < lower_robust or length > upper_robust)
-                and (length < lower_tol or length > upper_tol)
+                (rc, length)
+                for rc, length in zip(spanning, lengths)
+                if (length < lower_robust or length > upper_robust) and (length < lower_tol or length > upper_tol)
             ]
 
             if candidates:
