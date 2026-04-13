@@ -13,11 +13,28 @@ Abacus works by first converting the entries of an STR catalog (JSON) into graph
 
 ### Haplotyping algorithm
 
-Haplotyping is performed in two stages:
+The haplotyping pipeline proceeds in three stages.
 
-1. **Length-based heterozygosity test**: A log-likelihood ratio test compares a homozygous model (one Gaussian cluster of repeat counts) against a heterozygous model (two Gaussian clusters). If the test is significant, reads are assigned to H1 or H2 based on which cluster they most likely belong to.
+**Stage 1 — Outlier removal (preprocessing)**
 
-2. **Equal-length sequence split test** (backup): When the length-based test is not significant — i.e., haplotypes appear to have equal repeat counts — Abacus performs a sequence-level backup test. A multiple sequence alignment (POA) is built from all reads, and the most variable kmer position is identified. A binomial test (H₀: p = 0.5) is applied to the counts of the two most common kmers at that position. If the test is not significant (p ≥ alpha), the split is consistent with a 50/50 ratio, and the locus is called as a heterozygote with equal-length but sequence-distinct alleles. Reads are then tagged H1 or H2 based on which kmer they carry at that position; reads with neither kmer are tagged as outliers (`not_split_base`). A significant result (p < alpha) means the ratio deviates from 50/50 and no split is made. This test is controlled by `--equal-length-alpha`.
+Reads are grouped into two clusters (H1 and H2) using a Gaussian mixture model fit to the repeat counts. Two outlier removal steps then clean the read set iteratively; after each removal, model parameters are re-estimated and reads are re-grouped. Note that maximum 1 read can be removed per cluster in each iteration to prevent over-filtering. Both steps are controlled by the `--min-n-outlier-detection` parameter, which sets the minimum number of reads required for outlier detection. If the number of reads in a haplotype group falls below this threshold, no further outlier detection is performed for that group.
+
+1. **Singleton cluster removal**: Any haplotype cluster that contains exactly one read is treated as an outlier. The singleton read is removed and reads are re-grouped.
+
+2. **Length outlier detection**: For each haplotype group (H1, H2, or HOM), the median STR base-pair length is computed across spanning reads. A read is flagged as a length outlier if it falls outside both Tukey-fence robust bounds *and* outside a tolerance window of `median × (1 ± tolerance)` which is controlled by `--length-outlier-tolerance`.
+
+**Stage 2 — Length-based heterozygosity test**
+
+A log-likelihood ratio test (LRT) compares a homozygous model (single Gaussian) against a heterozygous model (two Gaussians).If the test is significant (p < `--heterozygozity-alpha`), reads retain their H1/H2 assignments. If not significant, all reads are re-tagged as HOM and Stage 3 is attempted.
+
+**Stage 3 — Equal-length sequence split test (backup)**
+
+When Stage 2 is not significant — i.e., haplotypes appear to have the same repeat count — Abacus attempts a sequence-level split. A partial-order alignment (POA) MSA is built from all reads, and the most variable kmer position is identified. A binomial test (H₀: p = 0.5) is applied to the counts of the two most common kmers at that position:
+
+- **Not significant (p ≥ alpha)**: the observed split is consistent with a 50/50 ratio, indicating two alleles with equal length but distinct sequences. Reads are tagged H1 or H2 based on which kmer they carry at that position. Reads carrying neither kmer are marked as filtered (`not_split_base`).
+- **Significant (p < alpha)**: the ratio deviates from 50/50; no split is made and the locus is called homozygous.
+
+This test is controlled by `--equal-length-alpha`.
 
 
 ### Reporting results
@@ -99,6 +116,7 @@ The following configuration parameters allow fine-tuning of the analysis:
 - `--max-error-rate`: Maximum allowed error rate in the STR region. Reads with higher error rates will be filtered out. Default: `0.01`.
 - `--tol-error-rate`: Tolerance for error rate in the STR region. Default: `0.005`.
 - `--max-ref-divergence`: Maximum allowed reference divergence in the STR region. Default: `0.34`.
+- `--length-outlier-tolerance`: Tolerance as a fraction of the haplotype median STR base-pair length. Reads within `median × (1 ± tolerance)` of the haplotype median are always kept, even if they fall outside the Tukey-fence bounds. Default: `0.10` (10%).
 - `--min-n-outlier-detection`: Minimum number of reads required for outlier detection. Default: `10`.
 
 #### Haplotype Parameters

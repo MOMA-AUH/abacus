@@ -534,14 +534,34 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
                 *["CAG" * 16 + "CCG" * 9 + "CTG" * 20] * 2,
                 *["CAG" * 16 + "CCG" * 9 + "CTG" * 21] * 4,
                 "CAG" * 16 + "CCG" * 10 + "CTG" * 20,
-                # Outlier
                 "CAG" * 16 + "CCG" * 9 + "CTG" * 24,
             ],
             [],
             [],
-            {"h1": 8, "h2": 11, "outlier": 1},
-            {"h1": [15.0, 9.0, 18.0], "h2": [16.0, 9.0, 20.0]},
+            {"h1": 8, "h2": 12},
+            {"h1": [15.0, 9.0, 18.0], "h2": [16.0, 9.0, 21.0]},
             id="Case 13: CNBP",
+        ),
+        pytest.param(
+            ["GGCCCC"],
+            ["", ""],
+            [
+                # Haplotype 1
+                *["GGCCCC" * 12] * 16,
+                # Haplotype 2
+                "GGCCCC" * 958,
+                "GGCCCC" * 2349,
+            ],
+            [
+                # Haplotype 2
+                "GGCCCC" * 1440,
+                "GGCCCC" * 298,
+                "GGCCCC" * 54,
+            ],
+            [],
+            {"h1": 16, "h2": 5},
+            {"h1": [12.0], "h2": [958.0, 2349.0]},
+            id="Case 14: C9ORF72",
         ),
         pytest.param(
             ["GCN"],

@@ -6,6 +6,7 @@ output:
     code_folding: hide
 
 params:
+  abacus_version: ""
   sample_id: ""
   input_bam: ""
   str_catalog: ""
@@ -42,6 +43,7 @@ library(kableExtra)
 
 ```{r Unpack input parameters}
 # Sample information
+abacus_version <- params$abacus_version
 sample_id <- params$sample_id
 input_bam <- params$input_bam
 str_catalog <- params$str_catalog
@@ -64,6 +66,7 @@ test_summary_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/s
 
 ```{r Test exmaple data - local, eval=FALSE}
 # Variables
+abacus_version <- "dev"
 sample_id <- "test"
 input_bam <- "path/to/bam"
 str_catalog <- "path/to/str_catalog"
@@ -109,8 +112,8 @@ HEADER_BACKGROUND <- "grey87"
 STRIPED_BACKGROUND <- "grey97"
 ATTENTION_COLOR <- "#FF5733"
 
-HAPLOTYPE_COLORS <- c("#308EFF", "#30CDFF", "#30FF60", ATTENTION_COLOR)
-names(HAPLOTYPE_COLORS) <- c("h1", "h2", "hom", "outlier")
+HAPLOTYPE_COLORS <- c("#308EFF", "#30CDFF", "#30FF60", "#C030FF", ATTENTION_COLOR)
+names(HAPLOTYPE_COLORS) <- c("h1", "h2", "hom", "outlier", "qc_filtered")
 ```
 
 ```{r Functions}
@@ -558,12 +561,14 @@ generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
 ```{r Sample information table, results = TRUE}
 # Create table
 data.frame(
+  abacus_version = abacus_version,
   sample_id = sample_id,
   date = format(Sys.time(), "%Y/%m/%d %H:%M %Z"),
   bam = basename(input_bam),
   json = basename(str_catalog)
 ) %>%
   select(
+    "Abacus version" = abacus_version,
     "Sample ID" = sample_id,
     "Date" = date,
     "BAM file" = bam,
@@ -658,8 +663,9 @@ for (i in seq_len(nrow(regions))) {
     semi_join(selected_region, by = join_by(locus_id))
 
   # Calculate coverage
-  n_haplotyped_reads <- nrow(reads_region_df %>% filter(haplotype != "outlier"))
+  n_haplotyped_reads <- nrow(reads_region_df %>% filter(!haplotype %in% c("outlier", "qc_filtered")))
   n_outlier_reads <- nrow(reads_region_df %>% filter(haplotype == "outlier"))
+  n_qc_filtered_reads <- nrow(reads_region_df %>% filter(haplotype == "qc_filtered"))
   n_filtered_reads <- nrow(filtered_reads_region_df)
 
   # Add notice at top of report
@@ -730,13 +736,13 @@ for (i in seq_len(nrow(regions))) {
 
   # Split data
   kmer_haplotyped_df <- kmer_df %>%
-    filter(haplotype != "outlier")
+    filter(haplotype != "qc_filtered")
 
-  kmer_outlier_df <- kmer_df %>%
-    filter(haplotype == "outlier")
+  kmer_qc_filtered_df <- kmer_df %>%
+    filter(haplotype == "qc_filtered")
 
   no_haplotype_reads <- nrow(kmer_haplotyped_df) == 0
-  no_outlier_reads <- nrow(kmer_outlier_df) == 0
+  no_qc_filtered_reads <- nrow(kmer_qc_filtered_df) == 0
 
   # Get color palette
   # Get kmers that should be prioritized for color
@@ -750,8 +756,8 @@ for (i in seq_len(nrow(regions))) {
   # Most observed kmers
   top_obs_kmers <-
     kmer_haplotyped_df %>%
-    # Remove outlier reads, NA and empty kmers
-    filter(haplotype != "outlier", !is.na(kmer), kmer != "") %>%
+    # Remove qc_filtered reads, NA and empty kmers
+    filter(haplotype != "qc_filtered", !is.na(kmer), kmer != "") %>%
     # Remove kmers that are in ref_kmers
     filter(!kmer %in% ref_kmers) %>%
     # Count kmers occurrences
@@ -819,14 +825,14 @@ for (i in seq_len(nrow(regions))) {
   }
 
   cat("\n\n")
-  cat("#### Outliers (N=", n_outlier_reads, ")", sep = "")
+  cat("#### QC Filtered (N=", n_qc_filtered_reads, ")", sep = "")
   cat("\n\n")
 
-  if (no_outlier_reads) {
-    cat("There are no outliers for this locus.")
+  if (no_qc_filtered_reads) {
+    cat("There are no QC filtered reads for this locus.")
   } else {
-    # Outlier color pallette
-    top_outlier_kmers <- kmer_outlier_df %>%
+    # QC filtered color palette
+    top_qc_filtered_kmers <- kmer_qc_filtered_df %>%
       filter(!is.na(kmer)) %>%
       # Remove long non-reference kmers
       filter(nchar(kmer) < 25 | kmer %in% ref_kmers) %>%
@@ -836,21 +842,21 @@ for (i in seq_len(nrow(regions))) {
       head(n_colors)
 
     # Generate color palette
-    outlier_color_palette <- generate_kmer_color_palette(top_outlier_kmers)
-    new_outlier_color_palette <- c()
+    qc_filtered_color_palette <- generate_kmer_color_palette(top_qc_filtered_kmers)
+    new_qc_filtered_color_palette <- c()
 
     # Find overlapping and new kmers compared to kmer_color_palette
-    overlapping_kmers <- intersect(names(outlier_color_palette), names(kmer_color_palette))
-    new_kmers <- setdiff(names(outlier_color_palette), overlapping_kmers)
+    overlapping_kmers <- intersect(names(qc_filtered_color_palette), names(kmer_color_palette))
+    new_kmers <- setdiff(names(qc_filtered_color_palette), overlapping_kmers)
 
     # Re-use color palette from top_kmers
-    new_outlier_color_palette[overlapping_kmers] <- kmer_color_palette[overlapping_kmers]
+    new_qc_filtered_color_palette[overlapping_kmers] <- kmer_color_palette[overlapping_kmers]
 
     # Add unused colors to new kmers
-    unused_colors <- setdiff(outlier_color_palette, new_outlier_color_palette)
-    new_outlier_color_palette[new_kmers] <- unused_colors
+    unused_colors <- setdiff(qc_filtered_color_palette, new_qc_filtered_color_palette)
+    new_qc_filtered_color_palette[new_kmers] <- unused_colors
 
-    kmer_plot <- create_kmer_plot(kmer_outlier_df, "kmer", new_outlier_color_palette)
+    kmer_plot <- create_kmer_plot(kmer_qc_filtered_df, "kmer", new_qc_filtered_color_palette)
     print(kmer_plot)
   }
 
@@ -926,43 +932,43 @@ for (i in seq_len(nrow(regions))) {
 
   qc_thresholds_df <- tibble(
     metric = factor(
-      c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence"),
-      levels = c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence")
+      c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence", "STR Length (bp)"),
+      levels = c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence", "STR Length (bp)")
     ),
     threshold = c(
       params$min_mean_str_quality,
       params$min_q10_str_quality,
       params$max_error_rate,
-      params$max_ref_divergence
+      params$max_ref_divergence,
+      NA
     )
   )
 
   qc_plot <- reads_region_df %>%
     pivot_longer(
-      cols = c(mean_str_qual, q10_str_qual, str_error_rate, str_ref_divergence),
+      cols = c(mean_str_qual, q10_str_qual, str_error_rate, str_ref_divergence, str_bp_length),
       names_to = "metric",
       values_to = "value"
     ) %>%
     mutate(
       metric = factor(metric,
-        levels = c("mean_str_qual", "q10_str_qual", "str_error_rate", "str_ref_divergence"),
-        labels = c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence")
+        levels = c("mean_str_qual", "q10_str_qual", "str_error_rate", "str_ref_divergence", "str_bp_length"),
+        labels = c("Mean STR Qual", "Q10 STR Qual", "STR Error Rate", "STR Ref. Divergence", "STR Length (bp)")
       )
     ) %>%
     ggplot(aes(x = haplotype, y = value, col = haplotype)) +
     geom_hline(
-      data = qc_thresholds_df,
+      data = qc_thresholds_df %>% filter(!is.na(threshold)),
       aes(yintercept = threshold),
       linetype = "dashed", color = "grey40", linewidth = 0.6
     ) +
     geom_jitter(width = 0.25, height = 0, alpha = 0.5, size = 3) +
-    facet_wrap(~metric, ncol = 4, scales = "free_y") +
+    facet_wrap(~metric, ncol = 5, scales = "free_y") +
     labs(x = NULL, y = NULL) +
-    guides(col = guide_legend(title = "Haplotype")) +
     scale_color_manual(values = HAPLOTYPE_COLORS) +
     theme(
-      axis.text.x = element_text(angle = 30, hjust = 1),
-      legend.position = "bottom"
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+      legend.position = "none"
     )
   print(qc_plot)
 
@@ -971,7 +977,7 @@ for (i in seq_len(nrow(regions))) {
   cat("\n\n")
 
   passed_reads_region_df <- reads_region_df %>%
-    filter(haplotype != "outlier")
+    filter(!haplotype %in% c("outlier", "qc_filtered"))
 
   if (nrow(passed_reads_region_df) == 0) {
     cat("There are no haplotyped reads for this locus.")
@@ -1008,17 +1014,17 @@ for (i in seq_len(nrow(regions))) {
   }
 
   cat("\n\n")
-  cat("#### Outliers (N=", n_outlier_reads, ")", sep = "")
+  cat("#### QC Filtered (N=", n_qc_filtered_reads, ")", sep = "")
   cat("\n\n")
 
-  if (no_outlier_reads) {
-    cat("There are no outliers for this locus.")
+  if (n_qc_filtered_reads == 0) {
+    cat("There are no QC filtered reads for this locus.")
   } else {
     reads_region_df %>%
-      filter(haplotype == "outlier") %>%
-      # Change "," to newline in outlier_reasons
+      filter(haplotype == "qc_filtered") %>%
+      # Change ";" to newline in filter_reasons
       mutate(
-        outlier_reasons = str_replace_all(outlier_reasons, ";", "\n"),
+        filter_reasons = str_replace_all(filter_reasons, ";", "\n"),
         # Round numeric values
         mean_str_qual = round(mean_str_qual, 1),
         q10_str_qual = round(q10_str_qual, 1),
@@ -1029,7 +1035,7 @@ for (i in seq_len(nrow(regions))) {
         "Read ID" = read_id,
         "Query Name" = query_name,
         "Alignment Type" = alignment_type,
-        "Outlier Reasons" = outlier_reasons,
+        "Filter Reasons" = filter_reasons,
         "Mean STR Qual" = mean_str_qual,
         "Q10 STR Qual" = q10_str_qual,
         "STR Error Rate" = str_error_rate,
@@ -1124,7 +1130,7 @@ for (i in seq_len(nrow(regions))) {
   cat("### Histogram plots {.tabset .tabset-pills}")
   cat("\n\n")
 
-  cat("A histogram showing the number of occurences of the individual $k$-mers. Is more than one $k$-mer is present in the pattern one histogram is shown for each $k$-mer. Reads that are removed as outliers are not shown in the plot.")
+  cat("A histogram showing the number of occurences of the individual $k$-mers. Is more than one $k$-mer is present in the pattern one histogram is shown for each $k$-mer. QC filtered reads are not shown in the grouped plot.")
 
   if (no_haplotype_reads) {
     cat("There are no haplotyped reads for this locus.")
@@ -1211,7 +1217,7 @@ for (i in seq_len(nrow(regions))) {
       cat("\n\n")
 
       length_plot_df <- counts_index_df %>%
-        filter(haplotype != "outlier")
+        filter(haplotype != "qc_filtered")
 
       if (nrow(length_plot_df) > 0) {
         length_plot <- generate_length_plot(length_plot_df, density_index_df, satellite, BIN_SZ)
@@ -1226,11 +1232,11 @@ for (i in seq_len(nrow(regions))) {
       }
 
       cat("\n\n")
-      cat("##### Outliers")
+      cat("##### QC Filtered")
       cat("\n\n")
 
       length_plot_df <- counts_index_df %>%
-        filter(haplotype == "outlier")
+        filter(haplotype == "qc_filtered")
 
       if (nrow(length_plot_df) > 0) {
         length_plot <- generate_length_plot(length_plot_df, data.frame(), satellite, BIN_SZ)
@@ -1239,7 +1245,7 @@ for (i in seq_len(nrow(regions))) {
         cat("\n\n")
       } else {
         cat("\n\n")
-        cat("There are no outliers for this locus.")
+        cat("There are no QC filtered reads for this locus.")
         cat("\n\n")
       }
     }
