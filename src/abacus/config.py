@@ -26,6 +26,7 @@ class Config:
 
     # Outlier detection parameters
     min_n_outlier_detection: int = 10
+    length_outlier_tolerance_pct: float = 0.05  # tolerance in % of median; reads within this range are always kept
 
     # Output parameters
     add_consensus_to_vcf: bool = False

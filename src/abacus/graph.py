@@ -767,13 +767,14 @@ class ReadCall:
         return self.alignment.to_dict() | {
             "kmer_count": self.satellite_count,
             "kmer_count_str": "-".join(map(str, self.satellite_count)),
+            "str_bp_length": len(self.alignment.str_sequence),
             "obs_kmer_string": self.obs_kmer_string,
             "ref_kmer_string": self.ref_kmer_string,
             "mod_5mc_kmer_string": self.mod_5mc_kmer_string,
             "qual_kmer_string": self.qual_kmer_string,
             "str_error_rate": self.str_error_rate,
             "haplotype": self.haplotype,
-            "outlier_reasons": ";".join(self.outlier_reasons),
+            "filter_reasons": ";".join(self.outlier_reasons),
         }
 
     def add_outlier_reason(self, reason: str) -> ReadCall:
@@ -783,6 +784,18 @@ class ReadCall:
 
     def add_outlier_reasons(self, reasons: list[str]) -> ReadCall:
         self.haplotype = Haplotype.OUTLIER
+        self.outlier_reasons.extend(reasons)
+
+        return self
+
+    def add_qc_filter_reason(self, reason: str) -> ReadCall:
+        self.haplotype = Haplotype.QC_FILTERED
+        self.outlier_reasons.append(reason)
+
+        return self
+
+    def add_qc_filter_reasons(self, reasons: list[str]) -> ReadCall:
+        self.haplotype = Haplotype.QC_FILTERED
         self.outlier_reasons.extend(reasons)
 
         return self

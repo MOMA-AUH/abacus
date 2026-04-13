@@ -9,6 +9,7 @@ from scipy.stats import binomtest, chi2
 
 from abacus.config import config
 from abacus.consensus import build_kmer_char_maps, find_most_variable_msa_position, generate_msa
+from abacus.filtering import detect_length_outliers
 from abacus.graph import ReadCall
 from abacus.logging import logger
 from abacus.parameter_estimation import (
@@ -78,6 +79,25 @@ def run_haplotyping(
 
     if _outlier_iter > 0:
         logger.debug(f"[TIMING] haplotyping outlier detection: {_outlier_iter} iteration(s), {len(all_outlier_read_calls)} outliers removed")
+
+    # Detect length outliers before the statistical test, re-estimating and re-grouping
+    # after each removal until no more outliers are found (mirrors singleton removal loop)
+    t0 = time.perf_counter()
+    grouped_read_calls, length_outlier_read_calls = detect_length_outliers(grouped_read_calls)
+    all_outlier_read_calls.extend(length_outlier_read_calls)
+    _length_outlier_iter = 0
+    while length_outlier_read_calls and len(grouped_read_calls) > config.min_n_outlier_detection:
+        _length_outlier_iter += 1
+        hom_params = estimate_homozygous_parameters(grouped_read_calls)
+        het_params = estimate_heterozygous_parameters(grouped_read_calls)
+        grouped_read_calls = group_read_calls(grouped_read_calls, het_params, ploidy)
+        grouped_read_calls, length_outlier_read_calls = detect_length_outliers(grouped_read_calls)
+        all_outlier_read_calls.extend(length_outlier_read_calls)
+    if _length_outlier_iter > 0:
+        logger.debug(
+            f"[TIMING] haplotyping length outlier detection: {time.perf_counter() - t0:.3f}s  "
+            f"({_length_outlier_iter} iteration(s), {sum(1 for rc in all_outlier_read_calls if 'outlier_length' in rc.outlier_reasons)} length outliers total)",
+        )
 
     if ploidy == 1:
         het_params_nan = HeterozygousParameters(
@@ -443,9 +463,9 @@ def run_equal_length_backup_test(
         elif c == char_h2:
             read_call.set_haplotype(Haplotype.H2)
             updated_reads.append(read_call)
-        # If character is missing_end_char or something else, mark as outlier (could not be classified based on sequence)
+        # If character is missing_end_char or something else, mark as qc_filtered (could not be classified based on sequence)
         else:
-            read_call.add_outlier_reason("not_split_base")
+            read_call.add_qc_filter_reason("not_split_base")
             new_outliers.append(read_call)
 
     return updated_reads, new_outliers, summary_df

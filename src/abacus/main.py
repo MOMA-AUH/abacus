@@ -124,17 +124,17 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
     good_read_calls, removed_read_calls = filter_read_calls(read_calls=read_calls)
     logger.debug(f"[TIMING] {locus.id} filter_read_calls: {time.perf_counter() - t0:.3f}s  ({len(good_read_calls)} kept, {len(removed_read_calls)} removed)")
 
-    # Group read calls
+    # Haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
     t0 = time.perf_counter()
-    grouped_read_calls, outlier_read_calls, het_params, hom_params, test_summary_res_df = run_haplotyping(
+    grouped_read_calls, haplotyping_outliers, het_params, hom_params, test_summary_res_df = run_haplotyping(
         read_calls=good_read_calls,
         ploidy=ploidy,
     )
     logger.debug(
-        f"[TIMING] {locus.id} run_haplotyping: {time.perf_counter() - t0:.3f}s  ({len(grouped_read_calls)} grouped, {len(outlier_read_calls)} outliers)",
+        f"[TIMING] {locus.id} run_haplotyping: {time.perf_counter() - t0:.3f}s  ({len(grouped_read_calls)} grouped, {len(haplotyping_outliers)} removed)",
     )
 
-    removed_read_calls.extend(outlier_read_calls)
+    removed_read_calls.extend(haplotyping_outliers)
     locus_is_het = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2] if grouped_read_calls else False
 
     parameter_summary_df = summarize_parameter_estimates(het_params, hom_params)
@@ -400,6 +400,14 @@ def abacus(
             rich_help_panel=QC_OPTIONS,
         ),
     ] = config.min_n_outlier_detection,
+    length_outlier_tolerance_pct: Annotated[
+        float,
+        typer.Option(
+            "--length-outlier-tolerance",
+            help="Tolerance in % of median STR base-pair length; reads within this range around the haplotype median are always kept from length outlier removal",
+            rich_help_panel=QC_OPTIONS,
+        ),
+    ] = config.length_outlier_tolerance_pct,
     # Configuration
     anchor_length: Annotated[
         int,
@@ -526,6 +534,7 @@ def abacus(
     config.max_ref_divergence = max_ref_divergence
 
     config.min_n_outlier_detection = min_n_outlier_detection
+    config.length_outlier_tolerance_pct = length_outlier_tolerance_pct
 
     # VCF options
     config.add_consensus_to_vcf = add_consensus_to_vcf
@@ -640,6 +649,7 @@ def abacus(
                         output_dir='{report.parent}', \
                         intermediates_dir='{tmp_dir}', \
                         params=list( \
+                            abacus_version = '{__version__}', \
                             sample_id = '{sample_id}', \
                             input_bam = '{bam}', \
                             str_catalog = '{str_catalog}', \
