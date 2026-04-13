@@ -336,6 +336,13 @@
         ]
     },
     {
+        "LocusId": "SAMD12_alt",
+        "LocusStructure": "(TAAAA|TGAAA)*",
+        "ReferenceRegion": [
+            "chr8:118366815-118366918"
+        ]
+    },
+    {
         "LocusId": "STARD7",
         "LocusStructure": "(AAAAT)*(AAATG)*",
         "ReferenceRegion": [
