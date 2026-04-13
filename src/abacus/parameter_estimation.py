@@ -108,7 +108,7 @@ def flanking_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray, is_le
 
             # If this is NOT the cut dimension, simply use the normal distribution
             if not is_cut_dim:
-                logpdf[i, d] = discrete_multivariate_normal_logpdf(x_id, m, v)
+                logpdf[i, d] = discrete_multivariate_normal_logpdf(x_id, m, v)[0]
                 continue
 
             # If this is the cut dimension, we need to use the uniform distribution
@@ -125,13 +125,13 @@ def flanking_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray, is_le
             norm_const = np.sum(np.exp(discrete_multivariate_normal_logpdf(normal_support, m, v)))
 
             # Add uniform part:
-            norm_pdf_at_split = np.exp(discrete_multivariate_normal_logpdf(np.array([[split_point]]), m, v))
+            norm_pdf_at_split = np.exp(discrete_multivariate_normal_logpdf(np.array([[split_point]]), m, v)).item()
             if split_point > 0:
                 norm_const += norm_pdf_at_split * (split_point - 1)
 
             # For x > mean: Use normal distribution
             if x_id >= split_point:
-                logpdf[i, d] = discrete_multivariate_normal_logpdf(x_id, m, v) - np.log(norm_const)
+                logpdf[i, d] = discrete_multivariate_normal_logpdf(x_id, m, v)[0] - np.log(norm_const)
             # For x < mean: Use uniform distribution
             else:
                 logpdf[i, d] = np.log(norm_pdf_at_split / norm_const)
@@ -179,7 +179,7 @@ def flanking_logpdf_old(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray, i
             # If this is the cut dimension, we need to use the uniform distribution
 
             # Calculate logpdf at mean
-            pdf_m_i = np.float64(np.exp(discrete_multivariate_normal_logpdf(np.array([m]), m, v)))
+            pdf_m_i = np.exp(discrete_multivariate_normal_logpdf(np.array([m]), m, v)).item()
 
             # Calculate constants
             const_norm = 2 / (2 * m * pdf_m_i + 1)
@@ -380,7 +380,7 @@ def estimate_heterozygous_parameters(
     # Step 1: Calculate initial estimates
     t0 = time.perf_counter()
     par_init = calculate_initial_estimates(read_calls)
-    logger.debug(f"[TIMING] param_est het step1 calculate_initial_estimates: {time.perf_counter()-t0:.3f}s")
+    logger.debug(f"[TIMING] param_est het step1 calculate_initial_estimates: {time.perf_counter() - t0:.3f}s")
 
     # Step 2: Refine initial estimates using EM-like updates
     t0 = time.perf_counter()
@@ -393,7 +393,7 @@ def estimate_heterozygous_parameters(
             par_refined.mean_h2,
             par_refined.unit_var,
         )
-    logger.debug(f"[TIMING] param_est het step2 refine_initial_estimates ({n_refinements}x): {time.perf_counter()-t0:.3f}s")
+    logger.debug(f"[TIMING] param_est het step2 refine_initial_estimates ({n_refinements}x): {time.perf_counter() - t0:.3f}s")
 
     # Step 3: Optimize estimates using L-BFGS-B
     t0 = time.perf_counter()
@@ -403,7 +403,7 @@ def estimate_heterozygous_parameters(
         par_refined.mean_h2,
         par_refined.unit_var,
     )
-    logger.debug(f"[TIMING] param_est het step3 optimize_estimates (L-BFGS-B): {time.perf_counter()-t0:.3f}s")
+    logger.debug(f"[TIMING] param_est het step3 optimize_estimates (L-BFGS-B): {time.perf_counter() - t0:.3f}s")
 
     # Step 4: Find best integer estimates around optimal estimate
     t0 = time.perf_counter()
@@ -413,7 +413,7 @@ def estimate_heterozygous_parameters(
         par_optim.mean_h2,
         par_optim.unit_var,
     )
-    logger.debug(f"[TIMING] param_est het step4 optimize_estimates_integers: {time.perf_counter()-t0:.3f}s")
+    logger.debug(f"[TIMING] param_est het step4 optimize_estimates_integers: {time.perf_counter() - t0:.3f}s")
 
     # Step 5: Calculate confidence intervals
     t0 = time.perf_counter()
@@ -423,7 +423,7 @@ def estimate_heterozygous_parameters(
         par_int.mean_h2,
         par_int.unit_var,
     )
-    logger.debug(f"[TIMING] param_est het step5 estimate_confidence_intervals: {time.perf_counter()-t0:.3f}s")
+    logger.debug(f"[TIMING] param_est het step5 estimate_confidence_intervals: {time.perf_counter() - t0:.3f}s")
 
     return HeterozygousParameters(
         mean_h1=par_int.mean_h1,
@@ -480,13 +480,15 @@ def optimize_estimates_integers(
         # Optimize variance while keeping integer means fixed
         dim = mean_h1_int.shape[0]
         optim_res = minimize(
-            fun=lambda x, mean_h1_int=mean_h1_int, mean_h2_int=mean_h2_int, dim=dim: -calculate_log_likelihood_heterozygous(
-                spanning_counts=spanning_counts,
-                flanking_counts=flanking_counts,
-                is_left_flank=is_left_flank,
-                mean_h1=mean_h1_int,
-                mean_h2=mean_h2_int,
-                unit_var=np.array(x[:dim]),
+            fun=lambda x, mean_h1_int=mean_h1_int, mean_h2_int=mean_h2_int, dim=dim: (
+                -calculate_log_likelihood_heterozygous(
+                    spanning_counts=spanning_counts,
+                    flanking_counts=flanking_counts,
+                    is_left_flank=is_left_flank,
+                    mean_h1=mean_h1_int,
+                    mean_h2=mean_h2_int,
+                    unit_var=np.array(x[:dim]),
+                )
             ),
             x0=unit_var_optim,
             method="L-BFGS-B",
@@ -532,13 +534,15 @@ def optimize_estimates(
     # Optimize log likelihood to find best mean
     dim = mean_h1_init.shape[0]
     optim_res = minimize(
-        fun=lambda x: -calculate_log_likelihood_heterozygous(
-            spanning_counts=spanning_counts,
-            flanking_counts=flanking_counts,
-            is_left_flank=is_left_flank,
-            mean_h1=np.array(x[:dim]),
-            mean_h2=np.array(x[dim : 2 * dim]),
-            unit_var=np.array(x[2 * dim : 3 * dim]),
+        fun=lambda x: (
+            -calculate_log_likelihood_heterozygous(
+                spanning_counts=spanning_counts,
+                flanking_counts=flanking_counts,
+                is_left_flank=is_left_flank,
+                mean_h1=np.array(x[:dim]),
+                mean_h2=np.array(x[dim : 2 * dim]),
+                unit_var=np.array(x[2 * dim : 3 * dim]),
+            )
         ),
         x0=np.concatenate((mean_h1_init, mean_h2_init, unit_var_init)),
         method="L-BFGS-B",
@@ -757,7 +761,7 @@ def estimate_homozygous_parameters(
         mean_init,
         unit_var_init,
     )
-    logger.debug(f"[TIMING] param_est hom step2 optimize_homozygous_estimates: {time.perf_counter()-t0:.3f}s")
+    logger.debug(f"[TIMING] param_est hom step2 optimize_homozygous_estimates: {time.perf_counter() - t0:.3f}s")
 
     # Step 3: Optimize estimates with integer means
     t0 = time.perf_counter()
@@ -768,7 +772,7 @@ def estimate_homozygous_parameters(
         mean_optim,
         unit_var_optim,
     )
-    logger.debug(f"[TIMING] param_est hom step3 optimize_estimates_integers_homozygous: {time.perf_counter()-t0:.3f}s")
+    logger.debug(f"[TIMING] param_est hom step3 optimize_estimates_integers_homozygous: {time.perf_counter() - t0:.3f}s")
 
     # Step 4: Calculate confidence intervals
     t0 = time.perf_counter()
@@ -777,7 +781,7 @@ def estimate_homozygous_parameters(
         mean_int,
         unit_var_int,
     )
-    logger.debug(f"[TIMING] param_est hom step4 estimate_confidence_intervals: {time.perf_counter()-t0:.3f}s")
+    logger.debug(f"[TIMING] param_est hom step4 estimate_confidence_intervals: {time.perf_counter() - t0:.3f}s")
 
     return HomozygousParameters(
         mean=mean_int,
@@ -819,12 +823,14 @@ def optimize_estimates_integers_homozygous(
         # Optimize variance while keeping integer means fixed
         dim = mean_int.shape[0]
         optim_res = minimize(
-            fun=lambda x, mean_int=mean_int, dim=dim: -calculate_log_likelihood_homozygous(
-                spanning_counts=spanning_counts,
-                flanking_counts=flanking_counts,
-                is_left_flank=is_left_flank,
-                mean=mean_int,
-                unit_var=np.array(x[:dim]),
+            fun=lambda x, mean_int=mean_int, dim=dim: (
+                -calculate_log_likelihood_homozygous(
+                    spanning_counts=spanning_counts,
+                    flanking_counts=flanking_counts,
+                    is_left_flank=is_left_flank,
+                    mean=mean_int,
+                    unit_var=np.array(x[:dim]),
+                )
             ),
             x0=unit_var_optim,
             method="L-BFGS-B",
@@ -858,12 +864,14 @@ def optimize_homozygous_estimates(
     # Optimize log likelihood to find best mean
     dim = mean_init.shape[0]
     optim_res = minimize(
-        fun=lambda x: -calculate_log_likelihood_homozygous(
-            spanning_counts=spanning_counts,
-            flanking_counts=flanking_counts,
-            is_left_flank=is_left_flank,
-            mean=np.array(x[:dim]),
-            unit_var=np.array(x[dim : 2 * dim]),
+        fun=lambda x: (
+            -calculate_log_likelihood_homozygous(
+                spanning_counts=spanning_counts,
+                flanking_counts=flanking_counts,
+                is_left_flank=is_left_flank,
+                mean=np.array(x[:dim]),
+                unit_var=np.array(x[dim : 2 * dim]),
+            )
         ),
         x0=np.concatenate((mean_init, unit_var_init)),
         method="L-BFGS-B",
