@@ -23,7 +23,7 @@ from abacus.graph import (
     get_read_calls,
 )
 from abacus.group_summary import calculate_final_group_summaries
-from abacus.haplotyping import run_haplotyping, summarize_parameter_estimates
+from abacus.haplotyping import run_haplotyping, summarize_final_parameter_estimates, summarize_test_parameter_estimates
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 from abacus.parameter_estimation import HeterozygousParameters, HomozygousParameters
@@ -40,7 +40,8 @@ ascii_art = r"""
 ║   □─┼─■   ─@@@@@@@@@─@@───@@─@@───@@─@@──────@@────@@───@@───   ■─┼─□   ║
 ║  ●──┼──○  ─@@─────@@─@@───@@─@@───@@─@@───@@─@@@───@@─@───@@─    ■┼□    ║
 ║   ■─┼─□   ─@@─────@@─@@@@@@───@@@@─@──@@@@@──@@─@@@@───@@@@──   ○─┼─●   ║
-║    ●┼○                                                         ●──┼──○  ║
+║    ●┼○  ─────────────────────────────────────────────────────  ●──┼──○  ║
+║   ○─┼─●                                                         ■─┼─□   ║
 ╚═════════════════════════════════════════════════════════════════════════╝
 """
 
