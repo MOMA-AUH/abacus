@@ -29,7 +29,7 @@ from abacus.utils import AlignmentType, Haplotype
 def run_haplotyping(
     read_calls: list[ReadCall],
     ploidy: int,
-) -> tuple[list[ReadCall], list[ReadCall], HeterozygousParameters, HomozygousParameters, pd.DataFrame]:
+) -> tuple[list[ReadCall], list[ReadCall], HeterozygousParameters, HomozygousParameters, dict[Haplotype, HomozygousParameters], pd.DataFrame]:
     # Handle empty read_calls
     if not read_calls:
         return create_empty_results()
@@ -40,76 +40,65 @@ def run_haplotyping(
 
     # Initialize
     all_outlier_read_calls: list[ReadCall] = []
-    t0 = time.perf_counter()
-    hom_params = estimate_homozygous_parameters(read_calls)
-    logger.debug(f"[TIMING] haplotyping estimate_homozygous_parameters: {time.perf_counter() - t0:.3f}s")
+
+    # PHASE 1: Initial grouping
 
     t0 = time.perf_counter()
-    het_params = estimate_heterozygous_parameters(read_calls)
+    het_params_test = estimate_heterozygous_parameters(read_calls)
     logger.debug(f"[TIMING] haplotyping estimate_heterozygous_parameters (initial): {time.perf_counter() - t0:.3f}s")
 
     # Initialize grouping
     t0 = time.perf_counter()
-    grouped_read_calls = group_read_calls(read_calls, het_params, ploidy)
+    grouped_read_calls = group_read_calls(read_calls, het_params_test, ploidy)
     logger.debug(f"[TIMING] haplotyping group_read_calls (initial): {time.perf_counter() - t0:.3f}s")
 
-    # Check for singleton clusters, and keep removing them until there are none left or the number of read calls is below the minimum threshold
-    singleton_read_calls = check_for_singleton_clusters(grouped_read_calls)
+    # PHASE 2: Iterative outlier detection and re-grouping
+
+    # Initialize parameters
     _outlier_iter = 0
-    while len(singleton_read_calls) > 0 and len(grouped_read_calls) > config.min_n_outlier_detection:
+    new_outliers_found = True
+    while new_outliers_found and len(grouped_read_calls) > config.min_n_qc_filtering:
         _outlier_iter += 1
-        # If there are singleton read calls, they are outliers - remove them
-        for outlier in singleton_read_calls:
+
+        # Detect outliers
+        singleton_read_calls = detect_singleton_clusters(grouped_read_calls)
+        length_outlier_read_calls = detect_length_outliers(grouped_read_calls)
+
+        # De-duplicate outliers
+        outliers = list({rc.alignment.name: rc for rc in singleton_read_calls + length_outlier_read_calls}.values())
+
+        # If no new outliers found, break loop
+        new_outliers_found = bool(outliers)
+        if not new_outliers_found:
+            break
+
+        # Update outlier and good read call lists
+        for outlier in outliers:
             all_outlier_read_calls.append(outlier)
             grouped_read_calls.remove(outlier)
 
-        # Re-estimate parameters
+        # Re-estimate heterozygous parameters
         t0 = time.perf_counter()
-        hom_params = estimate_homozygous_parameters(grouped_read_calls)
-        het_params = estimate_heterozygous_parameters(grouped_read_calls)
-        logger.debug(f"[TIMING] haplotyping re-estimate parameters (outlier iter {_outlier_iter}): {time.perf_counter() - t0:.3f}s")
+        het_params_test = estimate_heterozygous_parameters(grouped_read_calls)
+        logger.debug(f"[TIMING] haplotyping re-estimate het parameters (outlier iter {_outlier_iter}): {time.perf_counter() - t0:.3f}s")
 
-        # Re-group read calls
+        # Re-group reads based on new estimates
         t0 = time.perf_counter()
-        grouped_read_calls = group_read_calls(grouped_read_calls, het_params, ploidy)
+        grouped_read_calls = group_read_calls(grouped_read_calls, het_params_test, ploidy)
         logger.debug(f"[TIMING] haplotyping group_read_calls (outlier iter {_outlier_iter}): {time.perf_counter() - t0:.3f}s")
-
-        # Check for singleton clusters again
-        singleton_read_calls = check_for_singleton_clusters(grouped_read_calls)
 
     if _outlier_iter > 0:
         logger.debug(f"[TIMING] haplotyping outlier detection: {_outlier_iter} iteration(s), {len(all_outlier_read_calls)} outliers removed")
 
-    # Detect length outliers before the statistical test, re-estimating and re-grouping
-    # after each removal until no more outliers are found (mirrors singleton removal loop)
+    # PHASE 3: Test for heterozygosity
+
+    # Estimate hom_params once after all outlier removal — only needed for the LRT below
     t0 = time.perf_counter()
-    grouped_read_calls, length_outlier_read_calls = detect_length_outliers(grouped_read_calls)
-    all_outlier_read_calls.extend(length_outlier_read_calls)
-    _length_outlier_iter = 0
-    while length_outlier_read_calls and len(grouped_read_calls) > config.min_n_outlier_detection:
-        _length_outlier_iter += 1
-        hom_params = estimate_homozygous_parameters(grouped_read_calls)
-        het_params = estimate_heterozygous_parameters(grouped_read_calls)
-        grouped_read_calls = group_read_calls(grouped_read_calls, het_params, ploidy)
-        grouped_read_calls, length_outlier_read_calls = detect_length_outliers(grouped_read_calls)
-        all_outlier_read_calls.extend(length_outlier_read_calls)
-    if _length_outlier_iter > 0:
-        logger.debug(
-            f"[TIMING] haplotyping length outlier detection: {time.perf_counter() - t0:.3f}s  "
-            f"({_length_outlier_iter} iteration(s), {sum(1 for rc in all_outlier_read_calls if 'outlier_length' in rc.outlier_reasons)} length outliers total)",
-        )
+    hom_params_test = estimate_homozygous_parameters(grouped_read_calls)
+    logger.debug(f"[TIMING] haplotyping estimate_homozygous_parameters: {time.perf_counter() - t0:.3f}s")
 
+    # If ploidy=1, skip heterozygosity test, estimate final parameters using homozygous model, and return
     if ploidy == 1:
-        het_params_nan = HeterozygousParameters(
-            mean_h1=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
-            mean_h2=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
-            unit_var=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
-            mean_h1_ci_low=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
-            mean_h1_ci_high=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
-            mean_h2_ci_low=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
-            mean_h2_ci_high=np.full_like(hom_params.mean, np.nan, dtype=np.float64),
-        )
-
         test_summary_df = summarize_test_statistics(
             log_lik_hetero=np.float64(np.nan),
             log_lik_hom=np.float64(np.nan),
@@ -124,15 +113,16 @@ def run_haplotyping(
             [test_summary_df.reset_index(drop=True), _make_empty_backup_summary(run=False).reset_index(drop=True)],
             axis=1,
         )
-
-        return grouped_read_calls, all_outlier_read_calls, het_params_nan, hom_params, test_summary_df
+        het_params_test = _make_empty_het_par_estimate(dim=len(hom_params_test.mean))
+        final_params = {Haplotype.HOM: hom_params_test}
+        return grouped_read_calls, all_outlier_read_calls, het_params_test, hom_params_test, final_params, test_summary_df
 
     # Test for heterozygosity
     t0 = time.perf_counter()
     log_lik_hom, log_lik_hetero, n_par_hom, n_par_hetero, test_statistic, df, heterozygosity_p_value = test_heterozygosity(
         grouped_read_calls,
-        het_params,
-        hom_params,
+        het_params_test,
+        hom_params_test,
     )
     logger.debug(f"[TIMING] haplotyping test_heterozygosity: {time.perf_counter() - t0:.3f}s")
 
@@ -145,14 +135,18 @@ def run_haplotyping(
         for read in grouped_read_calls:
             read.set_haplotype(Haplotype.HOM)
 
-        # Run backup test and update parameters if a split is detected
-        grouped_read_calls, sequence_split_outliers, het_params, backup_summary_df = _run_sequence_split_test_and_update_params(
+        # Run backup sequence test — updates read labels only, no parameter estimation here
+        grouped_read_calls, sequence_split_outliers, backup_summary_df = _run_sequence_split_test_and_update_params(
             grouped_read_calls,
-            het_params,
         )
         all_outlier_read_calls.extend(sequence_split_outliers)
     else:
         backup_summary_df = _make_empty_backup_summary(run=False)
+
+    # Phase 4: Final parameter estimation and summarization
+
+    # Always use homozygous model per group for final estimates, regardless of how grouping was determined
+    final_params = _estimate_final_parameters(grouped_read_calls)
 
     # Summarize test statistics
     test_summary_df = summarize_test_statistics(
@@ -168,10 +162,40 @@ def run_haplotyping(
     # Combine with sequence split backup test summary
     test_summary_df = pd.concat([test_summary_df.reset_index(drop=True), backup_summary_df.reset_index(drop=True)], axis=1)
 
-    return grouped_read_calls, all_outlier_read_calls, het_params, hom_params, test_summary_df
+    return grouped_read_calls, all_outlier_read_calls, het_params_test, hom_params_test, final_params, test_summary_df
 
 
-def create_empty_results() -> tuple[list[ReadCall], list[ReadCall], HeterozygousParameters, HomozygousParameters, pd.DataFrame]:
+def _make_empty_het_par_estimate(dim: int) -> HeterozygousParameters:
+    nan_like = np.full(dim, np.nan, dtype=np.float64)
+    return HeterozygousParameters(
+        mean_h1=nan_like.copy(),
+        mean_h2=nan_like.copy(),
+        unit_var=nan_like.copy(),
+        mean_h1_ci_low=nan_like.copy(),
+        mean_h1_ci_high=nan_like.copy(),
+        mean_h2_ci_low=nan_like.copy(),
+        mean_h2_ci_high=nan_like.copy(),
+    )
+
+
+def _make_empty_hom_par_estimate(dim: int) -> HomozygousParameters:
+    nan_like = np.full(dim, np.nan, dtype=np.float64)
+    return HomozygousParameters(
+        mean=nan_like.copy(),
+        unit_var=nan_like.copy(),
+        mean_ci_low=nan_like.copy(),
+        mean_ci_high=nan_like.copy(),
+    )
+
+
+def create_empty_results() -> tuple[
+    list[ReadCall],
+    list[ReadCall],
+    HeterozygousParameters,
+    HomozygousParameters,
+    dict[Haplotype, HomozygousParameters],
+    pd.DataFrame,
+]:
     summary_res_df = summarize_test_statistics(
         log_lik_hom=np.float64(np.nan),
         log_lik_hetero=np.float64(np.nan),
@@ -187,24 +211,12 @@ def create_empty_results() -> tuple[list[ReadCall], list[ReadCall], Heterozygous
         axis=1,
     )
 
-    het_params = HeterozygousParameters(
-        mean_h1=np.full(1, np.nan, dtype=np.float64),
-        mean_h2=np.full(1, np.nan, dtype=np.float64),
-        unit_var=np.full(1, np.nan, dtype=np.float64),
-        mean_h1_ci_low=np.full(1, np.nan, dtype=np.float64),
-        mean_h1_ci_high=np.full(1, np.nan, dtype=np.float64),
-        mean_h2_ci_low=np.full(1, np.nan, dtype=np.float64),
-        mean_h2_ci_high=np.full(1, np.nan, dtype=np.float64),
-    )
+    het_params = _make_empty_het_par_estimate(dim=1)
+    hom_params = _make_empty_hom_par_estimate(dim=1)
 
-    hom_params = HomozygousParameters(
-        mean=np.array([np.nan], dtype=np.float64),
-        unit_var=np.array([np.nan], dtype=np.float64),
-        mean_ci_low=np.array([np.nan], dtype=np.float64),
-        mean_ci_high=np.array([np.nan], dtype=np.float64),
-    )
+    final_params = {Haplotype.HOM: hom_params}
 
-    return [], [], het_params, hom_params, summary_res_df
+    return [], [], het_params, hom_params, final_params, summary_res_df
 
 
 def get_is_left_flanking_bool(flanking_reads: list[ReadCall]) -> list[bool]:
@@ -258,7 +270,7 @@ def group_read_calls(
     return spanning_reads + flanking_reads
 
 
-def check_for_singleton_clusters(
+def detect_singleton_clusters(
     grouped_read_calls: list[ReadCall],
 ) -> list[ReadCall]:
     if not len(grouped_read_calls):
@@ -473,13 +485,13 @@ def run_equal_length_backup_test(
 
 def _run_sequence_split_test_and_update_params(
     grouped_read_calls: list[ReadCall],
-    het_params: HeterozygousParameters,
-) -> tuple[list[ReadCall], list[ReadCall], HeterozygousParameters, pd.DataFrame]:
-    """Run the equal-length sequence split test and, if a split is detected, re-estimate parameters.
+) -> tuple[list[ReadCall], list[ReadCall], pd.DataFrame]:
+    """Run the equal-length sequence split test and update read haplotype labels if a split is detected.
 
-    If a split is detected, re-estimate per-haplotype parameters using the homozygous model on each group.
+    Returns (updated_grouped_reads, new_outliers, backup_summary_df).
 
-    Returns (updated_grouped_reads, new_outliers, updated_het_params, backup_summary_df).
+    Parameter re-estimation is not done here; it is the responsibility of
+    _estimate_final_parameters(), which is called after this function returns.
     """
     t0 = time.perf_counter()
     grouped_read_calls, backup_outliers, backup_summary_df = run_equal_length_backup_test(
@@ -489,33 +501,42 @@ def _run_sequence_split_test_and_update_params(
     logger.debug(f"[TIMING] haplotyping equal_length_backup_test: {time.perf_counter() - t0:.3f}s")
 
     backup_split_made = backup_summary_df["backup_test_run"].iloc[0] and not backup_summary_df["backup_test_significant"].iloc[0]
-    if not backup_split_made:
-        return grouped_read_calls, backup_outliers, het_params, backup_summary_df
-
-    logger.debug(
-        "Equal-length sequence split test: split detected "
-        f"(p={backup_summary_df['backup_test_p_value'].iloc[0]:.4g}, not significant — consistent with 50/50): "
-        f"kmer_h1={backup_summary_df['backup_test_kmer_h1'].iloc[0]}, "
-        f"kmer_h2={backup_summary_df['backup_test_kmer_h2'].iloc[0]}",
-    )
-
-    # Re-estimate per-haplotype parameters using the homozygous model on each group
-    h1_reads = [r for r in grouped_read_calls if r.haplotype == Haplotype.H1]
-    h2_reads = [r for r in grouped_read_calls if r.haplotype == Haplotype.H2]
-    if h1_reads and h2_reads:
-        h1_hom = estimate_homozygous_parameters(h1_reads)
-        h2_hom = estimate_homozygous_parameters(h2_reads)
-        het_params = HeterozygousParameters(
-            mean_h1=h1_hom.mean,
-            mean_h2=h2_hom.mean,
-            unit_var=(h1_hom.unit_var + h2_hom.unit_var) / 2,
-            mean_h1_ci_low=h1_hom.mean_ci_low,
-            mean_h1_ci_high=h1_hom.mean_ci_high,
-            mean_h2_ci_low=h2_hom.mean_ci_low,
-            mean_h2_ci_high=h2_hom.mean_ci_high,
+    if backup_split_made:
+        logger.debug(
+            "Equal-length sequence split test: split detected "
+            f"(p={backup_summary_df['backup_test_p_value'].iloc[0]:.4g}, not significant — consistent with 50/50): "
+            f"kmer_h1={backup_summary_df['backup_test_kmer_h1'].iloc[0]}, "
+            f"kmer_h2={backup_summary_df['backup_test_kmer_h2'].iloc[0]}",
         )
 
-    return grouped_read_calls, backup_outliers, het_params, backup_summary_df
+    return grouped_read_calls, backup_outliers, backup_summary_df
+
+
+def _estimate_final_parameters(grouped_read_calls: list[ReadCall]) -> dict[Haplotype, HomozygousParameters]:
+    """Estimate final parameters using the homozygous model on each group.
+
+    For heterozygous loci (H1 and H2 reads exist): runs the homozygous model
+    independently on each group. The shared unit_var in HeterozygousParameters
+    is the average of the two per-group unit_vars.
+
+    For homozygous loci: returns NaN het_params and the supplied hom_params unchanged.
+
+    This is the single source of truth for final parameter estimation and is
+    called at the end of run_haplotyping() regardless of the path taken
+    (length-based split, sequence-based split, or homozygous call).
+    """
+    res = {}
+
+    # For each haplotype, estimate a homozygous model independently
+    for h in [Haplotype.H1, Haplotype.H2, Haplotype.HOM]:
+        reads = [r for r in grouped_read_calls if r.haplotype == h]
+        if not reads:
+            dim = len(grouped_read_calls[0].locus.satellites) if grouped_read_calls else 1
+            res[h] = _make_empty_hom_par_estimate(dim=dim)
+        else:
+            res[h] = estimate_homozygous_parameters(reads)
+
+    return res
 
 
 def _make_empty_backup_summary(run: bool) -> pd.DataFrame:
@@ -560,7 +581,27 @@ def summarize_test_statistics(
     )
 
 
-def summarize_parameter_estimates(
+def summarize_final_parameter_estimates(
+    params: dict[Haplotype, HomozygousParameters],
+) -> pd.DataFrame:
+    # Gather results
+    result_data = []
+    for h, par in params.items():
+        result_data.append(
+            {
+                "haplotype": h.value,
+                "mean": par.mean,
+                "mean_lower": par.mean_ci_low,
+                "mean_upper": par.mean_ci_high,
+                "unit_var": par.unit_var,
+                "idx": list(range(len(par.mean))),
+            },
+        )
+
+    return pd.concat([pd.DataFrame(data) for data in result_data])
+
+
+def summarize_test_parameter_estimates(
     het_params: HeterozygousParameters,
     hom_params: HomozygousParameters,
 ) -> pd.DataFrame:

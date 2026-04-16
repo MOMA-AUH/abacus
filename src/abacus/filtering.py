@@ -88,9 +88,7 @@ def mark_qc_outliers(read_calls: list[ReadCall]) -> None:
             rc.add_qc_filter_reason("outlier_error_rate")
 
 
-def detect_length_outliers(
-    grouped_read_calls: list[ReadCall],
-) -> tuple[list[ReadCall], list[ReadCall]]:
+def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]:
     """Per-haplotype length outlier detection after first round of haplotyping.
 
     For each haplotype group (h1, h2, hom), computes the median total base pair count
@@ -154,7 +152,7 @@ def detect_length_outliers(
         clean.extend(spanning)
         clean.extend(non_spanning)
 
-    return clean, length_outliers
+    return length_outliers
 
 
 def compute_robust_thresholds(x: list[float]) -> tuple[float, float]:

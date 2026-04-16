@@ -125,7 +125,7 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
 
     # Haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
     t0 = time.perf_counter()
-    grouped_read_calls, haplotyping_outliers, het_params, hom_params, test_summary_res_df = run_haplotyping(
+    grouped_read_calls, haplotyping_outliers, het_params, hom_params, final_params, test_summary_res_df = run_haplotyping(
         read_calls=good_read_calls,
         ploidy=ploidy,
     )
@@ -136,7 +136,8 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
     removed_read_calls.extend(haplotyping_outliers)
     locus_is_het = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2] if grouped_read_calls else False
 
-    parameter_summary_df = summarize_parameter_estimates(het_params, hom_params)
+    final_parameter_summary_df = summarize_final_parameter_estimates(final_params)
+    test_parameter_summary_df = summarize_test_parameter_estimates(het_params, hom_params)
 
     # Create raw consensus for each haplotype
     t0 = time.perf_counter()
@@ -173,7 +174,8 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
     ]
     satellite_df = pd.concat(satellite_df_list)
     haplotyping_df = haplotyping_df.merge(satellite_df, on="idx", how="left")
-    parameter_summary_df = parameter_summary_df.merge(satellite_df, on="idx", how="left")
+    final_parameter_summary_df = final_parameter_summary_df.merge(satellite_df, on="idx", how="left")
+    test_parameter_summary_df = test_parameter_summary_df.merge(satellite_df, on="idx", how="left")
 
     logger.debug(f"[TIMING] {locus.id} TOTAL: {time.perf_counter() - locus_t0:.3f}s")
     _locus_context["id"] = ""
@@ -188,7 +190,8 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         "final_consensus_calls": final_consensus_calls,
         "haplotyping_df": haplotyping_df,
         "test_summary_res_df": test_summary_res_df,
-        "parameter_summary_df": parameter_summary_df,
+        "final_parameter_summary_df": final_parameter_summary_df,
+        "test_parameter_summary_df": test_parameter_summary_df,
     }
 
 
@@ -591,7 +594,8 @@ def abacus(
     all_consensus_calls: list[ConsensusCall] = []
     all_haplotyping_df: list[pd.DataFrame] = []
     all_summaries_df: list[pd.DataFrame] = []
-    all_par_summaries_df: list[pd.DataFrame] = []
+    all_final_param_summaries_df: list[pd.DataFrame] = []
+    all_test_param_summaries_df: list[pd.DataFrame] = []
 
     for result in results:
         locus_id = result["locus_id"]
@@ -603,7 +607,8 @@ def abacus(
         all_consensus_calls.extend(result["final_consensus_calls"])
         all_haplotyping_df.append(result["haplotyping_df"])
         all_summaries_df.append(result["test_summary_res_df"])
-        all_par_summaries_df.append(result["parameter_summary_df"])
+        all_final_param_summaries_df.append(result["final_parameter_summary_df"])
+        all_test_param_summaries_df.append(result["test_parameter_summary_df"])
 
     # Create output directory
     tmp_dir = report.parent / f"tmp_abacus_{sample_id}"
@@ -616,12 +621,15 @@ def abacus(
 
     haplotypes_csv = tmp_dir / "haplotypes.csv"
     summary_csv = tmp_dir / "summary.csv"
-    par_summary_csv = tmp_dir / "par_summary.csv"
+    final_param_summary_csv = tmp_dir / "final_parameter_summary.csv"
+    test_params_summary_csv = tmp_dir / "test_parameter_summary.csv"
 
     with Path.open(reads_csv, "w") as f:
         pd.DataFrame([r.to_dict() for r in all_read_calls]).to_csv(f, index=False)
     with Path.open(filtered_reads_csv, "w") as f:
         pd.DataFrame([r.to_dict() for r in all_filtered_reads]).to_csv(f, index=False)
+    with Path.open(final_param_summary_csv, "w") as f:
+        pd.concat(all_final_param_summaries_df).to_csv(f, index=False)
     with Path.open(consensus_csv, "w") as f:
         pd.DataFrame([c.to_dict() for c in all_consensus_calls]).to_csv(f, index=False)
 
@@ -629,8 +637,8 @@ def abacus(
         pd.concat(all_haplotyping_df).to_csv(f, index=False)
     with Path.open(summary_csv, "w") as f:
         pd.concat(all_summaries_df).to_csv(f, index=False)
-    with Path.open(par_summary_csv, "w") as f:
-        pd.concat(all_par_summaries_df).to_csv(f, index=False)
+    with Path.open(test_params_summary_csv, "w") as f:
+        pd.concat(all_test_param_summaries_df).to_csv(f, index=False)
 
     # Write VCF output
     write_vcf(
@@ -666,7 +674,8 @@ def abacus(
                             consensus_csv = '{consensus_csv}', \
                             clustering_summary_csv = '{haplotypes_csv}', \
                             test_summary_csv = '{summary_csv}', \
-                            par_summary_csv = '{par_summary_csv}', \
+                            final_param_summary_csv = '{final_param_summary_csv}', \
+                            test_param_summary_csv = '{test_params_summary_csv}', \
                             min_mean_str_quality = {config.min_mean_str_quality}, \
                             min_q10_str_quality = {config.min_q10_str_quality}, \
                             max_error_rate = {config.max_error_rate}, \
