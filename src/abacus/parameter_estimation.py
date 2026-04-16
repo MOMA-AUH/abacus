@@ -67,7 +67,7 @@ def discrete_multivariate_normal_logpdf(x: np.ndarray, mean: np.ndarray, unit_va
         logpdf_i = logcdf_upper + np.log1p(-np.exp(diff))
 
         # Make sure logpdf_i is not -Inf
-        logpdf_i = np.where(logpdf_i == -np.inf, -1000, logpdf_i)
+        logpdf_i = np.where(logpdf_i == -np.inf, -1e100, logpdf_i)
 
         # Add to logpdf
         logpdf += logpdf_i
@@ -229,7 +229,7 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
             mean_h2_ci_high=np.full_like(mean_h2, np.nan),
         )
 
-    # If any flanking reads are longer than the median spanning read, add them to the counts
+    # If any flanking reads are longer than the max spanning read, add them to the counts
     max_spanning_counts = np.max(spanning_counts, axis=0)
     long_flanking_reads = np.array([x for x in flanking_counts if any(x > max_spanning_counts)])
 
@@ -287,9 +287,11 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     # Calculate robust variance
     unit_var_h1 = robust_sd_h1**2 / (robust_mean_h1 + 1e-5)
     unit_var_h2 = robust_sd_h2**2 / (robust_mean_h2 + 1e-5)
-    min_unit_var = np.minimum(unit_var_h1, unit_var_h2)
 
-    unit_var = np.average(np.array([unit_var_h1, unit_var_h2, min_unit_var]), axis=0)
+    # Use the larger variance of the two groups
+    unit_var = np.maximum(unit_var_h1, unit_var_h2)
+
+    # Set minimum variance to prevent zero variance which causes issues with likelihood calculations
     unit_var = np.maximum(unit_var, config.min_var)
 
     # Make sure mean is at least 0.1
