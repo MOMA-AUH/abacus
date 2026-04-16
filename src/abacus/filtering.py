@@ -125,16 +125,30 @@ def detect_length_outliers(
             upper_tol = med * (1.0 + tolerance)
 
             candidates = [
-                (rc, length)
-                for rc, length in zip(spanning, lengths)
+                (candidate, length)
+                for candidate, length in zip(spanning, lengths)
                 if (length < lower_robust or length > upper_robust) and (length < lower_tol or length > upper_tol)
             ]
 
             if candidates:
-                worst_rc, _ = max(candidates, key=lambda x: abs(x[1] - med))
-                worst_rc.add_outlier_reason("outlier_length")
-                length_outliers.append(worst_rc)
-                spanning.remove(worst_rc)
+                worst_candidate, _ = max(candidates, key=lambda x: abs(x[1] - med))
+                worst_candidate.add_outlier_reason("outlier_length")
+                length_outliers.append(worst_candidate)
+                spanning.remove(worst_candidate)
+
+            # Flanking reads are expected to be shorter than spanning reads (partial coverage),
+            # so short flanking reads are fine. But a flanking read that is longer than the
+            # spanning distribution upper bound is a true outlier — remove it.
+            flanking_lengths = [float(len(rc.alignment.str_sequence)) for rc in non_spanning]
+            long_flanking_candidates = [
+                (rc, length) for rc, length in zip(non_spanning, flanking_lengths, strict=False) if length > upper_robust and length > upper_tol
+            ]
+
+            if long_flanking_candidates:
+                worst_flanking_candidate, _ = max(long_flanking_candidates, key=lambda x: abs(x[1] - med))
+                worst_flanking_candidate.add_outlier_reason("outlier_length")
+                length_outliers.append(worst_flanking_candidate)
+                non_spanning.remove(worst_flanking_candidate)
 
         # Spanning before non-spanning — preserves the order emitted by group_read_calls
         clean.extend(spanning)
