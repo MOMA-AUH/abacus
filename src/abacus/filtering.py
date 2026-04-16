@@ -24,12 +24,12 @@ def filter_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[
             good_read_calls.remove(rc)
 
     # Step 2: Check if enough read calls are left for outlier detection
-    if len(good_read_calls) < config.min_n_outlier_detection:
+    if len(good_read_calls) < config.min_n_qc_filtering:
         # If not, return all remaining read calls as good read calls
         return good_read_calls, outlier_read_calls
 
     # Step 3: Find outliers
-    mark_outliers(good_read_calls)
+    mark_qc_outliers(good_read_calls)
     for rc in good_read_calls.copy():
         # Check if read call is an outlier
         if rc.outlier_reasons:
@@ -58,7 +58,7 @@ def qc_check(rc: ReadCall) -> None:
         rc.add_qc_filter_reason("filtered_high_str_ref_divergence")
 
 
-def mark_outliers(read_calls: list[ReadCall]) -> None:
+def mark_qc_outliers(read_calls: list[ReadCall]) -> None:
     if not read_calls:
         return
 
@@ -117,7 +117,7 @@ def detect_length_outliers(
 
         # Remove at most one outlier per haplotype per call; the caller re-estimates and
         # re-groups before calling again, mirroring the singleton removal loop
-        if len(spanning) > config.min_n_outlier_detection:
+        if len(spanning) > config.min_n_length_outlier_detection:
             lengths = [float(len(rc.alignment.str_sequence)) for rc in spanning]
             med = float(median(lengths))
             lower_robust, upper_robust = compute_robust_thresholds(lengths)

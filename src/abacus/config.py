@@ -15,7 +15,8 @@ class Config:
     trim_window_size: int = 10
     max_trim: int = 50
 
-    # Filtering parameters
+    # QC filtering parameters
+    min_n_qc_filtering: int = 10
     min_mean_str_quality: int = 20
     tol_mean_str_quality: int = 30
     min_q10_str_quality: int = 15
@@ -24,8 +25,8 @@ class Config:
     tol_error_rate: float = 0.005
     max_ref_divergence: float = 0.34
 
-    # Outlier detection parameters
-    min_n_outlier_detection: int = 10
+    # Length outlier detection parameters
+    min_n_length_outlier_detection: int = 5
     tol_length_outlier_pct: float = 0.10  # tolerance in % of median; reads within this range are always kept
 
     # Output parameters

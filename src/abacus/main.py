@@ -283,7 +283,7 @@ def abacus(
         list[str] | None,
         typer.Option(
             "--loci-subset",
-            help="Subset of loci to process. If not provided, all loci will be processed. Use multiple times to specify multiple loci.",
+            help="Loci to process (repeatable). Defaults to all loci in the catalog.",
             rich_help_panel=OPTIONS,
         ),
     ] = None,
@@ -314,7 +314,7 @@ def abacus(
         bool,
         typer.Option(
             "--keep-temp-files",
-            help="Keep temporary files",
+            help="Keep temporary files after report generation",
             rich_help_panel=OPTIONS,
         ),
     ] = False,
@@ -322,7 +322,7 @@ def abacus(
         bool,
         typer.Option(
             "--add-consensus-to-vcf",
-            help="Add consensus calls to VCF file",
+            help="Include consensus sequence in VCF output",
             rich_help_panel=OPTIONS,
         ),
     ] = config.add_consensus_to_vcf,
@@ -330,10 +330,28 @@ def abacus(
         bool,
         typer.Option(
             "--add-contracted-consensus-to-vcf",
-            help="Add contracted consensus calls to VCF file",
+            help="Include contracted consensus sequence in VCF output",
             rich_help_panel=OPTIONS,
         ),
     ] = config.add_contracted_consensus_to_vcf,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-V",
+            help="Enable verbose/debug logging",
+            rich_help_panel=OPTIONS,
+        ),
+    ] = False,
+    threads: Annotated[
+        int,
+        typer.Option(
+            "--threads",
+            "-t",
+            help="Number of parallel worker processes",
+            rich_help_panel=OPTIONS,
+        ),
+    ] = 1,
     # QC
     min_mean_str_quality: Annotated[
         int,
@@ -391,19 +409,27 @@ def abacus(
             rich_help_panel=QC_OPTIONS,
         ),
     ] = config.max_ref_divergence,
-    min_n_outlier_detection: Annotated[
+    min_n_qc_filtering: Annotated[
         int,
         typer.Option(
-            "--min-n-outlier-detection",
-            help="Minimum number of read calls to perform outlier detection",
+            "--min-n-qc-filtering",
+            help="Minimum number of read calls required to run the statistical QC filtering step",
             rich_help_panel=QC_OPTIONS,
         ),
-    ] = config.min_n_outlier_detection,
+    ] = config.min_n_qc_filtering,
+    min_n_length_outlier_detection: Annotated[
+        int,
+        typer.Option(
+            "--min-n-length-outlier-detection",
+            help="Minimum number of spanning reads per haplotype group to perform length outlier detection",
+            rich_help_panel=QC_OPTIONS,
+        ),
+    ] = config.min_n_length_outlier_detection,
     tol_length_outlier_pct: Annotated[
         float,
         typer.Option(
             "--length-outlier-tolerance",
-            help="Tolerance in % of median STR base-pair length; reads within this range around the haplotype median are always kept from length outlier removal",
+            help="Reads within this % of the haplotype median length are always retained during outlier removal",
             rich_help_panel=QC_OPTIONS,
         ),
     ] = config.tol_length_outlier_pct,
@@ -456,11 +482,11 @@ def abacus(
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.min_haplotyping_depth,
-    heterozygozity_alpha: Annotated[
+    heterozygosity_alpha: Annotated[
         float,
         typer.Option(
-            "--heterozygozity-alpha",
-            help="Sensitivity cutoff for heterozygosity test. This test focuses on difference in length between haplotypes.",
+            "--heterozygosity-alpha",
+            help="Significance threshold for the length-based heterozygosity test",
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.het_alpha,
@@ -468,7 +494,7 @@ def abacus(
         float,
         typer.Option(
             "--equal-length-alpha",
-            help="Sensitivity cutoff for the equal-length sequence split test. This backup test detects heterozygosity via sequence differences when haplotype lengths are equal.",
+            help="Significance threshold for the sequence-based heterozygosity test (used when haplotypes have equal length)",
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.equal_length_alpha,
@@ -480,24 +506,6 @@ def abacus(
         is_eager=True,
         help="Show version and exit.",
     ),
-    verbose: Annotated[
-        bool,
-        typer.Option(
-            "--verbose",
-            "-V",
-            help="Print debug timing info for each processing step",
-            rich_help_panel=OPTIONS,
-        ),
-    ] = False,
-    threads: Annotated[
-        int,
-        typer.Option(
-            "--threads",
-            "-t",
-            help="Number of parallel worker processes (default: 1)",
-            rich_help_panel=OPTIONS,
-        ),
-    ] = 1,
 ) -> None:
 
     # Setup logging to file
@@ -520,7 +528,7 @@ def abacus(
     config.trim_window_size = trim_window_size
     config.max_trim = max_trim
     config.min_haplotyping_depth = min_haplotyping_depth
-    config.het_alpha = heterozygozity_alpha
+    config.het_alpha = heterozygosity_alpha
     config.equal_length_alpha = equal_length_alpha
 
     # QC
@@ -532,7 +540,8 @@ def abacus(
     config.tol_error_rate = tol_error_rate
     config.max_ref_divergence = max_ref_divergence
 
-    config.min_n_outlier_detection = min_n_outlier_detection
+    config.min_n_qc_filtering = min_n_qc_filtering
+    config.min_n_length_outlier_detection = min_n_length_outlier_detection
     config.tol_length_outlier_pct = tol_length_outlier_pct
 
     # VCF options
