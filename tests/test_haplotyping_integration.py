@@ -12,6 +12,7 @@ from abacus.graph import (
 )
 from abacus.haplotyping import run_haplotyping
 from abacus.locus import Location, Locus, Satellite
+from abacus.utils import Haplotype
 
 
 def create_random_anchor() -> str:
@@ -543,6 +544,71 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 13: CNBP",
         ),
         pytest.param(
+            ["GCN"],
+            ["", ""],
+            [
+                # Haplotype 1
+                *["GCC" * 10] * 24,
+                # Haplotype 2
+                *["GCC" * 13] * 3,
+                *["GCC" * 14] * 35,
+                # Outlier
+                *["GCC" * 1] * 1,
+            ],
+            [],
+            [],
+            {"h1": 24, "h2": 38, "outlier": 1},
+            {"h1": [10.0], "h2": [14.0]},
+            id="Case 14: PABPN1 - Outlier should not affect haplotype grouping (issue #18).",
+        ),
+        pytest.param(
+            ["CTG"],
+            ["", ""],
+            [
+                # Haplotype 1
+                *["CTG" * 19] * 12,
+                # Haplotype 2
+                *["CTG" * 67] * 9,
+                *["CTG" * 68] * 4,
+            ],
+            [],
+            [
+                # Outlier
+                *["CTG" * 81] * 1,
+            ],
+            {"h1": 12, "h2": 13, "outlier": 1},
+            {"h1": [19.0], "h2": [67.0]},
+            id="Case 15: ATXN3 - Flanking outlier should be separated from H2",
+        ),
+        pytest.param(
+            ["GAA"],
+            ["", ""],
+            [
+                # Haplotype 1
+                *["GAA" * 275] * 1,
+                *["GAA" * 276] * 1,
+                *["GAA" * 277] * 2,
+                *["GAA" * 278] * 3,
+                *["GAA" * 279] * 5,
+                *["GAA" * 280] * 3,
+                *["GAA" * 281] * 2,
+                *["GAA" * 282] * 1,
+                # Haplotype 2
+                *["GAAGGA" * 137] * 1,
+                *["GAAGGA" * 138] * 1,
+                *["GAAGGA" * 138] * 2,
+                *["GAAGGA" * 139] * 3,
+                *["GAAGGA" * 139] * 5,
+                *["GAAGGA" * 140] * 3,
+                *["GAAGGA" * 140] * 2,
+            ],
+            [],
+            [],
+            {"h1": 18, "h2": 17},
+            {"h1": [279.0], "h2": [278.0]},
+            id="Case 16: FGF14 - Same varying length, differing motif",
+        ),
+        pytest.param(
             ["GGCCCC"],
             ["", ""],
             [
@@ -560,26 +626,66 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ],
             [],
             {"h1": 16, "h2": 5},
-            {"h1": [12.0], "h2": [958.0, 2349.0]},
-            id="Case 14: C9ORF72",
+            {"h1": [12.0], "h2": None},
+            id="Case 17: C9ORF72 - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
         pytest.param(
-            ["GCN"],
+            ["CAG"],
             ["", ""],
             [
-                # Haplotype 1
-                *["GCC" * 10] * 24,
-                # Haplotype 2
-                *["GCC" * 13] * 3,
-                *["GCC" * 14] * 35,
-                # Outlier
-                *["GCC" * 1] * 1,
+                # Haplotype 1 - normal allele
+                *["CAG" * 5] * 14,
+                # Haplotype 2 - expanded allele (DM1, somatic mosaicism)
+                "CAG" * 1421,
+                "CAG" * 1526,
+                "CAG" * 1575,
+                "CAG" * 1891,
+                "CAG" * 1932,
+                "CAG" * 1964,
+                "CAG" * 1971,
+                "CAG" * 2072,
+                "CAG" * 2168,
+                # Outliers from somatic mosaicism
+                "CAG" * 935,
+                "CAG" * 961,
+                "CAG" * 2541,
+                "CAG" * 3133,
+            ],
+            [],
+            [
+                # Haplotype 2 - right flanking
+                "CAG" * 1066,
+                "CAG" * 664,
+                "CAG" * 378,
+            ],
+            {"h1": 14, "h2": 12, "outlier": 4},
+            {"h1": [5.0], "h2": [1826.0]},
+            id="Case 18: DMPK - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
+        ),
+        pytest.param(
+            ["CGG"],
+            ["", ""],
+            [
+                # Haplotype 1 - normal allele
+                "CGG" * 30,
+                *["CGG" * 31] * 2,
+                *["CGG" * 32] * 10,
+                "CGG" * 33,
+                # Haplotype 2 - full mutation (somatic mosaicism)
+                "CGG" * 923,
+                "CGG" * 933,
+                "CGG" * 951,
+                "CGG" * 965,
+                "CGG" * 978,
+                # Outliers from somatic mosaicism
+                "CGG" * 201,
+                "CGG" * 205,
             ],
             [],
             [],
-            {"h1": 24, "h2": 38, "outlier": 1},
-            {"h1": [10.0], "h2": [14.0]},
-            id="Case 15: PABPN1 issue (#18)",
+            {"h1": 14, "h2": 5, "outlier": 2},
+            {"h1": [32.0], "h2": [950.0]},
+            id="Case 19: FMR1 - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
     ],
 )
@@ -602,7 +708,7 @@ def test_haplotyping_integration(
     )
 
     read_calls, _ = get_read_calls(reads, locus)
-    grouped_reads, outlier_reads, heterozygous_parameters, homozygous_parameters, _ = run_haplotyping(read_calls, ploidy=2)
+    grouped_reads, outlier_reads, _, _, final_params, _ = run_haplotyping(read_calls, ploidy=2)
 
     group_counts: dict[str, int] = {}
     for read in grouped_reads + outlier_reads:
@@ -615,15 +721,19 @@ def test_haplotyping_integration(
         assert read_call is not None, f"Read call for spanning_{i} not found"
         assert seq == read_call.alignment.str_sequence, f"Expected sequence in read {read_call.alignment.name} was {seq}, got {read_call.obs_kmer_string}"
 
+    # Check value of means if expected_means is provided
     if expected_means is not None:
-        if "h1" in expected_means and "h2" in expected_means:
-            assert heterozygous_parameters.mean_h1.tolist() == expected_means["h1"], (
-                f"Expected h1 mean {expected_means['h1']}, got {heterozygous_parameters.mean_h1[0]}"
+        if "h1" in expected_means and expected_means["h1"] is not None:
+            assert final_params[Haplotype.H1].mean.tolist() == expected_means["h1"], (
+                f"Expected h1 mean {expected_means['h1']}, got {final_params[Haplotype.H1].mean[0]}"
             )
-            assert heterozygous_parameters.mean_h2.tolist() == expected_means["h2"], (
-                f"Expected h2 mean {expected_means['h2']}, got {heterozygous_parameters.mean_h2[0]}"
+
+        if "h2" in expected_means and expected_means["h2"] is not None:
+            assert final_params[Haplotype.H2].mean.tolist() == expected_means["h2"], (
+                f"Expected h2 mean {expected_means['h2']}, got {final_params[Haplotype.H2].mean[0]}"
             )
-        if "hom" in expected_means:
-            assert homozygous_parameters.mean.tolist() == expected_means["hom"], (
-                f"Expected homozygous mean {expected_means['hom']}, got {homozygous_parameters.mean[0]}"
+
+        if "hom" in expected_means and expected_means["hom"] is not None:
+            assert final_params[Haplotype.HOM].mean.tolist() == expected_means["hom"], (
+                f"Expected homozygous mean {expected_means['hom']}, got {final_params[Haplotype.HOM].mean[0]}"
             )
