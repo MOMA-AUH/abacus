@@ -328,6 +328,7 @@ def update_flanking_labels_based_on_consensus(
 
         # Find closest consensus and use this as haplotype
         # Initialize
+        current_haplotype = read_call.haplotype
         closest_consensus = Haplotype.NONE
         dist_to_closest = np.inf
         for haplotype in unique_haplotypes:
@@ -340,8 +341,8 @@ def update_flanking_labels_based_on_consensus(
                 consensus_read_calls=haplotype_consensus_read_calls,
             )
 
-            # Check if this is the closest consensus
-            if dist_to_consensus < dist_to_closest:
+            # Check if this is the closest consensus (or tied for closest, in which case prefer current haplotype to avoid unnecessary label changes)
+            if dist_to_consensus < dist_to_closest or (dist_to_closest == dist_to_consensus and haplotype == current_haplotype):
                 dist_to_closest = dist_to_consensus
                 closest_consensus = haplotype
 
