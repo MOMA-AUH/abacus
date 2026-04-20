@@ -15,7 +15,8 @@ params:
   filtered_reads_csv: ""
   clustering_summary_csv: ""
   test_summary_csv: ""
-  par_summary_csv: ""
+  test_param_summary_csv: ""
+  final_param_summary_csv: ""
   min_mean_str_quality: 20
   min_q10_str_quality: 15
   max_error_rate: 0.01
@@ -54,7 +55,8 @@ filtered_reads_csv <- params$filtered_reads_csv
 consensus_csv <- params$consensus_csv
 clustering_summary_csv <- params$clustering_summary_csv
 test_summary_csv <- params$test_summary_csv
-par_summary_csv <- params$par_summary_csv
+test_param_summary_csv <- params$test_param_summary_csv
+final_param_summary_csv <- params$final_param_summary_csv
 ```
 
 ```{r Test exmaple data, eval=FALSE}
@@ -77,7 +79,8 @@ filtered_reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/ab
 consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/consensus.csv"
 clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/haplotypes.csv"
 test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/summary.csv"
-par_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/par_summary.csv"
+test_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/test_parameter_summary.csv"
+final_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/final_parameter_summary.csv"
 
 
 reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/reads.csv"
@@ -85,14 +88,16 @@ filtered_reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/ab
 consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/consensus.csv"
 clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/haplotypes.csv"
 test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/summary.csv"
-par_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/par_summary.csv"
+test_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/test_parameter_summary.csv"
+final_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/final_parameter_summary.csv"
 
 reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//reads.csv"
 filtered_reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//filtered_reads.csv"
 consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//consensus.csv"
 clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//haplotypes.csv"
 test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//summary.csv"
-par_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//par_summary.csv"
+test_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//test_parameter_summary.csv"
+final_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//final_parameter_summary.csv"
 ```
 
 ```{r Load data}
@@ -101,7 +106,8 @@ filtered_reads_df <- read_csv(filtered_reads_csv)
 consensus_df <- read_csv(consensus_csv)
 clustering_summary_df <- read_csv(clustering_summary_csv)
 test_summary_df <- read_csv(test_summary_csv)
-all_par_summary_df <- read_csv(par_summary_csv)
+all_test_par_summary_df <- read_csv(test_param_summary_csv)
+all_final_par_summary_df <- read_csv(final_param_summary_csv)
 ```
 
 ```{r Constants}
@@ -493,7 +499,7 @@ generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
     mutate(
       count = count %/% BIN_SZ * BIN_SZ
     ) %>%
-    group_by(alignment_type_txt, count) %>%
+    group_by(haplotype, alignment_type_txt, count) %>%
     summarise(n = sum(n), .groups = "drop")
 
   length_plot <- ggplot(counts_df) +
@@ -502,18 +508,20 @@ generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
       aes(
         x = count,
         y = n,
-        fill = alignment_type_txt
+        fill = haplotype,
+        alpha = alignment_type_txt
       ),
       width = BIN_SZ
     ) +
     scale_x_continuous(breaks = function(x) unique(round(sort(pretty(x))))) +
     scale_y_continuous(breaks = function(x) unique(round(sort(pretty(x))))) +
-    scale_fill_manual(values = c("Spanning" = "grey30", "Flanking" = "grey70"))
+    scale_fill_manual(values = HAPLOTYPE_COLORS) +
+    scale_alpha_manual(values = c("Spanning" = 1.0, "Flanking" = 0.6))
 
   # Add distributions
   if (nrow(density_df) > 0) {
     # Fix line type
-    haplotype_linetype <- c("hom" = "dashed", "h1" = "solid", "h2" = "solid")
+    haplotype_linetype <- c("hom" = "dashed", "h1" = "solid", "h2" = "dotted")
 
     # Scale density to max count
     if (nrow(density_df) > 0) {
@@ -533,11 +541,11 @@ generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
     length_plot <- length_plot +
       geom_line(
         data = density_df,
-        aes(x = x, y = d, col = haplotype, linetype = haplotype),
+        aes(x = x, y = d, linetype = haplotype),
+        color = "black",
         linewidth = 0.75
       ) +
-      scale_color_manual(values = HAPLOTYPE_COLORS) +
-      scale_linetype_manual(values = haplotype_linetype, guide = "none")
+      scale_linetype_manual(values = haplotype_linetype)
   }
 
   # Add title, labels and legend
@@ -550,8 +558,9 @@ generate_length_plot <- function(counts_df, density_df, satellite, BIN_SZ) {
     ) +
     # Name the legend
     guides(
-      fill = guide_legend(title = "Alignment type"),
-      col = guide_legend(title = "Haplotype")
+      fill = guide_legend(title = "Haplotype"),
+      alpha = guide_legend(title = "Alignment type"),
+      linetype = guide_legend(title = "Haplotype")
     )
 
   return(length_plot)
@@ -586,7 +595,7 @@ data.frame(
 test_df <- test_summary_df %>%
   select(locus_id, is_significant, backup_test_run, backup_test_significant)
 
-signif_par_summary_df <- all_par_summary_df %>%
+signif_par_summary_df <- all_final_par_summary_df %>%
   # Filter on significant estimates
   left_join(test_df, by = join_by(locus_id)) %>%
   mutate(backup_split = backup_test_run & !backup_test_significant) %>%
@@ -653,7 +662,10 @@ for (i in seq_len(nrow(regions))) {
   test_summary_region_df <- test_summary_df %>%
     semi_join(selected_region, by = join_by(locus_id))
 
-  par_summary_region_df <- all_par_summary_df %>%
+  test_par_summary_region_df <- all_test_par_summary_df %>%
+    semi_join(selected_region, by = join_by(locus_id))
+
+  final_par_summary_region_df <- all_final_par_summary_df %>%
     semi_join(selected_region, by = join_by(locus_id))
 
   signif_par_summary_region_df <- signif_par_summary_df %>%
@@ -1130,7 +1142,7 @@ for (i in seq_len(nrow(regions))) {
   cat("### Histogram plots {.tabset .tabset-pills}")
   cat("\n\n")
 
-  cat("A histogram showing the number of occurences of the individual $k$-mers. Is more than one $k$-mer is present in the pattern one histogram is shown for each $k$-mer. QC filtered reads are not shown in the grouped plot.")
+  cat("A histogram showing the number of occurences of the individual $k$-mers. If more than one $k$-mer is present in the pattern one histogram is shown for each $k$-mer. Bars are coloured by haplotype; outlier reads are included and shown in purple. QC filtered reads are not shown in the grouped plot.")
 
   if (no_haplotype_reads) {
     cat("There are no haplotyped reads for this locus.")
@@ -1139,16 +1151,8 @@ for (i in seq_len(nrow(regions))) {
 
 
     # Get parameters
-    em_het_par <- par_summary_region_df %>%
-      filter(haplotype %in% c("h1", "h2")) %>%
-      # Calculate sd
-      mutate(
-        sd = sqrt(unit_var * mean),
-        satellite_idx = idx + 1
-      )
-
-    em_hom_par <- par_summary_region_df %>%
-      filter(haplotype == "hom") %>%
+    final_par <- final_par_summary_region_df %>%
+      filter(haplotype %in% c("h1", "h2", "hom")) %>%
       # Calculate sd
       mutate(
         sd = sqrt(unit_var * mean),
@@ -1157,9 +1161,10 @@ for (i in seq_len(nrow(regions))) {
 
     # Create density data
     density_df <-
-      bind_rows(em_het_par, em_hom_par) %>%
+      final_par %>%
       # Remove NA values
       filter(!is.na(mean)) %>%
+      # Get x values for density plot, from mean - 5*sd to mean + 5*sd with 101 points
       rowwise() %>%
       mutate(
         plot_sd = pmax(sd, 0.2),
@@ -1297,7 +1302,7 @@ for (i in seq_len(nrow(regions))) {
   cat("###### Mean")
   cat("\n\n")
 
-  par_summary_region_df %>%
+  test_par_summary_region_df %>%
     mutate(
       model = if_else(haplotype == "hom", "Homozygote", "Heterozygote")
     ) %>%
@@ -1323,7 +1328,7 @@ for (i in seq_len(nrow(regions))) {
   cat("###### Variance")
   cat("\n\n")
 
-  par_summary_region_df %>%
+  test_par_summary_region_df %>%
     mutate(
       model = if_else(haplotype == "hom", "Homozygote", "Heterozygote")
     ) %>%
