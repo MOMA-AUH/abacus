@@ -291,6 +291,17 @@ def abacus(
             rich_help_panel=OPTIONS,
         ),
     ] = None,
+    loci_subset_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--loci-subset-file",
+            help="Path to a file containing one locus ID per line to process.",
+            rich_help_panel=OPTIONS,
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+        ),
+    ] = None,
     sex: Annotated[
         Sex,
         typer.Option(
@@ -559,12 +570,21 @@ def abacus(
     loci = load_loci_from_json(str_catalog, ref)
 
     # Subset loci if provided
-    if loci_subset:
-        if set(loci_subset).isdisjoint([locus.id for locus in loci]):
-            logger.error("No loci in subset found in STR catalog")
+    if loci_subset or loci_subset_file:
+        # Combine locus IDs from command line and file, ensuring no duplicates
+        selected_loci = list(loci_subset or [])
+        if loci_subset_file:
+            file_loci = {line.strip() for line in loci_subset_file.read_text().splitlines() if line.strip()}
+            selected_loci.extend(file_loci)
+
+        # Check that all loci are in the catalog
+        loci_not_found = set(selected_loci) - {locus.id for locus in loci}
+        if loci_not_found:
+            logger.warning("Some loci in subset not found in STR catalog: %s", ", ".join(loci_not_found))
             raise typer.Exit(code=1)
 
-        loci = [locus for locus in loci if locus.id in loci_subset]
+        # Filter loci
+        loci = [locus for locus in loci if locus.id in selected_loci]
 
     # Process each locus (in parallel if --threads > 1)
     logger.info("Processing loci...")
@@ -655,6 +675,7 @@ def abacus(
     # Render report
     logger.info("Rendering report...")
     report_template = Path(__file__).parent / "scripts" / "report_template.Rmd"
+    logo_path = Path(__file__).parent.parent.parent / "img" / "logo.png"
 
     process = subprocess.run(
         [
@@ -680,7 +701,8 @@ def abacus(
                             min_mean_str_quality = {config.min_mean_str_quality}, \
                             min_q10_str_quality = {config.min_q10_str_quality}, \
                             max_error_rate = {config.max_error_rate}, \
-                            max_ref_divergence = {config.max_ref_divergence} \
+                            max_ref_divergence = {config.max_ref_divergence}, \
+                            logo_path = '{logo_path}' \
                         ) \
                     ) \
                     """,
