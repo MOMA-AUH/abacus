@@ -33,10 +33,6 @@ class HomozygousParameters:
     mean_ci_high: np.ndarray
 
 
-def safe_log(x: np.ndarray | np.float64) -> np.ndarray | np.float64:
-    return np.log(np.maximum(x, 1e-100))
-
-
 def discrete_multivariate_normal_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray) -> np.ndarray:
     # Handle empty arrays
     if not x.size:
@@ -130,67 +126,11 @@ def flanking_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray, is_le
                 norm_const += norm_pdf_at_split * (split_point - 1)
 
             # For x > mean: Use normal distribution
-            if x_id >= split_point:
+            if x[i, d] >= split_point:
                 logpdf[i, d] = discrete_multivariate_normal_logpdf(x_id, m, v)[0] - np.log(norm_const)
             # For x < mean: Use uniform distribution
             else:
                 logpdf[i, d] = np.log(norm_pdf_at_split / norm_const)
-
-    # Sum logpdf over repeat dimensions
-    return np.sum(logpdf, axis=1)
-
-
-def flanking_logpdf_old(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray, is_left_flank: list[bool]) -> np.ndarray:
-    # Handle empty arrays
-    if not x.size:
-        return np.array([])
-
-    # Initialize logpdf as array of same size as x
-    logpdf = np.ones_like(x)
-
-    # Loop through individual reads
-    for i in range(x.shape[0]):
-        # Extract counts for the current read
-        x_i = x[i, :]
-        # Loop through dimensions
-        for d in range(x.shape[1]):
-            is_left = is_left_flank[i]
-
-            # If left flank and this and all following repeats are 0, skip
-            if is_left and all(x_i[d:] == 0):
-                continue
-            # If right flank and this and all preceding repeats are 0, skip
-            if not is_left and all(x_i[: d + 1] == 0):
-                continue
-
-            # Figure out if this is the cut dimension i.e. last dimension with usable count info
-            is_cut_dim = all(x_i[d + 1 :] == 0) if is_left else all(x_i[:d] == 0)
-
-            # Extract mean and variance for the current dimension
-            x_id = np.array([[x[i, d]]])
-            m = np.array([mean[d]])
-            v = np.array([unit_var[d]])
-
-            # If this is NOT the cut dimension, simply use the normal distribution
-            if not is_cut_dim:
-                logpdf[i, d] = discrete_multivariate_normal_logpdf(x_id, m, v)
-                continue
-
-            # If this is the cut dimension, we need to use the uniform distribution
-
-            # Calculate logpdf at mean
-            pdf_m_i = np.exp(discrete_multivariate_normal_logpdf(np.array([m]), m, v)).item()
-
-            # Calculate constants
-            const_norm = 2 / (2 * m * pdf_m_i + 1)
-            const_uniform = 2 * m * pdf_m_i / (2 * m * pdf_m_i + 1)
-
-            # For x > mean: Use normal distribution
-            if x_id > m:
-                logpdf[i, d] = discrete_multivariate_normal_logpdf(x_id, m, v) + np.log(const_norm)
-            # For x < mean: Use uniform distribution
-            else:
-                logpdf[i, d] = np.log(1 / m) + np.log(const_uniform)
 
     # Sum logpdf over repeat dimensions
     return np.sum(logpdf, axis=1)
