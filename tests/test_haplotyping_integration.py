@@ -301,7 +301,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 9, "h2": 7},
             {"h1": [7.0, 3.0], "h2": [7.0, 3.0]},
-            id="Sequence split-HTT-like case with interuption",
+            id="Sequence split-HTT-like case with interruption",
         ),
         # Outlier test cases
         pytest.param(
