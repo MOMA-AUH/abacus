@@ -73,6 +73,12 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
+def show_catalog_callback(value: bool) -> None:
+    if value:
+        typer.echo(_default_catalog_path().read_text(), nl=False)
+        raise typer.Exit()
+
+
 _locus_context: dict[str, str] = {"id": ""}
 
 
@@ -200,12 +206,6 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         "final_parameter_summary_df": final_parameter_summary_df,
         "test_parameter_summary_df": test_parameter_summary_df,
     }
-
-
-@app.command()
-def show_catalog() -> None:
-    """Print the path to the built-in STR catalog."""
-    typer.echo(_default_catalog_path())
 
 
 @app.command(
@@ -533,6 +533,14 @@ def abacus(
         is_flag=True,
         is_eager=True,
         help="Show version and exit.",
+    ),
+    _show_catalog: bool | None = typer.Option(
+        None,
+        "--show-catalog",
+        callback=show_catalog_callback,
+        is_flag=True,
+        is_eager=True,
+        help="Print the built-in STR catalog to stdout and exit.",
     ),
 ) -> None:
 

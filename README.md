@@ -71,7 +71,7 @@ To run Abacus, you need to provide the following arguments:
 - `--sample-id`: The identifier of the sample that you are analyzing.
 - `--sex`: The sex of the sample (default: XX). Use `XX` for female and `XY` for male.
 - `--loci-subset`: A subset of loci to process. Use multiple times to specify multiple loci.
-- `--str-catalog` *(optional)*: Path to a custom STR catalog JSON. Defaults to the built-in abacus catalog. Run `abacus show-catalog` to print the path to the bundled catalog (useful as a starting point for customization).
+- `--str-catalog` *(optional)*: Path to a custom STR catalog JSON. Defaults to the built-in abacus catalog. Run `abacus --show-catalog` to print the built-in catalog to stdout (useful as a starting point for customization).
 
 ### Example 1: Analyze all loci
 ```sh
@@ -98,8 +98,8 @@ abacus \
 
 ### Example 3: Use a custom catalog
 ```sh
-# Copy the built-in catalog to use as a starting point
-cp $(abacus show-catalog) my_catalog.json
+# Save the built-in catalog to use as a starting point
+abacus --show-catalog > my_catalog.json
 
 # Run with a custom catalog
 abacus \
