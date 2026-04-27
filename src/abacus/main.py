@@ -363,6 +363,7 @@ def abacus(
         typer.Option(
             "--threads",
             "-t",
+            min=1,
             help="Number of parallel worker processes",
             rich_help_panel=OPTIONS,
         ),
