@@ -5,6 +5,7 @@ import logging as _logging
 import subprocess
 import time
 from concurrent.futures import ProcessPoolExecutor
+from importlib.resources import files
 from logging.handlers import QueueHandler, QueueListener
 from multiprocessing import Queue as MPQueue
 from pathlib import Path
@@ -52,6 +53,10 @@ OUTPUTS = "Outputs"
 QC_OPTIONS = "Quality Control"
 OPTIONS = "Other Options"
 CONFIGURATION = "Algorithm Configuration"
+
+
+def _default_catalog_path() -> Path:
+    return Path(str(files("abacus").joinpath("str_catalogs/abacus_catalog.json")))
 
 
 # Set up the CLI
@@ -197,6 +202,12 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
     }
 
 
+@app.command()
+def show_catalog() -> None:
+    """Print the path to the built-in STR catalog."""
+    typer.echo(_default_catalog_path())
+
+
 @app.command(
     help="[bold]Abacus[/bold]: A tool for STR genotyping, haplotyping and visualization 🧬",
     no_args_is_help=True,
@@ -223,20 +234,6 @@ def abacus(
             "--ref",
             "-r",
             help="Reference genome FASTA file",
-            rich_help_panel=INPUTS,
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            resolve_path=True,
-        ),
-    ],
-    str_catalog: Annotated[
-        Path,
-        typer.Option(
-            "--str-catalog",
-            "-s",
-            help="STR catalog JSON file",
             rich_help_panel=INPUTS,
             exists=True,
             file_okay=True,
@@ -284,6 +281,20 @@ def abacus(
             rich_help_panel=OPTIONS,
         ),
     ],
+    str_catalog: Annotated[
+        Path | None,
+        typer.Option(
+            "--str-catalog",
+            "-s",
+            help="STR catalog JSON file [default: built-in abacus catalog]",
+            rich_help_panel=INPUTS,
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+        ),
+    ] = None,
     loci_subset: Annotated[
         list[str] | None,
         typer.Option(
@@ -569,6 +580,8 @@ def abacus(
     logger.info(ascii_art)
 
     # Load loci data from JSON
+    if str_catalog is None:
+        str_catalog = _default_catalog_path()
     loci = load_loci_from_json(str_catalog, ref)
 
     # Subset loci if provided

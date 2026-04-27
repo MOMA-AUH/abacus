@@ -66,19 +66,18 @@ To run Abacus, you need to provide the following arguments:
 
 - `--bam`: The path to the BAM or CRAM file that contains aligned reads from the Long-Read Sequencing data.
 - `--ref`: The path to the reference FASTA file that was used to align the reads in the BAM or CRAM file.
-- `--str-catalog`: The path to the STR catalog (JSON) that contains the information about the STR loci that you want to analyze. See the [provided examples](./str_catalogs/) in the repository.
 - `--report`: The path to the HTML file where the analysis results will be saved.
 - `--vcf`: The path to the VCF file where the STR genotyping results will be saved.
 - `--sample-id`: The identifier of the sample that you are analyzing.
 - `--sex`: The sex of the sample (default: XX). Use `XX` for female and `XY` for male.
 - `--loci-subset`: A subset of loci to process. Use multiple times to specify multiple loci.
+- `--str-catalog` *(optional)*: Path to a custom STR catalog JSON. Defaults to the built-in abacus catalog. Run `abacus show-catalog` to print the path to the bundled catalog (useful as a starting point for customization).
 
 ### Example 1: Analyze all loci
 ```sh
 abacus \
     --bam input.bam \
     --ref reference.fa \
-    --str-catalog str_catalog.json \
     --report output.html \
     --vcf output.vcf \
     --sample-id my_sample
@@ -89,13 +88,27 @@ abacus \
 abacus \
     --bam input.bam \
     --ref reference.fa \
-    --str-catalog str_catalog.json \
     --report output.html \
     --vcf output.vcf \
     --sample-id my_sample \
     --sex XY \
     --loci-subset FGF14 \
     --loci-subset RFC1
+```
+
+### Example 3: Use a custom catalog
+```sh
+# Copy the built-in catalog to use as a starting point
+cp $(abacus show-catalog) my_catalog.json
+
+# Run with a custom catalog
+abacus \
+    --bam input.bam \
+    --ref reference.fa \
+    --str-catalog my_catalog.json \
+    --report output.html \
+    --vcf output.vcf \
+    --sample-id my_sample
 ```
 
 ### Configuration parameters

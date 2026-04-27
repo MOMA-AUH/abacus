@@ -34,7 +34,7 @@ dev = ["pytest", "pytest-cov"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-abacus = ["scripts/*.Rmd"]
+abacus = ["scripts/*.Rmd", "str_catalogs/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
