@@ -26,7 +26,7 @@ from abacus.group_summary import calculate_final_group_summaries
 from abacus.haplotyping import run_haplotyping, summarize_final_parameter_estimates, summarize_test_parameter_estimates
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
-from abacus.parameter_estimation import HeterozygousParameters, HomozygousParameters
+from abacus.parameter_estimation import HomozygousParameters
 from abacus.preprocess import get_reads_in_locus
 from abacus.str_vcf import write_vcf
 from abacus.utils import Haplotype, Sex
@@ -187,6 +187,7 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         "unmapped_reads": unmapped_reads,
         "het_params": het_params,
         "hom_params": hom_params,
+        "final_params": final_params,
         "locus_is_het": locus_is_het,
         "final_consensus_calls": final_consensus_calls,
         "haplotyping_df": haplotyping_df,
@@ -608,8 +609,7 @@ def abacus(
             queue_listener.stop()
 
     # Aggregate results from all loci (order preserved by executor.map)
-    het_params_dict: dict[str, HeterozygousParameters] = {}
-    hom_params_dict: dict[str, HomozygousParameters] = {}
+    final_params_dict: dict[str, dict[Haplotype, HomozygousParameters]] = {}
     locus_is_het_dict: dict[str, bool] = {}
     all_read_calls: list[ReadCall] = []
     all_filtered_reads: list[FilteredRead] = []
@@ -621,8 +621,7 @@ def abacus(
 
     for result in results:
         locus_id = result["locus_id"]
-        het_params_dict[locus_id] = result["het_params"]
-        hom_params_dict[locus_id] = result["hom_params"]
+        final_params_dict[locus_id] = result["final_params"]
         locus_is_het_dict[locus_id] = result["locus_is_het"]
         all_read_calls.extend(result["grouped_read_calls"])
         all_filtered_reads.extend(result["unmapped_reads"])
@@ -668,8 +667,7 @@ def abacus(
         consensus_calls=all_consensus_calls,
         reference=ref,
         sample_id=sample_id,
-        het_params_dict=het_params_dict,
-        hom_params_dict=hom_params_dict,
+        final_params_dict=final_params_dict,
         locus_is_het_dict=locus_is_het_dict,
     )
 
