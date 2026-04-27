@@ -94,16 +94,12 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
     For each haplotype group (h1, h2, hom), computes the median total base pair count
     (sum of satellite_count[i] * len(satellite.sequences[0]) for each satellite i)
     and robust Tukey-fence thresholds. Reads outside those bounds AND outside
-    median * (1 ± tolerance_pct/100) are tagged as length outliers (Haplotype.OUTLIER).
+    median * (1 ± tolerance) are tagged as length outliers (Haplotype.OUTLIER).
     """
-    clean: list[ReadCall] = []
     length_outliers: list[ReadCall] = []
     tolerance = config.tol_length_outlier_pct
 
     haplotype_groups = {rc.haplotype for rc in grouped_read_calls if rc.haplotype in (Haplotype.H1, Haplotype.H2, Haplotype.HOM)}
-
-    # Pass through reads with other haplotypes (e.g. OUTLIER-tagged singletons) unchanged
-    clean.extend(rc for rc in grouped_read_calls if rc.haplotype not in haplotype_groups)
 
     for haplotype in haplotype_groups:
         group = [rc for rc in grouped_read_calls if rc.haplotype == haplotype]
@@ -147,10 +143,6 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
                 worst_flanking_candidate.add_outlier_reason("outlier_length")
                 length_outliers.append(worst_flanking_candidate)
                 non_spanning.remove(worst_flanking_candidate)
-
-        # Spanning before non-spanning — preserves the order emitted by group_read_calls
-        clean.extend(spanning)
-        clean.extend(non_spanning)
 
     return length_outliers
 
