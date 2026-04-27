@@ -17,7 +17,7 @@ The haplotyping pipeline proceeds in three stages.
 
 **Stage 1 — Outlier removal (preprocessing)**
 
-Reads are grouped into two clusters (H1 and H2) using a Gaussian mixture model fit to the repeat counts. Two outlier removal steps then clean the read set iteratively; after each removal, model parameters are re-estimated and reads are re-grouped. Note that maximum 1 read can be removed per cluster in each iteration to prevent over-filtering. Both steps are controlled by the `--min-n-outlier-detection` parameter, which sets the minimum number of reads required for outlier detection. If the number of reads in a haplotype group falls below this threshold, no further outlier detection is performed for that group.
+Reads are grouped into two clusters (H1 and H2) using a Gaussian mixture model fit to the repeat counts. Two outlier removal steps then clean the read set iteratively; after each removal, model parameters are re-estimated and reads are re-grouped. Note that maximum 1 read can be removed per cluster in each iteration to prevent over-filtering. Both steps are controlled by the `--min-n-length-outlier-detection` parameter, which sets the minimum number of reads required per haplotype group for length outlier detection. If the number of reads in a haplotype group falls below this threshold, no further outlier detection is performed for that group.
 
 1. **Singleton cluster removal**: Any haplotype cluster that contains exactly one read is treated as an outlier. The singleton read is removed and reads are re-grouped.
 
@@ -25,7 +25,7 @@ Reads are grouped into two clusters (H1 and H2) using a Gaussian mixture model f
 
 **Stage 2 — Length-based heterozygosity test**
 
-A log-likelihood ratio test (LRT) compares a homozygous model (single Gaussian) against a heterozygous model (two Gaussians).If the test is significant (p < `--heterozygozity-alpha`), reads retain their H1/H2 assignments. If not significant, all reads are re-tagged as HOM and Stage 3 is attempted.
+A log-likelihood ratio test (LRT) compares a homozygous model (single Gaussian) against a heterozygous model (two Gaussians).If the test is significant (p < `--heterozygosity-alpha`), reads retain their H1/H2 assignments. If not significant, all reads are re-tagged as HOM and Stage 3 is attempted.
 
 **Stage 3 — Equal-length sequence split test (backup)**
 
@@ -117,11 +117,12 @@ The following configuration parameters allow fine-tuning of the analysis:
 - `--tol-error-rate`: Tolerance for error rate in the STR region. Default: `0.005`.
 - `--max-ref-divergence`: Maximum allowed reference divergence in the STR region. Default: `0.34`.
 - `--length-outlier-tolerance`: Tolerance as a fraction of the haplotype median STR base-pair length. Reads within `median × (1 ± tolerance)` of the haplotype median are always kept, even if they fall outside the Tukey-fence bounds. Default: `0.10` (10%).
-- `--min-n-outlier-detection`: Minimum number of reads required for outlier detection. Default: `10`.
+- `--min-n-qc-filtering`: Minimum number of read calls required to run the statistical QC filtering step. Default: `10`.
+- `--min-n-length-outlier-detection`: Minimum number of spanning reads per haplotype group to perform length outlier detection. Default: `5`.
 
 #### Haplotype Parameters
 - `--min-haplotyping-depth`: Minimum allowed depth for each called haplotype. If the depth is lower, the locus will be called as homozygous. Default: `10`.
-- `--heterozygozity-alpha`: Sensitivity cutoff for the heterozygosity test. This test focuses on differences in length between haplotypes. Default: `0.05`.
+- `--heterozygosity-alpha`: Sensitivity cutoff for the heterozygosity test. This test focuses on differences in length between haplotypes. Default: `0.05`.
 - `--equal-length-alpha`: Sensitivity cutoff for the equal-length sequence split test. This backup test detects heterozygosity via sequence differences when haplotype lengths are equal. Default: `0.05`.
 
 #### Output Options
