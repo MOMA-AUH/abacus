@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "abacus"
-version = "0.0.0"
+version = "2.0.0"
 description = "A tool for analyzing Short Tandem Repeats (STRs) from Long-Read Sequencing data"
 readme = "README.md"
 license = { file = "LICENSE" }
