@@ -5,7 +5,7 @@ from abacus.graph import ReadCall
 from abacus.utils import Haplotype
 
 
-def filter_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:
+def filter_low_qual_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:
     if not read_calls:
         return [], []
 
@@ -16,21 +16,6 @@ def filter_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[
     outlier_read_calls: list[ReadCall] = []
     for rc in good_read_calls.copy():
         qc_check(rc)
-        # Check if read call is an outlier
-        if rc.outlier_reasons:
-            # Add it to the outlier list
-            outlier_read_calls.append(rc)
-            # Remove it from the good read calls
-            good_read_calls.remove(rc)
-
-    # Step 2: Check if enough read calls are left for outlier detection
-    if len(good_read_calls) < config.min_n_qc_filtering:
-        # If not, return all remaining read calls as good read calls
-        return good_read_calls, outlier_read_calls
-
-    # Step 3: Find outliers
-    mark_qc_outliers(good_read_calls)
-    for rc in good_read_calls.copy():
         # Check if read call is an outlier
         if rc.outlier_reasons:
             # Add it to the outlier list
@@ -56,6 +41,36 @@ def qc_check(rc: ReadCall) -> None:
     # Check STR reference divergence
     if rc.alignment.str_ref_divergence > config.max_ref_divergence:
         rc.add_qc_filter_reason("filtered_high_str_ref_divergence")
+
+
+def filter_outlier_qual_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:
+    if not read_calls:
+        return [], []
+
+    # Step 0: Initialize read calls
+    good_read_calls = read_calls.copy()
+    outlier_read_calls: list[ReadCall] = []
+
+    # Do QC outlier detection pr haplotype group
+    for haplotype in (Haplotype.H1, Haplotype.H2, Haplotype.HOM):
+        haplotype_read_calls = [rc for rc in read_calls if rc.haplotype == haplotype]
+
+        # Step 1: Check if enough read calls are left for outlier detection
+        if len(haplotype_read_calls) < config.min_n_qc_filtering:
+            # If not, continue to next haplotype
+            continue
+
+        # Step 2: Find outliers
+        mark_qc_outliers(haplotype_read_calls)
+        for rc in haplotype_read_calls.copy():
+            # Check if read call is an outlier
+            if rc.outlier_reasons:
+                # Add it to the outlier list
+                outlier_read_calls.append(rc)
+                # Remove it from the good read calls
+                good_read_calls.remove(rc)
+
+    return good_read_calls, outlier_read_calls
 
 
 def mark_qc_outliers(read_calls: list[ReadCall]) -> None:

@@ -17,7 +17,7 @@ import typer
 from abacus import __version__
 from abacus.config import config
 from abacus.consensus import ConsensusCall, create_consensus_calls, update_flanking_labels_based_on_consensus
-from abacus.filtering import filter_read_calls
+from abacus.filtering import filter_low_qual_read_calls, filter_outlier_qual_read_calls
 from abacus.graph import (
     FilteredRead,
     ReadCall,
@@ -109,6 +109,9 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
     locus_t0 = time.perf_counter()
     logger.info("Locus: %s  |  %s  |  %s:%d-%d", locus.id, locus.structure, locus.location.chrom, locus.location.start, locus.location.end)
 
+    # Initialize list to keep track of removed read calls for final summary
+    all_removed_read_calls: list[ReadCall] = []
+
     # Get reads in locus
     t0 = time.perf_counter()
     reads = get_reads_in_locus(bam, locus, ref)
@@ -130,22 +133,41 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
     read_calls, unmapped_reads = get_read_calls(reads, locus)
     logger.debug(f"[TIMING] {locus.id} get_read_calls: {time.perf_counter() - t0:.3f}s  ({len(read_calls)} calls, {len(unmapped_reads)} unmapped)")
 
-    # Filter read calls
+    # Prefilter low quality read calls
     t0 = time.perf_counter()
-    good_read_calls, removed_read_calls = filter_read_calls(read_calls=read_calls)
-    logger.debug(f"[TIMING] {locus.id} filter_read_calls: {time.perf_counter() - t0:.3f}s  ({len(good_read_calls)} kept, {len(removed_read_calls)} removed)")
+    good_read_calls, low_quality_read_calls = filter_low_qual_read_calls(read_calls=read_calls)
+    all_removed_read_calls.extend(low_quality_read_calls)
+    logger.debug(
+        f"[TIMING] {locus.id} filter_low_qual_read_calls: {time.perf_counter() - t0:.3f}s  ({len(good_read_calls)} kept, {len(low_quality_read_calls)} removed)",
+    )
 
-    # Haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
+    # First round haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
+    t0 = time.perf_counter()
+    initial_grouped_read_calls, initial_haplotyping_outliers, _, _, _, _ = run_haplotyping(
+        read_calls=good_read_calls,
+        ploidy=ploidy,
+    )
+    all_removed_read_calls.extend(initial_haplotyping_outliers)
+    logger.debug(
+        f"[TIMING] {locus.id} run_haplotyping: {time.perf_counter() - t0:.3f}s  ({len(initial_grouped_read_calls)} grouped, {len(initial_haplotyping_outliers)} removed)",
+    )
+
+    # Filter QC outliers per haplotype group
+    good_read_calls, outlier_quality_read_calls = filter_outlier_qual_read_calls(read_calls=initial_grouped_read_calls)
+    all_removed_read_calls.extend(outlier_quality_read_calls)
+
+    # Second round haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
     t0 = time.perf_counter()
     grouped_read_calls, haplotyping_outliers, het_params, hom_params, final_params, test_summary_res_df = run_haplotyping(
         read_calls=good_read_calls,
         ploidy=ploidy,
     )
+    all_removed_read_calls.extend(haplotyping_outliers)
     logger.debug(
         f"[TIMING] {locus.id} run_haplotyping: {time.perf_counter() - t0:.3f}s  ({len(grouped_read_calls)} grouped, {len(haplotyping_outliers)} removed)",
     )
 
-    removed_read_calls.extend(haplotyping_outliers)
+    # TODO: Make this nicer
     locus_is_het = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2] if grouped_read_calls else False
 
     final_parameter_summary_df = summarize_final_parameter_estimates(final_params)
@@ -173,7 +195,7 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         final_consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype))
     logger.debug(f"[TIMING] {locus.id} consensus: {time.perf_counter() - t0:.3f}s")
 
-    grouped_read_calls.extend(removed_read_calls)
+    grouped_read_calls.extend(all_removed_read_calls)
     haplotyping_df = calculate_final_group_summaries(grouped_read_calls)
     test_summary_res_df["locus_id"] = locus.id
 
