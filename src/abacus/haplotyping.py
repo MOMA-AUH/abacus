@@ -417,7 +417,7 @@ def run_equal_length_backup_test(
     ignore_chars = left_anchor_chars + right_anchor_chars
     best_col, char_counts = find_most_variable_msa_position(msa, missing_end_char, ignore_chars)
     if best_col == -1:
-        return read_calls, [], _make_empty_backup_summary(run=True)
+        return read_calls, [], _make_empty_backup_summary(run=True, significant=True)
 
     # Get top 2 chars and map back to kmers
     sorted_chars = sorted(char_counts, key=lambda c: char_counts[c], reverse=True)
@@ -539,12 +539,12 @@ def _estimate_final_parameters(grouped_read_calls: list[ReadCall]) -> dict[Haplo
     return res
 
 
-def _make_empty_backup_summary(run: bool) -> pd.DataFrame:
+def _make_empty_backup_summary(run: bool, significant: bool = False) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "backup_test_run": run,
             "backup_test_p_value": np.nan,
-            "backup_test_significant": False,
+            "backup_test_significant": significant,
             "backup_test_position_min": -1,
             "backup_test_position_max": -1,
             "backup_test_kmer_h1": None,

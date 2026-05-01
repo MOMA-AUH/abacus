@@ -639,10 +639,10 @@ is_ci_row_wide_vec <- signif_par_summary_df %>%
   pull(is_ci_wide)
 
 # Outlier counts per locus (for summary table)
-outlier_counts_df <- reads_df %>%
-  filter(haplotype == "outlier") %>%
+removed_counts_df <- reads_df %>%
+  filter(haplotype %in% c("outlier", "qc_filtered")) %>%
   group_by(locus_id) %>%
-  summarise(outlier_count = n(), .groups = "drop")
+  summarise(removed_count = n(), .groups = "drop")
 
 # Build summary table (one row per locus x satellite x haplotype)
 summary_table_df <- signif_par_summary_df %>%
@@ -650,15 +650,15 @@ summary_table_df <- signif_par_summary_df %>%
     clustering_summary_df %>% select(locus_id, satellite, haplotype, n),
     by = join_by(locus_id, satellite, haplotype)
   ) %>%
-  left_join(outlier_counts_df, by = join_by(locus_id)) %>%
-  mutate(outlier_count = if_else(is.na(outlier_count), 0L, as.integer(outlier_count))) %>%
+  left_join(removed_counts_df, by = join_by(locus_id)) %>%
+  mutate(removed_count = if_else(is.na(removed_count), 0L, as.integer(removed_count))) %>%
   arrange(locus_id, idx, haplotype) %>%
-  select(locus_id, outlier_count, satellite, haplotype, n, mean, mean_lower, mean_upper)
+  select(locus_id, removed_count, satellite, haplotype, n, mean, mean_lower, mean_upper)
 ```
 
 ## Summary
 
-Count estimates and 95% confidence intervals for all analysed loci. Click a Locus ID to jump to the corresponding section in the report. 
+Count estimates and 95% confidence intervals for all analysed loci. The column "Removed count" shows the number of reads that were removed during QC filtering and length outlier detection. Click a Locus ID to jump to the corresponding section in the report. 
 
 ```{r Summary section, results = TRUE}
 # Row indices for even-numbered loci (zebra stripe at locus level)
@@ -680,7 +680,7 @@ summary_table_df %>%
   ) %>%
   select(
     "Locus ID"       = locus_link,
-    "Outlier count"  = outlier_count,
+    "Removed count"  = removed_count,
     "Satellite"      = satellite,
     "Haplotype"      = haplotype,
     "Coverage"       = n,
@@ -732,7 +732,8 @@ for (i in seq_len(nrow(regions))) {
     semi_join(selected_region, by = join_by(locus_id))
 
   # Calculate coverage
-  n_haplotyped_reads <- nrow(reads_region_df %>% filter(!haplotype %in% c("outlier", "qc_filtered")))
+  n_haplotyped_reads <- nrow(reads_region_df %>% filter(haplotype %in% c("h1", "h2", "hom")))
+  n_outlier_reads <- nrow(reads_region_df %>% filter(haplotype == "outlier"))
   n_qc_filtered_reads <- nrow(reads_region_df %>% filter(haplotype == "qc_filtered"))
   n_filtered_reads <- nrow(filtered_reads_region_df)
 
@@ -910,17 +911,25 @@ for (i in seq_len(nrow(regions))) {
   cat("### {-}") # This is a placeholder to stop the tabset
 
   cat("\n\n")
-  cat("### Count estimates")
+  # TODO: Call haplotype estimates all places
+  cat("### Haplotype estimates")
   cat("\n\n")
 
+  # Get coverage per haplotype for this region (for summary table)
+  coverage_df <- clustering_summary_region_df %>%
+    select(haplotype, n) %>%
+    distinct()
+
   signif_par_summary_region_df %>%
+    # Add coverage
+    left_join(coverage_df, by = join_by(haplotype)) %>%
     # Round to 2 decimals
     mutate_if(is.numeric, ~ round(., 2)) %>%
     # Select parameters, round and print
     select(
-      "Locus ID" = locus_id,
-      "Satellite" = satellite,
       "Haplotype" = haplotype,
+      "Coverage" = n,
+      "Satellite" = satellite,
       "Count estimate" = mean,
       "95% CI Lower" = mean_lower,
       "95% CI Upper" = mean_upper,
@@ -928,13 +937,12 @@ for (i in seq_len(nrow(regions))) {
     kbl(
       align = "c"
     ) %>%
-    column_spec(1, italic = TRUE) %>%
     kable_styling("bordered", full_width = TRUE) %>%
     row_spec(
       0,
       background = HEADER_BACKGROUND
     ) %>%
-    collapse_rows(columns = c(1, 2), valign = "middle", target = 1) %>%
+    collapse_rows(columns = c(1,2), valign = "middle", target = 1) %>%
     cat()
 
   cat("\n\n")
@@ -1059,14 +1067,14 @@ for (i in seq_len(nrow(regions))) {
   }
 
   cat("\n\n")
-  cat("#### QC Filtered (N=", n_qc_filtered_reads, ")", sep = "")
+  cat("#### QC Filtered and outliers (N=", n_qc_filtered_reads + n_outlier_reads, ")", sep = "")
   cat("\n\n")
 
-  if (n_qc_filtered_reads == 0) {
+  if (n_qc_filtered_reads + n_outlier_reads == 0) {
     cat("There are no QC filtered reads for this locus.")
   } else {
     reads_region_df %>%
-      filter(haplotype == "qc_filtered") %>%
+      filter(haplotype %in% c("qc_filtered", "outlier")) %>%
       # Change ";" to newline in filter_reasons
       mutate(
         filter_reasons = str_replace_all(filter_reasons, ";", "\n"),

@@ -261,6 +261,16 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         pytest.param(
             ["CAG"],
             ["", ""],
+            [*["CAG" * 10] * 12],
+            [],
+            [],
+            {"hom": 12},
+            {"hom": [10.0]},
+            id="Sequence split-No differences should remain homozygous",
+        ),
+        pytest.param(
+            ["CAG"],
+            ["", ""],
             [
                 # Haplotype 1
                 *["CAGCAG"] * 7,
