@@ -17,10 +17,10 @@ class Config:
 
     # QC filtering parameters
     min_n_qc_filtering: int = 10
-    min_mean_str_quality: int = 20
-    tol_mean_str_quality: int = 30
-    min_q10_str_quality: int = 15
-    tol_q10_str_quality: int = 30
+    min_mean_str_quality: int = 17
+    tol_mean_str_quality: int = 35
+    min_q10_str_quality: int = 7
+    tol_q10_str_quality: int = 25
     max_error_rate: float = 0.01
     tol_error_rate: float = 0.005
     max_ref_divergence: float = 0.34
