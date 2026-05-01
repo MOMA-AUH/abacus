@@ -112,7 +112,8 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
     median * (1 ± tolerance) are tagged as length outliers (Haplotype.OUTLIER).
     """
     length_outliers: list[ReadCall] = []
-    tolerance = config.tol_length_outlier_pct
+    tolerance_pct = config.tol_length_outlier_pct
+    tolerance_bases = config.tol_length_outlier_bases
 
     haplotype_groups = {rc.haplotype for rc in grouped_read_calls if rc.haplotype in (Haplotype.H1, Haplotype.H2, Haplotype.HOM)}
 
@@ -130,8 +131,8 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
             lengths = [float(len(rc.alignment.str_sequence)) for rc in spanning]
             med = float(median(lengths))
             lower_robust, upper_robust = compute_robust_thresholds(lengths)
-            lower_tol = med * (1.0 - tolerance)
-            upper_tol = med * (1.0 + tolerance)
+            lower_tol = min(med * (1.0 - tolerance_pct), med - tolerance_bases)
+            upper_tol = max(med * (1.0 + tolerance_pct), med + tolerance_bases)
 
             candidates = [
                 (candidate, length)

@@ -483,6 +483,14 @@ def abacus(
             rich_help_panel=QC_OPTIONS,
         ),
     ] = config.tol_length_outlier_pct,
+    tol_length_outlier_bases: Annotated[
+        int,
+        typer.Option(
+            "--length-outlier-tolerance-bases",
+            help="Reads within this number of bases of the haplotype median length are always retained during outlier removal",
+            rich_help_panel=QC_OPTIONS,
+        ),
+    ] = config.tol_length_outlier_bases,
     # Configuration
     anchor_length: Annotated[
         int,
@@ -601,6 +609,7 @@ def abacus(
     config.min_n_qc_filtering = min_n_qc_filtering
     config.min_n_length_outlier_detection = min_n_length_outlier_detection
     config.tol_length_outlier_pct = tol_length_outlier_pct
+    config.tol_length_outlier_bases = tol_length_outlier_bases
 
     # VCF options
     config.add_consensus_to_vcf = add_consensus_to_vcf
