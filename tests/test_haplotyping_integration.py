@@ -656,6 +656,8 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
                 # Haplotype 1 - normal allele
                 *["CAG" * 5] * 14,
                 # Haplotype 2 - expanded allele (DM1, somatic mosaicism)
+                "CAG" * 935,
+                "CAG" * 961,
                 "CAG" * 1421,
                 "CAG" * 1526,
                 "CAG" * 1575,
@@ -665,9 +667,6 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
                 "CAG" * 1971,
                 "CAG" * 2072,
                 "CAG" * 2168,
-                # Outliers from somatic mosaicism
-                "CAG" * 935,
-                "CAG" * 961,
                 "CAG" * 2541,
                 "CAG" * 3133,
             ],
@@ -678,8 +677,8 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
                 "CAG" * 664,
                 "CAG" * 378,
             ],
-            {"h1": 14, "h2": 12, "outlier": 4},
-            {"h1": [5.0], "h2": [1826.0]},
+            {"h1": 14, "h2": 16},
+            {"h1": [5.0], "h2": [1825.0]},
             id="Case 18: DMPK - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
         pytest.param(

@@ -1,4 +1,4 @@
-from numpy import median, percentile
+from numpy import median
 
 from abacus.config import config
 from abacus.graph import ReadCall
@@ -140,10 +140,10 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
         # re-groups before calling again, mirroring the singleton removal loop
         if len(spanning) > config.min_n_length_outlier_detection:
             lengths = [float(len(rc.alignment.str_sequence)) for rc in spanning]
-            med = float(median(lengths))
+            median_length = float(median(lengths))
             lower_robust, upper_robust = compute_robust_thresholds(lengths)
-            lower_tol = min(med * (1.0 - tolerance_pct), med - tolerance_bases)
-            upper_tol = max(med * (1.0 + tolerance_pct), med + tolerance_bases)
+            lower_tol = min(median_length * (1.0 - tolerance_pct), median_length - tolerance_bases)
+            upper_tol = max(median_length * (1.0 + tolerance_pct), median_length + tolerance_bases)
 
             candidates = [
                 (candidate, length)
@@ -152,7 +152,7 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
             ]
 
             if candidates:
-                worst_candidate, _ = max(candidates, key=lambda x: abs(x[1] - med))
+                worst_candidate, _ = max(candidates, key=lambda x: abs(x[1] - median_length))
                 worst_candidate.add_outlier_reason("outlier_length")
                 length_outliers.append(worst_candidate)
                 spanning.remove(worst_candidate)
@@ -166,7 +166,7 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
             ]
 
             if long_flanking_candidates:
-                worst_flanking_candidate, _ = max(long_flanking_candidates, key=lambda x: abs(x[1] - med))
+                worst_flanking_candidate, _ = max(long_flanking_candidates, key=lambda x: abs(x[1] - median_length))
                 worst_flanking_candidate.add_outlier_reason("outlier_length")
                 length_outliers.append(worst_flanking_candidate)
                 non_spanning.remove(worst_flanking_candidate)
@@ -175,13 +175,9 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
 
 
 def compute_robust_thresholds(x: list[float]) -> tuple[float, float]:
-    # Median and IQR
-    q1 = percentile(x, 25)
-    q3 = percentile(x, 75)
-    iqr = q3 - q1
-
-    # Compute robust thresholds using Tukey's fences
-    lower_bound = q1 - 1.5 * iqr
-    upper_bound = q3 + 1.5 * iqr
+    med = median(x)
+    mad = median([abs(xi - med) for xi in x])
+    lower_bound = med - 3.5 * mad
+    upper_bound = med + 3.5 * mad
 
     return float(lower_bound), float(upper_bound)
