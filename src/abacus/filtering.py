@@ -56,19 +56,30 @@ def filter_outlier_qual_read_calls(read_calls: list[ReadCall]) -> tuple[list[Rea
         haplotype_read_calls = [rc for rc in read_calls if rc.haplotype == haplotype]
 
         # Step 1: Check if enough read calls are left for outlier detection
-        if len(haplotype_read_calls) < config.min_n_qc_filtering:
+        if len(haplotype_read_calls) <= config.min_n_qc_filtering:
             # If not, continue to next haplotype
             continue
 
         # Step 2: Find outliers
         mark_qc_outliers(haplotype_read_calls)
-        for rc in haplotype_read_calls.copy():
-            # Check if read call is an outlier
-            if rc.outlier_reasons:
-                # Add it to the outlier list
-                outlier_read_calls.append(rc)
-                # Remove it from the good read calls
-                good_read_calls.remove(rc)
+        outlier_rcs = [rc for rc in haplotype_read_calls if rc.outlier_reasons]
+
+        # Step 3: If there are more outliers than the maximum allowed removals, remove the ones with lowest quality first
+        n_max_removals = len(haplotype_read_calls) - config.min_n_qc_filtering
+        if len(outlier_rcs) > n_max_removals:
+            outlier_rcs.sort(key=lambda rc: (rc.alignment.q10_str_quality, rc.alignment.mean_str_quality))
+            # Reset the outlier reasons for the outliers that will be kept
+            for rc in outlier_rcs[n_max_removals:]:
+                rc.outlier_reasons = []
+            # Keep only the worst outliers up to the maximum allowed removals
+            outlier_rcs = outlier_rcs[:n_max_removals]
+
+        # Step 4: Move outliers to outlier list and remove from good read calls
+        for outlier_rc in [rc for rc in haplotype_read_calls if rc.outlier_reasons]:
+            # Add it to the outlier list
+            outlier_read_calls.append(outlier_rc)
+            # Remove it from the good read calls
+            good_read_calls.remove(outlier_rc)
 
     return good_read_calls, outlier_read_calls
 
