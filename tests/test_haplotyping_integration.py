@@ -261,6 +261,16 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         pytest.param(
             ["CAG"],
             ["", ""],
+            [*["CAG" * 10] * 7, "CAG" * 9 + "CGG"],  # 8 reads: 7 normal + 1 with sequencing error, all same length
+            [],
+            [],
+            {"hom": 8},
+            {"hom": [10.0]},
+            id="Sequence split-8 reads below min_haplotyping_depth-should not create singleton",
+        ),
+        pytest.param(
+            ["CAG"],
+            ["", ""],
             [*["CAG" * 10] * 12],
             [],
             [],

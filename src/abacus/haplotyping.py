@@ -377,7 +377,7 @@ def run_equal_length_backup_test(
     right_flanking_reads = [r for r in read_calls if r.alignment.type == AlignmentType.RIGHT_FLANKING]
 
     # If not enough spanning reads, skip the sequence-based split test
-    if len(spanning_reads) <= config.min_n_qc_filtering:
+    if len(spanning_reads) < config.min_haplotyping_depth:
         return read_calls, [], _empty
 
     # Build kmer sequences (same logic as create_consensus_calls)
@@ -479,6 +479,16 @@ def run_equal_length_backup_test(
         else:
             read_call.add_qc_filter_reason("not_split_base")
             new_outliers.append(read_call)
+
+    # Cancel the split if any haplotype cluster would be a singleton — a singleton after a
+    # sequence split indicates noise rather than a real second allele.
+    haplotype_counts = {h: sum(1 for r in updated_reads if r.haplotype == h) for h in (Haplotype.H1, Haplotype.H2)}
+    if any(count == 1 for count in haplotype_counts.values()):
+        for read_call in updated_reads:
+            read_call.set_haplotype(Haplotype.HOM)
+        # Move all updated reads to new_outliers since the split is not valid
+        updated_reads.extend(new_outliers)
+        new_outliers = []
 
     return updated_reads, new_outliers, summary_df
 

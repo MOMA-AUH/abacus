@@ -87,6 +87,20 @@ def test_run_equal_length_backup_test_significance(sequences: list[str], expecte
     )
 
 
+def test_run_equal_length_backup_test_skips_below_min_haplotyping_depth():
+    """Backup test should not run when spanning reads < min_haplotyping_depth (default 10)."""
+    locus = _make_locus("CAG")
+    # 8 reads: 7 normal + 1 with a sequencing error — same length, different sequence
+    sequences = ["CAG" * 10] * 7 + ["CAG" * 9 + "CGG"]
+    read_calls = _spanning_read_calls(sequences, locus)
+
+    _, _, summary = run_equal_length_backup_test(read_calls, alpha=0.05)
+
+    assert not bool(summary["backup_test_run"].iloc[0]), (
+        "Backup test should not run with 8 reads when min_haplotyping_depth=10"
+    )
+
+
 @pytest.mark.parametrize(
     ("x", "mean", "var", "expected"),
     [
