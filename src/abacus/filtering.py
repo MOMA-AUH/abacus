@@ -176,11 +176,12 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
 
 def compute_robust_thresholds(x: list[float]) -> tuple[float, float]:
     # Median and IQR
-    x_median = median(x)
     q1 = percentile(x, 25)
     q3 = percentile(x, 75)
     iqr = q3 - q1
-    lower_bound = x_median - 1.5 * iqr
-    upper_bound = x_median + 1.5 * iqr
+
+    # Compute robust thresholds using Tukey's fences
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
 
     return float(lower_bound), float(upper_bound)
