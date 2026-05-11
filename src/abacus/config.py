@@ -16,7 +16,7 @@ class Config:
     max_trim: int = 50
 
     # QC filtering parameters
-    min_n_qc_filtering: int = 10
+    min_n_qc_filtering: int = 5
     min_mean_str_quality: int = 17
     tol_mean_str_quality: int = 35
     min_q10_str_quality: int = 7

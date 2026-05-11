@@ -377,7 +377,7 @@ def run_equal_length_backup_test(
     right_flanking_reads = [r for r in read_calls if r.alignment.type == AlignmentType.RIGHT_FLANKING]
 
     # If not enough spanning reads, skip the sequence-based split test
-    if len(spanning_reads) < config.min_n_qc_filtering:
+    if len(spanning_reads) <= config.min_n_qc_filtering:
         return read_calls, [], _empty
 
     # Build kmer sequences (same logic as create_consensus_calls)
