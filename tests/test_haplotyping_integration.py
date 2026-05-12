@@ -706,6 +706,33 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             {"h1": [32.0], "h2": [950.0]},
             id="Case 19: FMR1 - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
+        pytest.param(
+            ["CGG"],
+            ["", ""],
+            [
+                # Single premutation allele - all reads should be hom, none outliers
+                "CGG" * 142,
+                "CGG" * 145,
+                "CGG" * 153,
+                "CGG" * 158,
+                "CGG" * 159,
+                "CGG" * 173,
+                "CGG" * 179,
+                "CGG" * 180,
+                "CGG" * 197,
+                "CGG" * 197,
+                "CGG" * 198,
+                "CGG" * 206,
+                "CGG" * 211,
+                # Outlier
+                "CGG" * 250,
+            ],
+            [],
+            [],
+            {"hom": 13, "outlier": 1},
+            {"hom": [177.0]},
+            id="Case 20: FMR1 - Single premutation allele should not be split into two haplotypes.",
+        ),
     ],
 )
 def test_haplotyping_integration(
