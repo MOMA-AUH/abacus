@@ -114,7 +114,8 @@ def run_haplotyping(
             axis=1,
         )
         het_params_test = _make_empty_het_par_estimate(dim=len(hom_params_test.mean))
-        final_params = {Haplotype.HOM: hom_params_test}
+        # Ensure all haplotypes are included in final_params
+        final_params = _estimate_final_parameters(grouped_read_calls)
         return grouped_read_calls, all_outlier_read_calls, het_params_test, hom_params_test, final_params, test_summary_df
 
     # Test for heterozygosity
