@@ -236,10 +236,11 @@ def generate_msa(
     right_flanking_sequences: list[str],
     missing_end_char: str,
     algorithm: int,
+    gap_open: int = -8,
 ) -> list[str]:
     # Combine all sequences
     all_translated_sequences = spanning_sequences + left_flanking_sequences + right_flanking_sequences
-    _, msa = poa(all_translated_sequences, algorithm=algorithm)
+    _, msa = poa(all_translated_sequences, algorithm=algorithm, g=gap_open)
 
     # Split MSA
     spanning_msa: list[str] = msa[: len(spanning_sequences)]

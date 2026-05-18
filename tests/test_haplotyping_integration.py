@@ -733,6 +733,22 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             {"hom": [177.0]},
             id="Case 20: FMR1 - Single premutation allele should not be split into two haplotypes.",
         ),
+        pytest.param(
+            ["CTG"],
+            ["", ""],
+            [
+                # Haplotype 1 - CTG with ATG interruptions at k-mer positions 13 and 15
+                *["CTG" * 13 + "ATG" + "CTG" + "ATG" + "CTG" * 15] * 14,
+                # Haplotype 2 - CTG with ATG interruptions at k-mer positions 14 and 16
+                # Total: 14 + 1 + 2 + 1 + 14 = 32 k-mers (same length as H1)
+                *["CTG" * 14 + "ATG" + "CTG" + "ATG" + "CTG" * 14] * 13,
+            ],
+            [],
+            [],
+            {"h1": 14, "h2": 13},
+            {"h1": [31.0], "h2": [31.0]},
+            id="Case 21: CTG - same length, ATG interruptions - sequence split should be detected",
+        ),
     ],
 )
 def test_haplotyping_integration(

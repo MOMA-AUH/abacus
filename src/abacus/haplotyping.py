@@ -411,8 +411,10 @@ def run_equal_length_backup_test(
     translated_left = [random_left_anchor + s for s in translated_left]
     translated_right = [s + random_right_anchor for s in translated_right]
 
-    # Generate MSA
-    msa = generate_msa(translated_spanning, translated_left, translated_right, missing_end_char, algorithm=0)
+    # Generate MSA with a high gap-open penalty so that positionally shifted
+    # interruptions (same k-mers at different offsets) appear as mismatches
+    # rather than a gap-shifted alignment that would hide the sequence difference.
+    msa = generate_msa(translated_spanning, translated_left, translated_right, missing_end_char, algorithm=0, gap_open=-20)
 
     # Find most variable position
     ignore_chars = left_anchor_chars + right_anchor_chars
