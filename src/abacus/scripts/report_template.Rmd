@@ -254,7 +254,7 @@ generate_kmer_color_palette <- function(kmers) {
 }
 
 # Function to create kmer plots
-create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette, shade_by_qual = FALSE) {
+create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette, shade_by_qual = FALSE, facet_by_strand = FALSE) {
   kmer_plot_df <- kmer_df %>%
     # Get max per haplotype
     group_by(haplotype) %>%
@@ -283,12 +283,23 @@ create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette, shade_by_qua
     ) %>%
     ungroup()
 
+  if (facet_by_strand) {
+    kmer_plot_df <- kmer_plot_df %>%
+      mutate(haplotype_strand = factor(paste(haplotype, strand))) %>%
+      group_by(haplotype_strand) %>%
+      mutate(read_id = as.integer(factor(read_id))) %>%
+      ungroup()
+    facet_var <- "haplotype_strand"
+  } else {
+    facet_var <- "haplotype"
+  }
+
   # Start plotting
   plot <- ggplot()
 
   # Add horizontal lines for each read
   hz_lines_df <- kmer_plot_df %>%
-    distinct(read_id, alignment_type_txt, start, end, haplotype)
+    distinct(read_id, alignment_type_txt, start, end, .data[[facet_var]])
 
   plot <- plot +
     geom_segment(
@@ -415,9 +426,10 @@ create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette, shade_by_qua
 
   # Add details to plot
   min_kmer_idx <- min(kmer_plot_df$cor_kmer_idx)
+
   vertical_fixer_df <- kmer_plot_df %>%
-    distinct(read_id, haplotype) %>%
-    group_by(haplotype) %>%
+    distinct(read_id, .data[[facet_var]]) %>%
+    group_by(.data[[facet_var]]) %>%
     summarise(
       min_read_idx = min(read_id),
       max_read_idx = max(read_id),
@@ -434,7 +446,7 @@ create_kmer_plot <- function(kmer_df, color_by, kmer_color_palette, shade_by_qua
 
   plot <- plot +
     facet_grid(
-      rows = vars(haplotype),
+      rows = vars(.data[[facet_var]]),
       scales = "free_y",
       space = "free_y"
     ) +
@@ -647,8 +659,8 @@ removed_counts_df <- reads_df %>%
 # Build summary table (one row per locus x satellite x haplotype)
 summary_table_df <- signif_par_summary_df %>%
   left_join(
-    clustering_summary_df %>% select(locus_id, satellite, haplotype, n),
-    by = join_by(locus_id, satellite, haplotype)
+    clustering_summary_df %>% select(locus_id, satellite, haplotype, idx, n),
+    by = join_by(locus_id, satellite, haplotype, idx)
   ) %>%
   left_join(removed_counts_df, by = join_by(locus_id)) %>%
   mutate(removed_count = if_else(is.na(removed_count), 0L, as.integer(removed_count))) %>%
@@ -836,13 +848,13 @@ for (i in seq_len(nrow(regions))) {
   }
 
   cat("\n\n")
-  cat("#### Sequence w. QUAL")
+  cat("#### Sequence (detailed)")
   cat("\n\n")
 
   if (no_haplotype_reads) {
     cat("There are no haplotyped reads for this locus.")
   } else {
-    kmer_plot <- create_kmer_plot(kmer_haplotyped_df, "kmer", kmer_color_palette, shade_by_qual = TRUE)
+    kmer_plot <- create_kmer_plot(kmer_haplotyped_df, "kmer", kmer_color_palette, shade_by_qual = TRUE, facet_by_strand = TRUE)
     print(kmer_plot)
   }
 
@@ -925,6 +937,8 @@ for (i in seq_len(nrow(regions))) {
     left_join(coverage_df, by = join_by(haplotype)) %>%
     # Round to 2 decimals
     mutate_if(is.numeric, ~ round(., 2)) %>%
+    # Arrange by satellite and haplotype
+    arrange(haplotype, idx) %>%
     # Select parameters, round and print
     select(
       "Haplotype" = haplotype,
@@ -951,12 +965,12 @@ for (i in seq_len(nrow(regions))) {
 
   clustering_summary_region_df %>%
     # Arrange by satellite and haplotype
-    arrange(idx, haplotype) %>%
+    arrange(haplotype, idx) %>%
     # Select parameters, round and print
     select(
-      "Satellite" = satellite,
       "Haplotype" = haplotype,
       "Coverage" = n,
+      "Satellite" = satellite,
       "Mean" = mean,
       "SD" = sd,
       "Median" = median,
@@ -971,7 +985,7 @@ for (i in seq_len(nrow(regions))) {
       0,
       background = HEADER_BACKGROUND
     ) %>%
-    collapse_rows(columns = 1, valign = "middle") %>%
+    collapse_rows(columns = c(1,2), valign = "middle") %>%
     cat()
 
 
@@ -1045,6 +1059,7 @@ for (i in seq_len(nrow(regions))) {
       ) %>%
       select(
         "Haplotype" = haplotype,
+        "Strand" = strand,
         "Read ID" = read_id,
         "Query Name" = query_name,
         "Alignment Type" = alignment_type,
@@ -1087,6 +1102,7 @@ for (i in seq_len(nrow(regions))) {
       select(
         "Read ID" = read_id,
         "Query Name" = query_name,
+        "Strand" = strand,
         "Alignment Type" = alignment_type,
         "Filter Reasons" = filter_reasons,
         "Mean STR Qual" = mean_str_qual,
@@ -1114,6 +1130,7 @@ for (i in seq_len(nrow(regions))) {
     filtered_reads_region_df %>%
       select(
         "Query Name" = query_name,
+        "Strand" = strand,
         "Error flags" = error_flags
       ) %>%
       kbl(
