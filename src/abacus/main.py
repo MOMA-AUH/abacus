@@ -19,7 +19,6 @@ from abacus.config import config
 from abacus.consensus import ConsensusCall, create_consensus_calls, update_flanking_labels_based_on_consensus
 from abacus.filtering import filter_low_qual_read_calls, filter_outlier_qual_read_calls
 from abacus.graph import (
-    FilteredRead,
     ReadCall,
     get_read_calls,
 )
@@ -265,20 +264,6 @@ def abacus(
         ),
     ],
     # Outputs
-    report: Annotated[
-        Path,
-        typer.Option(
-            "--report",
-            "-o",
-            help="Output HTML report",
-            rich_help_panel=OUTPUTS,
-            exists=False,
-            file_okay=True,
-            dir_okay=False,
-            writable=True,
-            resolve_path=True,
-        ),
-    ],
     vcf: Annotated[
         Path,
         typer.Option(
@@ -303,6 +288,20 @@ def abacus(
             rich_help_panel=OPTIONS,
         ),
     ],
+    report: Annotated[
+        Path | None,
+        typer.Option(
+            "--report",
+            "-o",
+            help="Output HTML report",
+            rich_help_panel=OUTPUTS,
+            exists=False,
+            file_okay=True,
+            dir_okay=False,
+            writable=True,
+            resolve_path=True,
+        ),
+    ] = None,
     str_catalog: Annotated[
         Path | None,
         typer.Option(
@@ -640,12 +639,50 @@ def abacus(
         # Filter loci
         loci = [locus for locus in loci if locus.id in selected_loci]
 
-    # Process each locus (in parallel if --threads > 1)
+    # Create tmp directory before processing so partial results are written on failure
+    tmp_dir = vcf.parent / f"tmp_abacus_{sample_id}"
+    tmp_dir.mkdir(exist_ok=True)
+
+    reads_csv = tmp_dir / "reads.csv"
+    filtered_reads_csv = tmp_dir / "filtered_reads.csv"
+    consensus_csv = tmp_dir / "consensus.csv"
+    haplotypes_csv = tmp_dir / "haplotypes.csv"
+    summary_csv = tmp_dir / "summary.csv"
+    final_param_summary_csv = tmp_dir / "final_parameter_summary.csv"
+    test_params_summary_csv = tmp_dir / "test_parameter_summary.csv"
+
+    # Remove any existing temp files from previous runs with the same sample ID to avoid appending to old results
+    for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv]:
+        _f.unlink(missing_ok=True)
+
+    def _append_to_csv(df: pd.DataFrame, path: Path) -> None:
+        df.to_csv(path, mode="a", header=not path.exists(), index=False)
+
+    def _handle_result(result: dict) -> None:
+        _append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
+        _append_to_csv(pd.DataFrame([r.to_dict() for r in result["unmapped_reads"]]), filtered_reads_csv)
+        _append_to_csv(pd.DataFrame([c.to_dict() for c in result["final_consensus_calls"]]), consensus_csv)
+        _append_to_csv(result["haplotyping_df"], haplotypes_csv)
+        _append_to_csv(result["test_summary_res_df"], summary_csv)
+        _append_to_csv(result["final_parameter_summary_df"], final_param_summary_csv)
+        _append_to_csv(result["test_parameter_summary_df"], test_params_summary_csv)
+
+    # Process each locus (in parallel if --threads > 1), writing results incrementally
     logger.info("Processing loci...")
     process_fn = functools.partial(_process_locus, bam=bam, ref=ref, sex=sex)
 
+    final_params_dict: dict[str, dict[Haplotype, HomozygousParameters]] = {}
+    locus_is_het_dict: dict[str, bool] = {}
+    all_consensus_calls: list[ConsensusCall] = []
+
     if threads == 1:
-        results = [process_fn(locus) for locus in loci]
+        for locus in loci:
+            result = process_fn(locus)
+            _handle_result(result)
+            locus_id = result["locus_id"]
+            final_params_dict[locus_id] = result["final_params"]
+            locus_is_het_dict[locus_id] = result["locus_is_het"]
+            all_consensus_calls.extend(result["final_consensus_calls"])
     else:
         log_queue: MPQueue = MPQueue()
         queue_listener = QueueListener(log_queue, *logger.handlers, respect_handler_level=True)
@@ -656,62 +693,14 @@ def abacus(
                 initializer=_worker_init,
                 initargs=(config.to_dict(), log_queue),
             ) as executor:
-                results = list(executor.map(process_fn, loci))
+                for result in executor.map(process_fn, loci):
+                    _handle_result(result)
+                    locus_id = result["locus_id"]
+                    final_params_dict[locus_id] = result["final_params"]
+                    locus_is_het_dict[locus_id] = result["locus_is_het"]
+                    all_consensus_calls.extend(result["final_consensus_calls"])
         finally:
             queue_listener.stop()
-
-    # Aggregate results from all loci (order preserved by executor.map)
-    final_params_dict: dict[str, dict[Haplotype, HomozygousParameters]] = {}
-    locus_is_het_dict: dict[str, bool] = {}
-    all_read_calls: list[ReadCall] = []
-    all_filtered_reads: list[FilteredRead] = []
-    all_consensus_calls: list[ConsensusCall] = []
-    all_haplotyping_df: list[pd.DataFrame] = []
-    all_summaries_df: list[pd.DataFrame] = []
-    all_final_param_summaries_df: list[pd.DataFrame] = []
-    all_test_param_summaries_df: list[pd.DataFrame] = []
-
-    for result in results:
-        locus_id = result["locus_id"]
-        final_params_dict[locus_id] = result["final_params"]
-        locus_is_het_dict[locus_id] = result["locus_is_het"]
-        all_read_calls.extend(result["grouped_read_calls"])
-        all_filtered_reads.extend(result["unmapped_reads"])
-        all_consensus_calls.extend(result["final_consensus_calls"])
-        all_haplotyping_df.append(result["haplotyping_df"])
-        all_summaries_df.append(result["test_summary_res_df"])
-        all_final_param_summaries_df.append(result["final_parameter_summary_df"])
-        all_test_param_summaries_df.append(result["test_parameter_summary_df"])
-
-    # Create output directory
-    tmp_dir = report.parent / f"tmp_abacus_{sample_id}"
-    tmp_dir.mkdir(exist_ok=True)
-
-    # Write output files
-    reads_csv = tmp_dir / "reads.csv"
-    filtered_reads_csv = tmp_dir / "filtered_reads.csv"
-    consensus_csv = tmp_dir / "consensus.csv"
-
-    haplotypes_csv = tmp_dir / "haplotypes.csv"
-    summary_csv = tmp_dir / "summary.csv"
-    final_param_summary_csv = tmp_dir / "final_parameter_summary.csv"
-    test_params_summary_csv = tmp_dir / "test_parameter_summary.csv"
-
-    with Path.open(reads_csv, "w") as f:
-        pd.DataFrame([r.to_dict() for r in all_read_calls]).to_csv(f, index=False)
-    with Path.open(filtered_reads_csv, "w") as f:
-        pd.DataFrame([r.to_dict() for r in all_filtered_reads]).to_csv(f, index=False)
-    with Path.open(final_param_summary_csv, "w") as f:
-        pd.concat(all_final_param_summaries_df).to_csv(f, index=False)
-    with Path.open(consensus_csv, "w") as f:
-        pd.DataFrame([c.to_dict() for c in all_consensus_calls]).to_csv(f, index=False)
-
-    with Path.open(haplotypes_csv, "w") as f:
-        pd.concat(all_haplotyping_df).to_csv(f, index=False)
-    with Path.open(summary_csv, "w") as f:
-        pd.concat(all_summaries_df).to_csv(f, index=False)
-    with Path.open(test_params_summary_csv, "w") as f:
-        pd.concat(all_test_param_summaries_df).to_csv(f, index=False)
 
     # Write VCF output
     write_vcf(
@@ -723,51 +712,52 @@ def abacus(
         locus_is_het_dict=locus_is_het_dict,
     )
 
-    # Render report
-    logger.info("Rendering report...")
-    report_template = Path(__file__).parent / "scripts" / "report_template.Rmd"
-    logo_path = Path(__file__).parent.parent.parent / "img" / "logo.png"
+    # Render report (only if --report was provided)
+    if report is not None:
+        logger.info("Rendering report...")
+        report_template = Path(__file__).parent / "scripts" / "report_template.Rmd"
+        logo_path = Path(__file__).parent.parent.parent / "img" / "logo.png"
 
-    process = subprocess.run(
-        [
-            "Rscript",
-            "-e",
-            f"""
-                    rmarkdown::render('{report_template}', \
-                        output_file='{report.name}', \
-                        output_dir='{report.parent}', \
-                        intermediates_dir='{tmp_dir}', \
-                        params=list( \
-                            abacus_version = '{__version__}', \
-                            sample_id = '{sample_id}', \
-                            input_bam = '{bam}', \
-                            str_catalog = '{str_catalog}', \
-                            reads_csv = '{reads_csv}', \
-                            filtered_reads_csv = '{filtered_reads_csv}', \
-                            consensus_csv = '{consensus_csv}', \
-                            clustering_summary_csv = '{haplotypes_csv}', \
-                            test_summary_csv = '{summary_csv}', \
-                            final_param_summary_csv = '{final_param_summary_csv}', \
-                            test_param_summary_csv = '{test_params_summary_csv}', \
-                            min_mean_str_quality = {config.min_mean_str_quality}, \
-                            min_q10_str_quality = {config.min_q10_str_quality}, \
-                            max_error_rate = {config.max_error_rate}, \
-                            max_ref_divergence = {config.max_ref_divergence}, \
-                            logo_path = '{logo_path}' \
+        process = subprocess.run(
+            [
+                "Rscript",
+                "-e",
+                f"""
+                        rmarkdown::render('{report_template}', \
+                            output_file='{report.name}', \
+                            output_dir='{report.parent}', \
+                            intermediates_dir='{tmp_dir}', \
+                            params=list( \
+                                abacus_version = '{__version__}', \
+                                sample_id = '{sample_id}', \
+                                input_bam = '{bam}', \
+                                str_catalog = '{str_catalog}', \
+                                reads_csv = '{reads_csv}', \
+                                filtered_reads_csv = '{filtered_reads_csv}', \
+                                consensus_csv = '{consensus_csv}', \
+                                clustering_summary_csv = '{haplotypes_csv}', \
+                                test_summary_csv = '{summary_csv}', \
+                                final_param_summary_csv = '{final_param_summary_csv}', \
+                                test_param_summary_csv = '{test_params_summary_csv}', \
+                                min_mean_str_quality = {config.min_mean_str_quality}, \
+                                min_q10_str_quality = {config.min_q10_str_quality}, \
+                                max_error_rate = {config.max_error_rate}, \
+                                max_ref_divergence = {config.max_ref_divergence}, \
+                                logo_path = '{logo_path}' \
+                            ) \
                         ) \
-                    ) \
-                    """,
-        ],
-        text=True,
-        check=False,
-        capture_output=True,
-    )
+                        """,
+            ],
+            text=True,
+            check=False,
+            capture_output=True,
+        )
 
-    if process.returncode != 0:
-        logger.debug("Rscript stdout:\n%s", process.stdout)
-        logger.debug("Rscript stderr:\n%s", process.stderr)
-        logger.error("Rscript failed with error code %d", process.returncode)
-        raise typer.Exit(code=1)
+        if process.returncode != 0:
+            logger.debug("Rscript stdout:\n%s", process.stdout)
+            logger.debug("Rscript stderr:\n%s", process.stderr)
+            logger.error("Rscript failed with error code %d", process.returncode)
+            raise typer.Exit(code=1)
 
     if not keep_temp_files:
         logger.info("Cleaning up temporary files...")
