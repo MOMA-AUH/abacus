@@ -340,7 +340,7 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
         ),
     ]
 
-    graph_alignments = get_graph_alignments(reads, locus)
+    graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
     graph_alignment = next(a for a in graph_alignments if a.name == read_id)
     path = graph_alignment.path
     satellite_counts = get_satellite_counts_from_path(locus=locus, path=path)
@@ -428,7 +428,7 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
         ),
     ]
 
-    graph_alignments = get_graph_alignments(reads=reads, locus=locus)
+    graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
     graph_alignment = next(a for a in graph_alignments if a.name == read_id)
 
     satellite_counts = get_satellite_counts_from_path(locus=locus, path=graph_alignment.path)

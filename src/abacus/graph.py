@@ -472,48 +472,22 @@ def create_linear_graph(locus: Locus, satellite_counts: list[int]) -> nx.DiGraph
     return graph
 
 
-def get_graph_alignments(reads: list[Read], locus: Locus) -> list[GraphAlignment]:
-    # Create graph from locus and convert to GFA string for minigraph
-    repeat_graph = create_repeat_graph(locus)
-    graph_str = graph_to_gfa(repeat_graph)
+def get_graph_alignments(reads: list[Read], graph: nx.DiGraph) -> list[GraphAlignment]:
+    graph_str = graph_to_gfa(graph)
 
-    # Create a temporary directory
+    fastq_str = "".join(read.to_fastq() for read in reads)
+
     with tempfile.TemporaryDirectory() as _temp_dir:
-        temp_dir = Path(_temp_dir)
-
-        # Create input fasta file
-        input_fastq = temp_dir / "input.fastq"
-        with Path.open(input_fastq, "w") as f:
-            for read in reads:
-                f.write(read.to_fastq())
-
-        # Create graph
-        input_graph_gfa = temp_dir / "graph.gfa"
-
-        # Create output file path
-        output_gaf = temp_dir / "output.gaf"
-
-        # Write the graph
+        input_graph_gfa = Path(_temp_dir) / "graph.gfa"
         input_graph_gfa.write_text(graph_str)
 
-        # Run the command and redirect the output to a log file
         _t0 = time.perf_counter()
         process = subprocess.run(
-            [
-                "minigraph",
-                "-c",
-                "-j",
-                "0.3",
-                "-x",
-                "lr",
-                "-o",
-                output_gaf,
-                input_graph_gfa,
-                input_fastq,
-            ],
-            check=False,
+            ["minigraph", "-c", "-j", "0.3", "-x", "lr", str(input_graph_gfa), "-"],
+            input=fastq_str,
             capture_output=True,
             text=True,
+            check=False,
         )
         logger.debug(f"[TIMING] minigraph alignment: {time.perf_counter() - _t0:.3f}s  ({len(reads)} reads)")
         if process.returncode != 0:
@@ -522,21 +496,14 @@ def get_graph_alignments(reads: list[Read], locus: Locus) -> list[GraphAlignment
             msg = f"minigraph failed with return code {process.returncode}"
             raise RuntimeError(msg)
 
-        # Get the output from file
-        with Path.open(output_gaf) as f:
-            output_string = f.read()
+        output_string = process.stdout
 
-    # Parse the output
     graph_alignments: list[GraphAlignment] = []
     for read in reads:
-        # Get the first alignment for the read
         gaf_lines = next((line for line in output_string.split("\n") if line.startswith(read.name)), None)
-
-        # Skip if no alignment found
         if gaf_lines is None:
             continue
-
-        graph_alignments.append(GraphAlignment.from_gaf_line(read=read, gaf_line=gaf_lines, graph=repeat_graph))
+        graph_alignments.append(GraphAlignment.from_gaf_line(read=read, gaf_line=gaf_lines, graph=graph))
 
     return graph_alignments
 
@@ -582,8 +549,9 @@ def graph_align_reads_to_locus(
     flanking_alignments: list[GraphAlignment] = []
     unmapped_reads: list[FilteredRead] = []
 
-    # Run the tool
-    graph_alignments = get_graph_alignments(reads, locus)
+    # Build graph once; reuse for both the initial alignment and flanking remap
+    graph = create_repeat_graph(locus)
+    graph_alignments = get_graph_alignments(reads, graph)
 
     # Mark unmapped reads
     mapped_read_names = [aln.name for aln in graph_alignments]
@@ -619,7 +587,7 @@ def graph_align_reads_to_locus(
         alignments.append(aln)
 
     # Remap flanking reads to locus
-    remapped_flanking_alignments, unmapped_flanking_reads = remap_flanking_alignments_to_locus(flanking_alignments, locus)
+    remapped_flanking_alignments, unmapped_flanking_reads = remap_flanking_alignments_to_locus(flanking_alignments, locus, graph=graph)
 
     # Add the remapped flanking alignments to the lists
     alignments.extend(remapped_flanking_alignments)
@@ -678,6 +646,7 @@ def pad_with_left_anchor(seq: str, left_anchor: str) -> tuple[str, int]:
 def remap_flanking_alignments_to_locus(
     flanking_alignments: list[GraphAlignment],
     locus: Locus,
+    graph: nx.DiGraph,
 ) -> tuple[list[GraphAlignment], list[FilteredRead]]:
     # Initialize lists
     synthetic_reads: list[Read] = []
@@ -713,8 +682,8 @@ def remap_flanking_alignments_to_locus(
             ),
         )
 
-    # Re-map the synthetic reads
-    remapped_flanking_reads = get_graph_alignments(synthetic_reads, locus)
+    # Re-map the synthetic reads (reuse the same graph)
+    remapped_flanking_reads = get_graph_alignments(synthetic_reads, graph)
 
     # Initialize lists
     remapped_alignments: list[GraphAlignment] = []
