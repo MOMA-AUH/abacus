@@ -4,7 +4,7 @@ import functools
 import logging as _logging
 import subprocess
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from importlib.resources import files
 from logging.handlers import QueueHandler, QueueListener
 from multiprocessing import Queue as MPQueue
@@ -693,7 +693,9 @@ def abacus(
                 initializer=_worker_init,
                 initargs=(config.to_dict(), log_queue),
             ) as executor:
-                for result in executor.map(process_fn, loci):
+                futures = {executor.submit(process_fn, locus): locus for locus in loci}
+                for future in as_completed(futures):
+                    result = future.result()
                     _handle_result(result)
                     locus_id = result["locus_id"]
                     final_params_dict[locus_id] = result["final_params"]
