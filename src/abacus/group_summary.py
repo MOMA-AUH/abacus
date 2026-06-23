@@ -5,21 +5,10 @@ from abacus.haplotyping import ReadCall
 
 
 def calculate_final_group_summaries(grouped_read_calls: list[ReadCall]) -> pd.DataFrame:
-    kmer_dim = len(grouped_read_calls[0].satellite_count)
+    if not grouped_read_calls:
+        return pd.DataFrame(columns=["haplotype", "mean", "sd", "median", "iqr", "n", "idx"])
 
-    # Hanlde empty data
-    if len(grouped_read_calls) == 0:
-        return pd.DataFrame(
-            {
-                "haplotype": "none",
-                "mean": pd.NA,
-                "sd": pd.NA,
-                "median": pd.NA,
-                "iqr": pd.NA,
-                "n": pd.NA,
-                "idx": list(range(kmer_dim)),
-            },
-        )
+    kmer_dim = len(grouped_read_calls[0].satellite_count)
 
     result_df_list = []
     # Get unique haplotypes from labels

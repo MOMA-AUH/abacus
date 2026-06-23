@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import functools
 import logging as _logging
+import math
 import subprocess
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from importlib.resources import files
 from logging.handlers import QueueHandler, QueueListener
+from multiprocessing import Pool
 from multiprocessing import Queue as MPQueue
 from pathlib import Path
 from typing import Annotated
@@ -26,9 +27,8 @@ from abacus.group_summary import calculate_final_group_summaries
 from abacus.haplotyping import run_haplotyping, summarize_final_parameter_estimates, summarize_test_parameter_estimates
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
-from abacus.parameter_estimation import HomozygousParameters
 from abacus.preprocess import get_reads_in_locus
-from abacus.str_vcf import write_vcf
+from abacus.str_vcf import create_vcf_records, write_vcf
 from abacus.utils import Haplotype, Sex
 
 ascii_art = r"""
@@ -210,6 +210,11 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
     final_parameter_summary_df = final_parameter_summary_df.merge(satellite_df, on="idx", how="left")
     test_parameter_summary_df = test_parameter_summary_df.merge(satellite_df, on="idx", how="left")
 
+    # Generate VCF records here while final_consensus_calls, final_params, and locus_is_het are in scope,
+    # so the main process never needs to accumulate the full ConsensusCall/params objects.
+    vcf_records = create_vcf_records(final_consensus_calls, ref, final_params, locus_is_het)
+    vcf_unique_alts = {int(v) for params in final_params.values() for v in params.mean if not math.isnan(v)}
+
     logger.debug(f"[TIMING] {locus.id} TOTAL: {time.perf_counter() - locus_t0:.3f}s")
     _locus_context["id"] = ""
 
@@ -217,15 +222,13 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         "locus_id": locus.id,
         "grouped_read_calls": grouped_read_calls,
         "unmapped_reads": unmapped_reads,
-        "het_params": het_params,
-        "hom_params": hom_params,
-        "final_params": final_params,
-        "locus_is_het": locus_is_het,
         "final_consensus_calls": final_consensus_calls,
         "haplotyping_df": haplotyping_df,
         "test_summary_res_df": test_summary_res_df,
         "final_parameter_summary_df": final_parameter_summary_df,
         "test_parameter_summary_df": test_parameter_summary_df,
+        "vcf_records": vcf_records,
+        "vcf_unique_alts": vcf_unique_alts,
     }
 
 
@@ -650,13 +653,18 @@ def abacus(
     summary_csv = tmp_dir / "summary.csv"
     final_param_summary_csv = tmp_dir / "final_parameter_summary.csv"
     test_params_summary_csv = tmp_dir / "test_parameter_summary.csv"
+    vcf_records_tmp = tmp_dir / "vcf_records.tmp"
 
     # Remove any existing temp files from previous runs with the same sample ID to avoid appending to old results
-    for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv]:
+    for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv, vcf_records_tmp]:
         _f.unlink(missing_ok=True)
 
     def _append_to_csv(df: pd.DataFrame, path: Path) -> None:
+        if df.empty:
+            return
         df.to_csv(path, mode="a", header=not path.exists(), index=False)
+
+    unique_alts: set[int] = set()
 
     def _handle_result(result: dict) -> None:
         _append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
@@ -666,52 +674,42 @@ def abacus(
         _append_to_csv(result["test_summary_res_df"], summary_csv)
         _append_to_csv(result["final_parameter_summary_df"], final_param_summary_csv)
         _append_to_csv(result["test_parameter_summary_df"], test_params_summary_csv)
+        with vcf_records_tmp.open("a") as f:
+            for line in result["vcf_records"]:
+                if line:
+                    f.write(line + "\n")
+        unique_alts.update(result["vcf_unique_alts"])
 
     # Process each locus (in parallel if --threads > 1), writing results incrementally
     logger.info("Processing loci...")
     process_fn = functools.partial(_process_locus, bam=bam, ref=ref, sex=sex)
 
-    final_params_dict: dict[str, dict[Haplotype, HomozygousParameters]] = {}
-    locus_is_het_dict: dict[str, bool] = {}
-    all_consensus_calls: list[ConsensusCall] = []
-
     if threads == 1:
         for locus in loci:
-            result = process_fn(locus)
-            _handle_result(result)
-            locus_id = result["locus_id"]
-            final_params_dict[locus_id] = result["final_params"]
-            locus_is_het_dict[locus_id] = result["locus_is_het"]
-            all_consensus_calls.extend(result["final_consensus_calls"])
+            _handle_result(process_fn(locus))
     else:
         log_queue: MPQueue = MPQueue()
         queue_listener = QueueListener(log_queue, *logger.handlers, respect_handler_level=True)
         queue_listener.start()
         try:
-            with ProcessPoolExecutor(
-                max_workers=threads,
+            with Pool(
+                processes=threads,
                 initializer=_worker_init,
                 initargs=(config.to_dict(), log_queue),
-            ) as executor:
-                futures = {executor.submit(process_fn, locus): locus for locus in loci}
-                for future in as_completed(futures):
-                    result = future.result()
+                maxtasksperchild=100,  # recycle workers to release fragmented heap
+            ) as pool:
+                for result in pool.imap_unordered(process_fn, loci, chunksize=1):
                     _handle_result(result)
-                    locus_id = result["locus_id"]
-                    final_params_dict[locus_id] = result["final_params"]
-                    locus_is_het_dict[locus_id] = result["locus_is_het"]
-                    all_consensus_calls.extend(result["final_consensus_calls"])
         finally:
             queue_listener.stop()
 
     # Write VCF output
     write_vcf(
         vcf=vcf,
-        consensus_calls=all_consensus_calls,
+        vcf_records_tmp=vcf_records_tmp,
         reference=ref,
         sample_id=sample_id,
-        final_params_dict=final_params_dict,
-        locus_is_het_dict=locus_is_het_dict,
+        unique_alts=unique_alts,
     )
 
     # Render report (only if --report was provided)

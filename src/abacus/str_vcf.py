@@ -5,7 +5,6 @@ from pyfaidx import Fasta
 
 from abacus.config import config
 from abacus.consensus import ConsensusCall, contract_kmer_string
-from abacus.locus import Locus
 from abacus.parameter_estimation import HomozygousParameters
 from abacus.utils import Haplotype
 
@@ -242,57 +241,26 @@ def create_vcf_records(
 
 def write_vcf(
     vcf: Path,
-    consensus_calls: list[ConsensusCall],
-    sample_id: str,
+    vcf_records_tmp: Path,
     reference: Path,
-    final_params_dict: dict[str, dict[Haplotype, HomozygousParameters]],
-    locus_is_het_dict: dict[str, bool],
+    sample_id: str,
+    unique_alts: set[int],
 ) -> None:
     """Write STR results to VCF format."""
     # Get chromosome order from reference index file
     reference_index_file_path = reference.with_suffix(reference.suffix + ".fai")
-    chrom_order = {}
-    # Read chromosome order from reference index file
+    chrom_order: dict[str, int] = {}
     with reference_index_file_path.open() as fai_file:
         for i, row in enumerate(fai_file):
             chrom = row.strip().split("\t")[0]
             chrom_order[chrom] = i
 
+    # Read pre-computed records, sort by genomic position, write
+    records = [line for line in vcf_records_tmp.read_text().splitlines() if line]
+    records.sort(key=lambda r: (chrom_order.get(r.split("\t")[0], float("inf")), int(r.split("\t")[1])))
+
     with vcf.open("w") as vcf_file:
-        # Write VCF header
-        unique_counts = list({count for call in consensus_calls for count in call.satellite_count})
-        header = generate_vcf_header(reference, sample_id, unique_counts)
+        header = generate_vcf_header(reference, sample_id, sorted(unique_alts))
         vcf_file.write(header + "\n")
-
-        # Group consensus calls by locus
-        unique_loci: list[Locus] = []
-        for call in consensus_calls:
-            if call.locus not in unique_loci:
-                unique_loci.append(call.locus)
-
-        # Sort locus by (chrom based on reference order, start, end)
-        sorted_loci = sorted(
-            unique_loci,
-            key=lambda locus: (
-                chrom_order.get(locus.location.chrom, float("inf")),  # Sort by reference order
-                locus.location.start,
-                locus.location.end,
-            ),
-        )
-
-        # Create VCF records
-        for locus in sorted_loci:
-            # Get the locus ID
-            locus_id = locus.id
-            # Get all consensus calls for the current locus
-            calls = [call for call in consensus_calls if call.locus.id == locus_id]
-            # Get the parameters and heterozygosity status for the current locus
-            final_params = final_params_dict.get(locus_id)
-            locus_is_het = locus_is_het_dict.get(locus_id)
-            # Check if any parameters are missing
-            if final_params is None or locus_is_het is None:
-                error_message = f"Missing parameters for locus {locus_id}"
-                raise ValueError(error_message)
-            # Create VCF records for the current locus
-            records = create_vcf_records(calls, reference, final_params, locus_is_het)
-            vcf_file.write("\n".join(records) + "\n")
+        for record in records:
+            vcf_file.write(record + "\n")
