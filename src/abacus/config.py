@@ -30,6 +30,10 @@ class Config:
     tol_length_outlier_bases: int = 3  # tolerance in bases; reads within this range are always kept
     tol_length_outlier_pct: float = 0.10  # tolerance in % of median; reads within this range are always kept
 
+    # Coverage parameters
+    downsample: int = 1000
+    downsample_seed: int = 42
+
     # Output parameters
     add_consensus_to_vcf: bool = False
     add_contracted_consensus_to_vcf: bool = False

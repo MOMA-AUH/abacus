@@ -558,6 +558,22 @@ def abacus(
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.equal_length_alpha,
+    downsample: Annotated[
+        int,
+        typer.Option(
+            "--downsample",
+            help="Randomly downsample to this many reads per locus when coverage exceeds the threshold. Set to 0 to disable.",
+            rich_help_panel=CONFIGURATION,
+        ),
+    ] = config.downsample,
+    downsample_seed: Annotated[
+        int,
+        typer.Option(
+            "--downsample-seed",
+            help="Random seed for downsampling reproducibility.",
+            rich_help_panel=CONFIGURATION,
+        ),
+    ] = config.downsample_seed,
     version: bool | None = typer.Option(
         None,
         "--version",
@@ -612,6 +628,9 @@ def abacus(
     config.min_n_length_outlier_detection = min_n_length_outlier_detection
     config.tol_length_outlier_pct = tol_length_outlier_pct
     config.tol_length_outlier_bases = tol_length_outlier_bases
+
+    config.downsample = downsample
+    config.downsample_seed = downsample_seed
 
     # VCF options
     config.add_consensus_to_vcf = add_consensus_to_vcf
