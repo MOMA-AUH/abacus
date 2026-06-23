@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Built-in STR catalog bundled with the package; `--str-catalog` is now optional and defaults to the included abacus catalog
 - `--show-catalog` flag to print the built-in catalog JSON to stdout and exit (pipe to a file to use as a starting point for customization)
+- `--downsample` and `--downsample-seed` parameters to randomly subsample reads per locus when coverage exceeds a threshold
 - A version endpoint (#14)
 - A Changelog (#13)
 - A Dockerfile (#12)
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--threads` argument for multi-threading
 - `--loci-subset-file` argument to specify a text file of locus IDs to analyze
 ### Changed
+- HTML report generation is now optional; provide a path with `--report` to produce a report, or omit to skip it (useful for large catalogs)
 - Updated path logic to include an OR ("|") operator for satalites. Behind the scenes the graph is now built with networkx for easier maintainance.
 - Renamed `str_catalouges` directory to `str_catalogs` (fixing typo)
 - Fallback to `loqus_id` if there is only one satellite id, and no `VariantId` (#16)
@@ -26,10 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Long flanking reads are now handled correctly in outlier detection
 - QC filtering parameters and plot updated
 - Report updated to match new features and changes. Summary table for all loci added.
+- Strand information added to detailed locus plots and tables
+- Updated VCF output parameters for improved accuracy
+- Updated built-in STR catalog
+- Graph is now built only once per locus for improved performance
 ### Fixed
 - Typo catalog. Normally an interface breaking change, but we are still on semantic version 0.0.x (#15)
 - logpdf handling for `-Inf` values in parameter estimation and parameter estimation bug (#20)
 - Stopped flanking reads from uneccerily changing haplotype group
+- SatelliteID not correctly passed in certain configurations
+- Bug in Tukey's fence outlier detection
+- Sequence splitting causing NA values in the report
+- Interruption phasing issue when interruptions were shifted in one allele (increased gap penalty in SPOA alignment)
 
 ## [0.0.0]
 ### Added 
