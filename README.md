@@ -138,6 +138,10 @@ The following configuration parameters allow fine-tuning of the analysis:
 - `--heterozygosity-alpha`: Sensitivity cutoff for the heterozygosity test. This test focuses on differences in length between haplotypes. Default: `0.05`.
 - `--equal-length-alpha`: Sensitivity cutoff for the equal-length sequence split test. This backup test detects heterozygosity via sequence differences when haplotype lengths are equal. Default: `0.05`.
 
+#### Coverage Parameters
+- `--downsample`: Randomly downsample reads to this number per locus when coverage exceeds the threshold. Useful for high-coverage data such as PacBio PureTarget, where excessive read depth can slow analysis without improving accuracy. Set to `0` to disable downsampling. Default: `1000`.
+- `--downsample-seed`: Random seed used for downsampling, ensuring reproducible results. Default: `42`.
+
 #### Output Options
 - `--log-file`: Path to the log file. Default: `abacus.log`.
 - `--keep-temp-files`: Keep temporary files generated during analysis. Default: `False`.
@@ -172,8 +176,13 @@ In `str_catalogs/moma_repeat_variants_catalog_240521.json` you can find a compre
 ]
 ```
 
+## Other Resources
+
+- [gnomAD STR browser](https://gnomad.broadinstitute.org/short-tandem-repeats?dataset=gnomad_r4) — population-level STR variation from gnomAD v4
+- [STRipy database](https://stripy.org/database) — curated database of pathogenic STR loci
+
 ## Notes on FGF14
-FGF14 is a complex locus with multiple haplotypes and a large number of variants. In the provided catalog [provided examples](./str_catalogs/abacus_catalog.json) we have included a `FGF14_complex` entry that contains the following information:
+FGF14 is a complex locus with multiple haplotypes and a large number of variants. In the [provided catalog](./src/abacus/str_catalogs/abacus_catalog.json) we have included a `FGF14_complex` entry that contains the following information:
 
 ```json
 [
