@@ -7,7 +7,7 @@
     {
         "LocusId": "AFF2",
         "LocusStructure": "(GCC)*",
-        "ReferenceRegion": "chrX:148500638-148500683"
+        "ReferenceRegion": "chrX:148500631-148500691"
     },
     {
         "LocusId": "AR",
@@ -52,7 +52,7 @@
     {
         "LocusId": "ATXN7",
         "LocusStructure": "(CAG)*",
-        "ReferenceRegion": "chr3:63912684-63912714"
+        "ReferenceRegion": "chr3:63912685-63912715"
     },
     {
         "LocusId": "ATXN8OS",
@@ -176,18 +176,18 @@
     },
     {
         "LocusId": "HOXA13_I",
-        "LocusStructure": "(GCN)*",
-        "ReferenceRegion": "chr7:27199925-27199967"
+        "LocusStructure": "(NGC)*",
+        "ReferenceRegion": "chr7:27199924-27199966"
     },
     {
         "LocusId": "HOXA13_II",
-        "LocusStructure": "(GCN)*",
-        "ReferenceRegion": "chr7:27199826-27199862"
+        "LocusStructure": "(NGC)*",
+        "ReferenceRegion": "chr7:27199825-27199861"
     },
     {
         "LocusId": "HOXA13_III",
-        "LocusStructure": "(GCN)*",
-        "ReferenceRegion": "chr7:27199679-27199733"
+        "LocusStructure": "(NGC)*",
+        "ReferenceRegion": "chr7:27199678-27199732"
     },
     {
         "LocusId": "HOXD13",
@@ -258,7 +258,7 @@
     {
         "LocusId": "PHOX2B",
         "LocusStructure": "(GCN)*",
-        "ReferenceRegion": "chr4:41745971-41746031"
+        "ReferenceRegion": "chr4:41745972-41746032"
     },
     {
         "LocusId": "PPP2R2B",
@@ -292,15 +292,15 @@
     {
         "LocusId": "RUNX2",
         "LocusStructure": "(GCN)*",
-        "ReferenceRegion": "chr6:45422751-45422801"
+        "ReferenceRegion": "chr6:45422750-45422801"
     },
-    {
+        {
         "LocusId": "SAMD12",
         "LocusStructure": "(TAAAA)*(TGAAA)*(TAAAA)*",
         "ReferenceRegion": [
-            "chr8:118366883-118366918",
+            "chr8:118366815-118366880",
             "chr8:118366880-118366883",
-            "chr8:118366815-118366880"
+            "chr8:118366883-118366918"
         ],
         "VariantId": [
             "SAMD12_TTTTA_5P",
@@ -331,7 +331,7 @@
         "ReferenceRegion": [
             "chr16:24613439-24613479",
             "chr16:24613479-24613484",
-            "chr16:24613484-24613528"
+            "chr16:24613484-24613529"
         ],
         "VariantId": [
             "TNRC6A_TTTTA_5P",
@@ -344,7 +344,7 @@
         "LocusStructure": "(GNN)*",
         "ReferenceRegion": "chr16:17470907-17470922"
     },
-    {
+{
         "LocusId": "YEATS2",
         "LocusStructure": "(TTTTA)*(TTTCA)*",
         "ReferenceRegion": [
