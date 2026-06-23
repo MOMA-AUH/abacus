@@ -66,7 +66,7 @@ To run Abacus, you need to provide the following arguments:
 
 - `--bam`: The path to the BAM or CRAM file that contains aligned reads from the Long-Read Sequencing data.
 - `--ref`: The path to the reference FASTA file that was used to align the reads in the BAM or CRAM file.
-- `--report`: The path to the HTML file where the analysis results will be saved.
+- `--report` *(optional)*: The path to the HTML file where the analysis results will be saved. Omit to skip report generation (useful for large catalogs).
 - `--vcf`: The path to the VCF file where the STR genotyping results will be saved.
 - `--sample-id`: The identifier of the sample that you are analyzing.
 - `--sex`: The sex of the sample (default: XX). Use `XX` for female and `XY` for male.
@@ -156,7 +156,7 @@ The STR catalog is a JSON file that contains information about the STR loci that
 - `LocusStructure`: The structure of the STR locus, where each repeat unit is enclosed in parentheses and followed by an asterisk. For example, the structure of the ATXN1 locus: `(CTG)*`. The structure can contain any number of the repeat units of any length and can contain [IUPAC](https://en.wikipedia.org/wiki/International_Union_of_Pure_and_Applied_Chemistry) base symbols, such as `N` or `Y`. The structure can also contain non-repeating sequences, such as flanking regions or interruptions. For example, the structure of the HTT locus: `(CAG)*CAACAG(CCG)*`, where `CAACAG` is a non-repeating interrupting sequence between the two repeat units `(CAG)*` and `(CCG)*`. Within a repeat unit, you can also use the OR operator ("|") to specify multiple possible repeat sequences. For example, the structure `(CAG|CAA)*` indicates that the repeat unit can be either `CAG` or `CAA`, and both will be counted towards the total repeat count for that unit.
 - `ReferenceRegion`: The genomic region of the STR locus in the reference genome. This can be a single region of the entire structure of the STR locus, or a list of regions that cover the entire structure of the STR locus. The regions should be in the format `chr:start-end`, where `chr` is the chromosome name and `start` and `end` are the start and end positions of the region, respectively.
 
-In `str_catalogs/moma_repeat_variants_catalog_240521.json` you can find a comprehensive list of STRs that are known to be variable in the human genome, which can be used as a starting point for your analysis. You can also create your own STR catalog by following the format described above. Underneath is an example of the structure of the STR catalog:
+A built-in catalog is bundled with the package and used by default. Run `abacus --show-catalog > my_catalog.json` to export it as a starting point for customization. You can also create your own STR catalog from scratch by following the format described above. Underneath is an example of the structure of the STR catalog:
 
 ```json
 [
@@ -190,7 +190,7 @@ FGF14 is a complex locus with multiple haplotypes and a large number of variants
         "LocusId": "FGF14_complex",
         "LocusStructure": "(TAGTCATAGTACCCCAA)*(GAA)*",
         "ReferenceRegion": "chr13:102161565-102161726"
-    },
+    }
 ]
 ```
 
