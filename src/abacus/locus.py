@@ -23,7 +23,7 @@ class Satellite:
     """Class for keeping data for a satellite"""
 
     id: str
-    sequence: str
+    sequences: list[str]
     location: Location
     skippable: bool
 
@@ -46,7 +46,7 @@ class Locus:
             "locus_chrom": self.location.chrom,
             "locus_start": self.location.start,
             "locus_end": self.location.end,
-            "satellites_str": "-".join([sat.sequence for sat in self.satellites]),
+            "satellites_str": "-".join(["|".join(sat.sequences) for sat in self.satellites]),
             "structure": self.structure,
         }
 
@@ -86,12 +86,12 @@ def load_loci_from_json(json_path: Path, ref_path: Path) -> list[Locus]:
 
         # Get satellite ids
         if "VariantId" in item:
-            satellite_ids = item["VariantId"]
+            satellite_ids = item["VariantId"] if isinstance(item["VariantId"], list) else [item["VariantId"]]
         elif len(satellite_seqs) == 1:
             satellite_ids = [f"{locus_id}"]
         else:
             satellite_ids = [f"{locus_id}.{i + 1}" for i in range(len(satellite_seqs))]
-        
+
         # Create satellites
         satellites = create_satellites(satellite_seqs, satellites_skippable, satellite_locations, satellite_ids, locus_id)
 
@@ -114,7 +114,7 @@ def load_loci_from_json(json_path: Path, ref_path: Path) -> list[Locus]:
 
 
 def create_satellites(
-    satellites_seq: list[str],
+    satellites_seq: list[list[str]],
     satellites_skippable: list[bool],
     locations: list[Location],
     satelitte_ids: list[str],
@@ -137,7 +137,7 @@ def create_satellites(
     return [
         Satellite(
             id=idx,
-            sequence=sat,
+            sequences=sat,
             skippable=skip,
             location=location,
         )
@@ -145,17 +145,19 @@ def create_satellites(
     ]
 
 
-def process_str_pattern(str_pattern: str) -> tuple[list[str], list[bool], list[str]]:
+def process_str_pattern(str_pattern: str) -> tuple[list[list[str]], list[bool], list[str]]:
     # Extract satellites and satellite operators
-    satellite_pattern = r"(?<=\()(?:[GCATNRYSWKMBDHV]+)(?=\)[\*\+])"
+    # Allow | inside () for alternation syntax, e.g. (CAG|CAA)+
+    satellite_pattern = r"(?<=\()(?:[GCATNRYSWKMBDHV|]+)(?=\)[\*\+])"
     satellite_operator_pattern = r"(?<=\))([\*\+])"
 
-    satellites = re.findall(satellite_pattern, str_pattern)
+    # Split each match on | to get a list of alternatives per satellite
+    satellites = [seq.split("|") for seq in re.findall(satellite_pattern, str_pattern)]
     satellite_operators = re.findall(satellite_operator_pattern, str_pattern)
     satellites_skippable = [op == "*" for op in satellite_operators]
 
     # Extract breaks
-    break_pattern = r"(?<=\)[\*\+])(?:[GCATN]*)(?=\()"
+    break_pattern = r"(?<=\)[\*\+])(?:[GCATNRYSWKMBDHV]*)(?=\()"
     internal_breaks = re.findall(break_pattern, str_pattern)
     pre_break = str_pattern[: str_pattern.find("(")]
     post_break = str_pattern[str_pattern.rfind(")") + 2 :]

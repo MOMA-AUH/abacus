@@ -1,4 +1,7 @@
+import logging
+import random
 from pathlib import Path
+from typing import Literal
 
 import pysam
 
@@ -6,10 +9,13 @@ from abacus.config import config
 from abacus.locus import Locus
 from abacus.read import Read
 
+logger = logging.getLogger()
 
-def get_reads_in_locus(bam: Path, locus: Locus) -> list[Read]:
+
+def get_reads_in_locus(bam: Path, locus: Locus, ref: Path) -> list[Read]:
     # Get alignments overlapping the region
-    with pysam.AlignmentFile(str(bam), "rb") as bamfile:
+    mode: Literal["rb", "rc"] = "rc" if str(bam).lower().endswith(".cram") else "rb"
+    with pysam.AlignmentFile(str(bam), mode, reference_filename=str(ref)) as bamfile:
         alignments = list(bamfile.fetch(locus.location.chrom, locus.location.start, locus.location.end))
 
         # Return empty list if no alignments found
@@ -38,6 +44,11 @@ def get_reads_in_locus(bam: Path, locus: Locus) -> list[Read]:
             # Find the primary alignment and add it to the primary alignments
             primary_alignment = [cand for cand in primary_candidates if cand.query_name == ali.query_name]
             primary_alignments.extend(primary_alignment)
+
+    # Downsample if coverage exceeds threshold
+    if config.downsample > 0 and len(primary_alignments) > config.downsample:
+        logger.warning(f"High coverage at {locus.id} ({len(primary_alignments)} reads). Downsampling to {config.downsample}.")
+        primary_alignments = random.Random(config.downsample_seed).sample(primary_alignments, config.downsample)
 
     # Convert primary alignments to Read objects
     reads = [Read.from_alignment(alignment=alignment, locus=locus) for alignment in primary_alignments]

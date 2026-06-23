@@ -5,30 +5,41 @@ import pysam
 import pytest
 
 from abacus.config import config
-from abacus.graph import Locus, Read, get_graph_alignments, get_kmer_string, get_reference_sequence_from_path, get_satellite_counts_from_path
+from abacus.graph import (
+    Locus,
+    Read,
+    create_repeat_graph,
+    get_graph_alignments,
+    get_kmer_string,
+    get_reference_sequence_from_path,
+    get_satellite_counts_from_path,
+)
 from abacus.locus import Location, Satellite, create_satellites, process_str_pattern
 
 
 @pytest.mark.parametrize(
-    "structure, read, expected_satellite_counts",
+    "structure, read, expected_satellite_counts, expected_str_reference",
     [
         # Single satellite tests
         pytest.param(
             "(AGA)+",
             "AGA",
             [1],
+            "AGA",
             id="Single satellite x 1",
         ),
         pytest.param(
             "(CAG)+",
             "CAG" * 10,
             [10],
+            "CAG" * 10,
             id="Single satellite x 10",
         ),
         pytest.param(
             "(TTA)+",
             "TTA" * 100,
             [100],
+            "TTA" * 100,
             id="Single satellite x 100",
         ),
         # Multiple satellites tests
@@ -36,6 +47,7 @@ from abacus.locus import Location, Satellite, create_satellites, process_str_pat
             "(AGA)+(CAG)+",
             "AGA" * 3 + "CAG" * 5,
             [3, 5],
+            "AGA" * 3 + "CAG" * 5,
             id="Two satellites x (3, 5)",
         ),
         # Ambiguous bases
@@ -48,42 +60,49 @@ from abacus.locus import Location, Satellite, create_satellites, process_str_pat
             "(ANA)+",
             "AGA",
             [1],
+            "AGA",
             id="Ambiguity, N: x (1)",
         ),
         pytest.param(
             "(AGA)+(ANA)+",
             "AGA" * 5 + "ATA" * 3,
             [5, 3],
+            "AGA" * 5 + "ATA" * 3,
             id="Ambiguity, N: x (5 ,3)",
         ),
         pytest.param(
             "(N)+(AGA)+",
             "T" * 5 + "AGA",
             [5, 1],
+            "T" * 5 + "AGA",
             id="Ambiguity, N: x (5, 1)",
         ),
         pytest.param(
             "(N)+",
             "T" * 19,
             [19],
+            "T" * 19,
             id="Ambiguity, N: x (19)",
         ),
         pytest.param(
             "(ARA)+",
             "AGA",
             [1],
+            "AGA",
             id="Ambiguity, R: x (1)",
         ),
         pytest.param(
             "(ATA)+(ARA)+",
             "ATA" * 5 + "AGA" * 3,
             [5, 3],
+            "ATA" * 5 + "AGA" * 3,
             id="Ambiguity, R: x (5 ,3)",
         ),
         pytest.param(
             "(R)+(CAC)+(Y)+",
             "G" * 5 + "CAC" * 3 + "T" * 7,
             [5, 3, 7],
+            "G" * 5 + "CAC" * 3 + "T" * 7,
             id="Ambiguity, R,Y: x (5, 3, 7)",
         ),
         # Skippability
@@ -91,37 +110,43 @@ from abacus.locus import Location, Satellite, create_satellites, process_str_pat
             "(TTC)*",
             "",
             [0],
+            "",
             id="Skippability x 0",
         ),
         pytest.param(
             "(TTC)*",
             "TTC" * 17,
             [17],
+            "TTC" * 17,
             id="Skippability x 17",
         ),
         pytest.param(
             "(AGA)*(CAG)*",
             "",
             [0, 0],
+            "",
             id="Skippability x (0, 0)",
         ),
         pytest.param(
             "(AGA)*(CAG)*",
             "AGA" * 11 + "CAG" * 13,
             [11, 13],
+            "AGA" * 11 + "CAG" * 13,
             id="Skippability x (11, 13)",
         ),
         pytest.param(
             "(AGA)*(CAG)*",
             "CAG",
             [0, 1],
+            "CAG",
             id="Skippability x (0, 1)",
         ),
-        # Skipability with N
+        # Skippability with N
         pytest.param(
             "(N)*(AGA)*",
             "T" * 0 + "AGA" * 7,
             [0, 7],
+            "AGA" * 7,
             id="Skippability with N x (0, 7)",
         ),
         # Breaks
@@ -129,36 +154,42 @@ from abacus.locus import Location, Satellite, create_satellites, process_str_pat
             "(AGA)*TTTTT(CAG)*",
             "AGA" * 0 + "TTTTT" + "CAG" * 0,
             [0, 0],
+            "TTTTT",
             id="Breaks: Internal x (0, 0)",
         ),
         pytest.param(
             "(AGA)*TTTTT(CAG)*",
             "AGA" * 7 + "TTTTT" + "CAG" * 0,
             [7, 0],
+            "AGA" * 7 + "TTTTT",
             id="Breaks: Internal x (7, 0)",
         ),
         pytest.param(
             "(AGA)*TTTTT(CAG)*",
             "AGA" * 0 + "TTTTT" + "CAG" * 5,
             [0, 5],
+            "TTTTT" + "CAG" * 5,
             id="Breaks: Internal x (0, 5)",
         ),
         pytest.param(
             "(AGA)*TTTTT(CAG)*",
             "AGA" * 7 + "TTTTT" + "CAG" * 5,
             [7, 5],
+            "AGA" * 7 + "TTTTT" + "CAG" * 5,
             id="Breaks: Internal x (7, 5)",
         ),
         pytest.param(
             "AAC(AAG)*(CAG)*AGG",
             "AAC" + "AAG" * 11 + "CAG" * 13 + "AGG",
             [11, 13],
+            "AAC" + "AAG" * 11 + "CAG" * 13 + "AGG",
             id="Breaks: Pre and post x (11, 13)",
         ),
         pytest.param(
             "AAC(AAG)*TTT(CAG)*AGG",
             "AAC" + "AAG" * 3 + "TTT" + "CAG" * 2 + "AGG",
             [3, 2],
+            "AAC" + "AAG" * 3 + "TTT" + "CAG" * 2 + "AGG",
             id="Breaks: Pre, internal and post x (3, 2)",
         ),
         # Edge cases
@@ -166,29 +197,98 @@ from abacus.locus import Location, Satellite, create_satellites, process_str_pat
             "(AGA)+(CAG)*",
             "AGA" * 0 + "CAG" * 3,
             [1, 2],
+            None,  # str_reference != read: forced AGA mismatch due to + constraint
             id="Edge case: Forced mismatch with +",
         ),
         pytest.param(
             "(TTTTTTTTTC)+",
             "AAAAAAAAAC" * 29,
             [29],
+            None,  # str_reference != read: high-mismatch satellite
             id="Edge case: High percentage of mismatches in satellite",
         ),
         pytest.param(
             "(NTN)+(TNT)+",
             "ATG" * 3 + "TAT" * 17,
             [3, 17],
+            "ATG" * 3 + "TAT" * 17,
             id="Edge case: High percentage of Ns in satellites",
         ),
         pytest.param(
             "(AGN)*",
             "AGT" * 100,
             [100],
+            "AGT" * 100,
             id="Edge case: Many copies",
+        ),
+        # OR operator tests
+        pytest.param(
+            "(CAG|CAA)+",
+            "CAG" * 5,
+            [5],
+            "CAG" * 5,
+            id="OR operator: pure CAG x 5",
+        ),
+        pytest.param(
+            "(CAG|CAA)+",
+            "CAA" * 5,
+            [5],
+            "CAA" * 5,
+            id="OR operator: pure CAA x 5",
+        ),
+        pytest.param(
+            "(CAG|CAA)*",
+            "",
+            [0],
+            "",
+            id="OR operator: skippable x 0",
+        ),
+        pytest.param(
+            "(CAG|CAA)*",
+            "CAG" * 8,
+            [8],
+            "CAG" * 8,
+            id="OR operator: skippable CAG x 8",
+        ),
+        pytest.param(
+            "(CAG|CAA)+(CGG)+",
+            "CAG" * 3 + "CGG" * 4,
+            [3, 4],
+            "CAG" * 3 + "CGG" * 4,
+            id="OR operator: two satellites, CAG branch x (3, 4)",
+        ),
+        pytest.param(
+            "(CAG|CAA)+(CGG)+",
+            "CAA" * 3 + "CGG" * 4,
+            [3, 4],
+            "CAA" * 3 + "CGG" * 4,
+            id="OR operator: two satellites, CAA branch x (3, 4)",
+        ),
+        # Mixed alternation: some copies use one alternative, some use the other
+        pytest.param(
+            "(CGG|CAA)+",
+            "CGG" * 2 + "CAA" + "CGG" * 2,
+            [5],
+            "CGG" * 2 + "CAA" + "CGG" * 2,
+            id="OR operator: mixed alts, 1 CAA singlet inside CGG repeats",
+        ),
+        pytest.param(
+            "(CGG|CAA)+",
+            "CGG" * 4 + "CAA" + "CGG" * 3 + "CAA" + "CGG" * 2,
+            [11],
+            "CGG" * 4 + "CAA" + "CGG" * 3 + "CAA" + "CGG" * 2,
+            id="OR operator: mixed alts, 2 CAA singlets scattered in CGG repeats",
+        ),
+        pytest.param(
+            "(CAG|CAA)+",
+            "CAG" * 5 + "CAA" + "CAG" * 4,
+            [10],
+            "CAG" * 5 + "CAA" + "CAG" * 4,
+            id="OR operator: mixed alts, CAA singlet inside CAG repeats",
         ),
     ],
 )
-def test_get_satellite_counts_from_path(structure, read, expected_satellite_counts):
+def test_get_satellite_counts_from_path(structure, read, expected_satellite_counts, expected_str_reference):
     alphabet = "ATCG"
 
     # Set seed for reproducibility
@@ -240,12 +340,14 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
         ),
     ]
 
-    graph_alignments = get_graph_alignments(reads, locus)
+    graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
     graph_alignment = next(a for a in graph_alignments if a.name == read_id)
     path = graph_alignment.path
     satellite_counts = get_satellite_counts_from_path(locus=locus, path=path)
 
     assert satellite_counts == expected_satellite_counts
+    if expected_str_reference is not None:
+        assert graph_alignment.str_reference == expected_str_reference
 
 
 @pytest.mark.parametrize(
@@ -261,15 +363,15 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
         pytest.param(
             "(CAG)*",
             "CAG" * 10,
-            "-".join(["CAG"] * 10),
-            "-".join(["CAG"] * 10),
+            "|".join(["CAG"] * 10),
+            "|".join(["CAG"] * 10),
             id="Single satellite x 10",
         ),
         pytest.param(
             "(CAG)*",
             "CAG" * 4 + "TTT" + "CAG" * 5,
-            "-".join(["CAG"] * 10),
-            "-".join(["CAG"] * 4 + ["TTT"] + ["CAG"] * 5),
+            "|".join(["CAG"] * 10),
+            "|".join(["CAG"] * 4 + ["TTT"] + ["CAG"] * 5),
             id="Single w error satellite x 10",
         ),
     ],
@@ -326,7 +428,7 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
         ),
     ]
 
-    graph_alignments = get_graph_alignments(reads=reads, locus=locus)
+    graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
     graph_alignment = next(a for a in graph_alignments if a.name == read_id)
 
     satellite_counts = get_satellite_counts_from_path(locus=locus, path=graph_alignment.path)
@@ -382,10 +484,11 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
         ),
     ],
 )
-def test_get_reference_sequence_from_path(path: list[str], reference_seq: str, expected_reference: str):
-    # Create a dummy locus
+def test_get_reference_sequence_from_path(path: list[str], reference_seq: str, expected_reference: str) -> None:
+    # Create a dummy locus and the corresponding repeat graph
     locus = create_synthetic_simple_locus(reference_seq)
-    reference = get_reference_sequence_from_path(path, locus)
+    graph = create_repeat_graph(locus)
+    reference = get_reference_sequence_from_path(path, locus, graph)
     assert reference == expected_reference
 
 
@@ -400,20 +503,20 @@ def create_aligned_segment(query_name: str, query_sequence: str, mm_tag: str, ml
     return a
 
 
-def create_synthetic_simple_locus(satellite_seq: str):
+def create_synthetic_simple_locus(satellite_seq: str) -> Locus:
     # Create random anchors
     left_anchor = ""
     right_anchor = ""
 
     # Create a simple locus with one satellite
-    locus = Locus(
+    return Locus(
         id="test",
         structure="test",
         location=Location(chrom="chr1", start=1000, end=2000),
         satellites=[
             Satellite(
                 id="test",
-                sequence=satellite_seq,
+                sequences=[satellite_seq],
                 location=Location("chr1", 1000, 2000),
                 skippable=False,
             ),
@@ -422,7 +525,6 @@ def create_synthetic_simple_locus(satellite_seq: str):
         left_anchor=left_anchor,
         right_anchor=right_anchor,
     )
-    return locus
 
 
 # Note: Probs are represented with ASCII, i.e.:

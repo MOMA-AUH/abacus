@@ -7,19 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     
 ## [Unreleased]
 ### Added
-### Changed
-### Fixed
-
-## [v1.1.0]
-### Added
+- Built-in STR catalog bundled with the package; `--str-catalog` is now optional and defaults to the included abacus catalog
+- `--show-catalog` flag to print the built-in catalog JSON to stdout and exit (pipe to a file to use as a starting point for customization)
 - A version endpoint (#14)
 - A Changelog (#13)
 - A Dockerfile (#12)
-- MIT License file (#21)
+- Support for CRAM files (#8)
+- Backup heterozygosity detection step when haplotypes share the same repeat count. This splits the reads using differences in the read sequences e.g. allele specific interruptions.
+- Sequence length outlier detection and filtering. The `--length-outlier-tolerance` parameter is used to control the tolerance window around the haplotype median.
+- `--threads` argument for multi-threading
+- `--loci-subset-file` argument to specify a text file of locus IDs to analyze
 ### Changed
+- Updated path logic to include an OR ("|") operator for satalites. Behind the scenes the graph is now built with networkx for easier maintainance.
+- Renamed `str_catalouges` directory to `str_catalogs` (fixing typo)
 - Fallback to `loqus_id` if there is only one satellite id, and no `VariantId` (#16)
+- Migrated packaging from `setup.py` to `pyproject.toml`
+- Final parameter estimation is now performed using the homozygote restricted to H1, H2, and HOM read groups
+- Long flanking reads are now handled correctly in outlier detection
+- QC filtering parameters and plot updated
+- Report updated to match new features and changes. Summary table for all loci added.
 ### Fixed
 - Typo catalog. Normally an interface breaking change, but we are still on semantic version 0.0.x (#15)
+- logpdf handling for `-Inf` values in parameter estimation and parameter estimation bug (#20)
+- Stopped flanking reads from uneccerily changing haplotype group
 
 ## [0.0.0]
 ### Added 

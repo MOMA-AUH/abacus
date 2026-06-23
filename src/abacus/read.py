@@ -84,7 +84,7 @@ class FilteredRead(Read):
 
 
 def get_5mc_modification_probs(alignment: pysam.AlignedSegment) -> str:
-    sequence = alignment.query_sequence if alignment.query_sequence else ""
+    sequence = alignment.query_sequence or ""
     mod_5mc_probs = "0" * len(sequence)
 
     # Check if alignment has modified bases
