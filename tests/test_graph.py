@@ -340,7 +340,7 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
         ),
     ]
 
-    graph_alignments = get_graph_alignments(reads, locus)
+    graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
     graph_alignment = next(a for a in graph_alignments if a.name == read_id)
     path = graph_alignment.path
     satellite_counts = get_satellite_counts_from_path(locus=locus, path=path)
@@ -428,7 +428,7 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
         ),
     ]
 
-    graph_alignments = get_graph_alignments(reads=reads, locus=locus)
+    graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
     graph_alignment = next(a for a in graph_alignments if a.name == read_id)
 
     satellite_counts = get_satellite_counts_from_path(locus=locus, path=graph_alignment.path)
@@ -484,7 +484,7 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
         ),
     ],
 )
-def test_get_reference_sequence_from_path(path: list[str], reference_seq: str, expected_reference: str):
+def test_get_reference_sequence_from_path(path: list[str], reference_seq: str, expected_reference: str) -> None:
     # Create a dummy locus and the corresponding repeat graph
     locus = create_synthetic_simple_locus(reference_seq)
     graph = create_repeat_graph(locus)
@@ -503,13 +503,13 @@ def create_aligned_segment(query_name: str, query_sequence: str, mm_tag: str, ml
     return a
 
 
-def create_synthetic_simple_locus(satellite_seq: str):
+def create_synthetic_simple_locus(satellite_seq: str) -> Locus:
     # Create random anchors
     left_anchor = ""
     right_anchor = ""
 
     # Create a simple locus with one satellite
-    locus = Locus(
+    return Locus(
         id="test",
         structure="test",
         location=Location(chrom="chr1", start=1000, end=2000),
@@ -525,7 +525,6 @@ def create_synthetic_simple_locus(satellite_seq: str):
         left_anchor=left_anchor,
         right_anchor=right_anchor,
     )
-    return locus
 
 
 # Note: Probs are represented with ASCII, i.e.:

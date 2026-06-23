@@ -86,12 +86,12 @@ def load_loci_from_json(json_path: Path, ref_path: Path) -> list[Locus]:
 
         # Get satellite ids
         if "VariantId" in item:
-            satellite_ids = item["VariantId"]
+            satellite_ids = item["VariantId"] if isinstance(item["VariantId"], list) else [item["VariantId"]]
         elif len(satellite_seqs) == 1:
             satellite_ids = [f"{locus_id}"]
         else:
             satellite_ids = [f"{locus_id}.{i + 1}" for i in range(len(satellite_seqs))]
-        
+
         # Create satellites
         satellites = create_satellites(satellite_seqs, satellites_skippable, satellite_locations, satellite_ids, locus_id)
 

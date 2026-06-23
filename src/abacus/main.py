@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import functools
+import logging as _logging
+import math
 import subprocess
+import time
+from importlib.resources import files
+from logging.handlers import QueueHandler, QueueListener
+from multiprocessing import Pool
+from multiprocessing import Queue as MPQueue
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import pandas as pd
 import typer
@@ -10,33 +18,31 @@ import typer
 from abacus import __version__
 from abacus.config import config
 from abacus.consensus import ConsensusCall, create_consensus_calls, update_flanking_labels_based_on_consensus
-from abacus.filtering import filter_read_calls
+from abacus.filtering import filter_low_qual_read_calls, filter_outlier_qual_read_calls
 from abacus.graph import (
-    FilteredRead,
     ReadCall,
     get_read_calls,
 )
 from abacus.group_summary import calculate_final_group_summaries
-from abacus.haplotyping import run_haplotyping, summarize_parameter_estimates
+from abacus.haplotyping import run_haplotyping, summarize_final_parameter_estimates, summarize_test_parameter_estimates
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
-from abacus.parameter_estimation import HeterozygousParameters, HomozygousParameters
 from abacus.preprocess import get_reads_in_locus
-from abacus.str_vcf import write_vcf
+from abacus.str_vcf import create_vcf_records, write_vcf
 from abacus.utils import Haplotype, Sex
 
 ascii_art = r"""
-╔═══════════════════════════════════════════════════════════════════╗
-║    =|=                                                   =--|--=  ║
-║   =-|-=                    --- ~•~ ---                    =-|-=   ║
-║  =--|--=      _     ___     _      ___   _   _    ___      =|=    ║
-║   =-|-=      / \   | _ )   / \    / __/ | | | |  / __/    =-|-=   ║
-║    =|=      / _ \  | _ \  / _ \  | (__  | |_| |  \__ \   =--|--=  ║
-║   =-|-=    /_/ \_\ |___/ /_/ \_\  \___\  \___/   \___/    =-|-=   ║
-║  =--|--=                                                   =|=    ║
-║   =-|-=                    --- ~•~ ---                    =-|-=   ║
-║    =|=                                                   =--|--=  ║
-╚═══════════════════════════════════════════════════════════════════╝
+╔═════════════════════════════════════════════════════════════════════════╗
+║   ■─┼─□                                                         □─┼─■   ║
+║  □──┼──■  ────@@@────@@──────────────────────────────────────    ○┼●    ║
+║   ○─┼─●   ──@@───@@──@@@@@@───@@@@@───@@@@@──@@────@@──@@@@──   ●─┼─○   ║
+║    □┼■    ─@@─────@@─@@───@@─@@───@@─@@───@@─@@────@@─@@───@─  □──┼──■  ║
+║   □─┼─■   ─@@@@@@@@@─@@───@@─@@───@@─@@──────@@────@@───@@───   ■─┼─□   ║
+║  ●──┼──○  ─@@─────@@─@@───@@─@@───@@─@@───@@─@@@───@@─@───@@─    ■┼□    ║
+║   ■─┼─□   ─@@─────@@─@@@@@@───@@@@─@──@@@@@──@@─@@@@───@@@@──   ○─┼─●   ║
+║    ●┼○  ─────────────────────────────────────────────────────  ●──┼──○  ║
+║   ○─┼─●                                                         ■─┼─□   ║
+╚═════════════════════════════════════════════════════════════════════════╝
 """
 
 
@@ -48,6 +54,10 @@ OPTIONS = "Other Options"
 CONFIGURATION = "Algorithm Configuration"
 
 
+def _default_catalog_path() -> Path:
+    return Path(str(files("abacus").joinpath("str_catalogs/abacus_catalog.json")))
+
+
 # Set up the CLI
 app = typer.Typer(
     rich_markup_mode="rich",
@@ -55,10 +65,172 @@ app = typer.Typer(
     add_completion=False,
 )
 
+
 def version_callback(value: bool):
     if value:
         typer.echo(f"Abacus version {__version__}")
         raise typer.Exit()
+
+
+def show_catalog_callback(value: bool) -> None:
+    if value:
+        typer.echo(_default_catalog_path().read_text(), nl=False)
+        raise typer.Exit()
+
+
+_locus_context: dict[str, str] = {"id": ""}
+
+
+class _LocusFilter(_logging.Filter):
+    """Prepends [locus_id] to log records that don't already contain the locus ID."""
+
+    def filter(self, record: _logging.LogRecord) -> bool:
+        locus_id = _locus_context["id"]
+        if locus_id and locus_id not in str(record.msg):
+            record.msg = f"[{locus_id}] {record.msg}"
+        return True
+
+
+def _worker_init(config_dict: dict, log_queue: MPQueue) -> None:
+    """Initializer for worker processes: set up queue logging and restore config."""
+    from abacus.config import config as _config
+
+    root = _logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(QueueHandler(log_queue))
+    for k, v in config_dict.items():
+        setattr(_config, k, v)
+
+
+def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
+    """Process a single locus and return all results as a dict."""
+    _locus_context["id"] = locus.id
+    locus_t0 = time.perf_counter()
+    logger.info("Locus: %s  |  %s  |  %s:%d-%d", locus.id, locus.structure, locus.location.chrom, locus.location.start, locus.location.end)
+
+    # Initialize list to keep track of removed read calls for final summary
+    all_removed_read_calls: list[ReadCall] = []
+
+    # Get reads in locus
+    t0 = time.perf_counter()
+    reads = get_reads_in_locus(bam, locus, ref)
+    logger.debug(f"[TIMING] {locus.id} get_reads_in_locus: {time.perf_counter() - t0:.3f}s  ({len(reads)} reads)")
+
+    # Handle ploidy
+    if len(reads) < config.min_haplotyping_depth:
+        logger.warning(f"Low coverage for locus {locus.id}. Setting ploidy to 1.")
+        ploidy = 1
+    elif locus.location.chrom == "chrY":
+        ploidy = sex.value.count("Y")
+    elif locus.location.chrom == "chrX":
+        ploidy = sex.value.count("X")
+    else:
+        ploidy = 2
+
+    # Call STR in individual reads
+    t0 = time.perf_counter()
+    read_calls, unmapped_reads = get_read_calls(reads, locus)
+    logger.debug(f"[TIMING] {locus.id} get_read_calls: {time.perf_counter() - t0:.3f}s  ({len(read_calls)} calls, {len(unmapped_reads)} unmapped)")
+
+    # Prefilter low quality read calls
+    t0 = time.perf_counter()
+    good_read_calls, low_quality_read_calls = filter_low_qual_read_calls(read_calls=read_calls)
+    all_removed_read_calls.extend(low_quality_read_calls)
+    logger.debug(
+        f"[TIMING] {locus.id} filter_low_qual_read_calls: {time.perf_counter() - t0:.3f}s  ({len(good_read_calls)} kept, {len(low_quality_read_calls)} removed)",
+    )
+
+    # First round haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
+    t0 = time.perf_counter()
+    initial_grouped_read_calls, initial_haplotyping_outliers, _, _, _, _ = run_haplotyping(
+        read_calls=good_read_calls,
+        ploidy=ploidy,
+    )
+    all_removed_read_calls.extend(initial_haplotyping_outliers)
+    logger.debug(
+        f"[TIMING] {locus.id} run_haplotyping: {time.perf_counter() - t0:.3f}s  ({len(initial_grouped_read_calls)} grouped, {len(initial_haplotyping_outliers)} removed)",
+    )
+
+    # Filter QC outliers per haplotype group
+    good_read_calls, outlier_quality_read_calls = filter_outlier_qual_read_calls(read_calls=initial_grouped_read_calls)
+    all_removed_read_calls.extend(outlier_quality_read_calls)
+
+    # Second round haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
+    t0 = time.perf_counter()
+    grouped_read_calls, haplotyping_outliers, het_params, hom_params, final_params, test_summary_res_df = run_haplotyping(
+        read_calls=good_read_calls,
+        ploidy=ploidy,
+    )
+    all_removed_read_calls.extend(haplotyping_outliers)
+    logger.debug(
+        f"[TIMING] {locus.id} run_haplotyping: {time.perf_counter() - t0:.3f}s  ({len(grouped_read_calls)} grouped, {len(haplotyping_outliers)} removed)",
+    )
+
+    # TODO: Make this nicer
+    locus_is_het = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2] if grouped_read_calls else False
+
+    final_parameter_summary_df = summarize_final_parameter_estimates(final_params)
+    test_parameter_summary_df = summarize_test_parameter_estimates(het_params, hom_params)
+
+    # Create raw consensus for each haplotype
+    t0 = time.perf_counter()
+    unique_haplotypes = {r.haplotype for r in grouped_read_calls}
+    raw_consensus_calls: list[ConsensusCall] = []
+    for haplotype in unique_haplotypes:
+        haplotyped_read_calls = [r for r in grouped_read_calls if r.haplotype == haplotype]
+        raw_consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype))
+
+    # Re-group flanking read calls based on the raw consensus
+    grouped_read_calls = update_flanking_labels_based_on_consensus(
+        read_calls=grouped_read_calls,
+        consensus_read_calls=raw_consensus_calls,
+    )
+
+    # Create final consensus for each haplotype
+    unique_haplotypes = {r.haplotype for r in grouped_read_calls}
+    final_consensus_calls: list[ConsensusCall] = []
+    for haplotype in unique_haplotypes:
+        haplotyped_read_calls = [r for r in grouped_read_calls if r.haplotype == haplotype]
+        final_consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype))
+    logger.debug(f"[TIMING] {locus.id} consensus: {time.perf_counter() - t0:.3f}s")
+
+    grouped_read_calls.extend(all_removed_read_calls)
+    haplotyping_df = calculate_final_group_summaries(grouped_read_calls)
+    test_summary_res_df["locus_id"] = locus.id
+
+    satellite_df_list = [
+        pd.DataFrame(
+            {"locus_id": locus.id, "idx": sat_idx, "satellite": "|".join(locus.satellites[sat_idx].sequences)},
+            index=[0],
+        )
+        for sat_idx in range(len(locus.satellites))
+    ]
+    satellite_df = pd.concat(satellite_df_list)
+    haplotyping_df = haplotyping_df.merge(satellite_df, on="idx", how="left")
+    final_parameter_summary_df = final_parameter_summary_df.merge(satellite_df, on="idx", how="left")
+    test_parameter_summary_df = test_parameter_summary_df.merge(satellite_df, on="idx", how="left")
+
+    # Generate VCF records here while final_consensus_calls, final_params, and locus_is_het are in scope,
+    # so the main process never needs to accumulate the full ConsensusCall/params objects.
+    vcf_records = create_vcf_records(final_consensus_calls, ref, final_params, locus_is_het)
+    vcf_unique_alts = {int(v) for params in final_params.values() for v in params.mean if not math.isnan(v)}
+
+    logger.debug(f"[TIMING] {locus.id} TOTAL: {time.perf_counter() - locus_t0:.3f}s")
+    _locus_context["id"] = ""
+
+    return {
+        "locus_id": locus.id,
+        "grouped_read_calls": grouped_read_calls,
+        "unmapped_reads": unmapped_reads,
+        "final_consensus_calls": final_consensus_calls,
+        "haplotyping_df": haplotyping_df,
+        "test_summary_res_df": test_summary_res_df,
+        "final_parameter_summary_df": final_parameter_summary_df,
+        "test_parameter_summary_df": test_parameter_summary_df,
+        "vcf_records": vcf_records,
+        "vcf_unique_alts": vcf_unique_alts,
+    }
+
 
 @app.command(
     help="[bold]Abacus[/bold]: A tool for STR genotyping, haplotyping and visualization 🧬",
@@ -71,7 +243,7 @@ def abacus(
         typer.Option(
             "--bam",
             "-i",
-            help="Input BAM file",
+            help="Input BAM or CRAM file",
             rich_help_panel=INPUTS,
             exists=True,
             file_okay=True,
@@ -94,35 +266,7 @@ def abacus(
             resolve_path=True,
         ),
     ],
-    str_catalog: Annotated[
-        Path,
-        typer.Option(
-            "--str-catalog",
-            "-s",
-            help="STR catalog JSON file",
-            rich_help_panel=INPUTS,
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            resolve_path=True,
-        ),
-    ],
     # Outputs
-    report: Annotated[
-        Path,
-        typer.Option(
-            "--report",
-            "-o",
-            help="Output HTML report",
-            rich_help_panel=OUTPUTS,
-            exists=False,
-            file_okay=True,
-            dir_okay=False,
-            writable=True,
-            resolve_path=True,
-        ),
-    ],
     vcf: Annotated[
         Path,
         typer.Option(
@@ -147,12 +291,51 @@ def abacus(
             rich_help_panel=OPTIONS,
         ),
     ],
+    report: Annotated[
+        Path | None,
+        typer.Option(
+            "--report",
+            "-o",
+            help="Output HTML report",
+            rich_help_panel=OUTPUTS,
+            exists=False,
+            file_okay=True,
+            dir_okay=False,
+            writable=True,
+            resolve_path=True,
+        ),
+    ] = None,
+    str_catalog: Annotated[
+        Path | None,
+        typer.Option(
+            "--str-catalog",
+            "-s",
+            help="STR catalog JSON file [default: built-in abacus catalog]",
+            rich_help_panel=INPUTS,
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+        ),
+    ] = None,
     loci_subset: Annotated[
         list[str] | None,
         typer.Option(
             "--loci-subset",
-            help="Subset of loci to process. If not provided, all loci will be processed. Use multiple times to specify multiple loci.",
+            help="Loci to process (repeatable). Defaults to all loci in the catalog.",
             rich_help_panel=OPTIONS,
+        ),
+    ] = None,
+    loci_subset_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--loci-subset-file",
+            help="Path to a file containing one locus ID per line to process.",
+            rich_help_panel=OPTIONS,
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
         ),
     ] = None,
     sex: Annotated[
@@ -182,7 +365,7 @@ def abacus(
         bool,
         typer.Option(
             "--keep-temp-files",
-            help="Keep temporary files",
+            help="Keep temporary files after report generation",
             rich_help_panel=OPTIONS,
         ),
     ] = False,
@@ -190,7 +373,7 @@ def abacus(
         bool,
         typer.Option(
             "--add-consensus-to-vcf",
-            help="Add consensus calls to VCF file",
+            help="Include consensus sequence in VCF output",
             rich_help_panel=OPTIONS,
         ),
     ] = config.add_consensus_to_vcf,
@@ -198,10 +381,29 @@ def abacus(
         bool,
         typer.Option(
             "--add-contracted-consensus-to-vcf",
-            help="Add contracted consensus calls to VCF file",
+            help="Include contracted consensus sequence in VCF output",
             rich_help_panel=OPTIONS,
         ),
     ] = config.add_contracted_consensus_to_vcf,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-V",
+            help="Enable verbose/debug logging",
+            rich_help_panel=OPTIONS,
+        ),
+    ] = False,
+    threads: Annotated[
+        int,
+        typer.Option(
+            "--threads",
+            "-t",
+            min=1,
+            help="Number of parallel worker processes",
+            rich_help_panel=OPTIONS,
+        ),
+    ] = 1,
     # QC
     min_mean_str_quality: Annotated[
         int,
@@ -259,14 +461,38 @@ def abacus(
             rich_help_panel=QC_OPTIONS,
         ),
     ] = config.max_ref_divergence,
-    min_n_outlier_detection: Annotated[
+    min_n_qc_filtering: Annotated[
         int,
         typer.Option(
-            "--min-n-outlier-detection",
-            help="Minimum number of read calls to perform outlier detection",
+            "--min-n-qc-filtering",
+            help="Minimum number of read calls required to run the statistical QC filtering step",
             rich_help_panel=QC_OPTIONS,
         ),
-    ] = config.min_n_outlier_detection,
+    ] = config.min_n_qc_filtering,
+    min_n_length_outlier_detection: Annotated[
+        int,
+        typer.Option(
+            "--min-n-length-outlier-detection",
+            help="Minimum number of spanning reads per haplotype group to perform length outlier detection",
+            rich_help_panel=QC_OPTIONS,
+        ),
+    ] = config.min_n_length_outlier_detection,
+    tol_length_outlier_pct: Annotated[
+        float,
+        typer.Option(
+            "--length-outlier-tolerance",
+            help="Reads within this % of the haplotype median length are always retained during outlier removal",
+            rich_help_panel=QC_OPTIONS,
+        ),
+    ] = config.tol_length_outlier_pct,
+    tol_length_outlier_bases: Annotated[
+        int,
+        typer.Option(
+            "--length-outlier-tolerance-bases",
+            help="Reads within this number of bases of the haplotype median length are always retained during outlier removal",
+            rich_help_panel=QC_OPTIONS,
+        ),
+    ] = config.tol_length_outlier_bases,
     # Configuration
     anchor_length: Annotated[
         int,
@@ -316,26 +542,67 @@ def abacus(
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.min_haplotyping_depth,
-    heterozygozity_alpha: Annotated[
+    heterozygosity_alpha: Annotated[
         float,
         typer.Option(
-            "--heterozygozity-alpha",
-            help="Sensitivity cutoff for heterozygosity test. This test focuses on difference in length between haplotypes.",
+            "--heterozygosity-alpha",
+            help="Significance threshold for the length-based heterozygosity test",
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.het_alpha,
-    version: Optional[bool] =
-    typer.Option(None,
-                 "--version",
-                 callback=version_callback,
-                 is_flag=True,
-                 is_eager=True,
-                 help="Show version and exit.",
-                 ),
+    equal_length_alpha: Annotated[
+        float,
+        typer.Option(
+            "--equal-length-alpha",
+            help="Significance threshold for the sequence-based heterozygosity test (used when haplotypes have equal length)",
+            rich_help_panel=CONFIGURATION,
+        ),
+    ] = config.equal_length_alpha,
+    downsample: Annotated[
+        int,
+        typer.Option(
+            "--downsample",
+            help="Randomly downsample to this many reads per locus when coverage exceeds the threshold. Set to 0 to disable.",
+            rich_help_panel=CONFIGURATION,
+        ),
+    ] = config.downsample,
+    downsample_seed: Annotated[
+        int,
+        typer.Option(
+            "--downsample-seed",
+            help="Random seed for downsampling reproducibility.",
+            rich_help_panel=CONFIGURATION,
+        ),
+    ] = config.downsample_seed,
+    version: bool | None = typer.Option(
+        None,
+        "--version",
+        callback=version_callback,
+        is_flag=True,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+    _show_catalog: bool | None = typer.Option(
+        None,
+        "--show-catalog",
+        callback=show_catalog_callback,
+        is_flag=True,
+        is_eager=True,
+        help="Print the built-in STR catalog to stdout and exit.",
+    ),
 ) -> None:
 
     # Setup logging to file
     set_log_file_handler(logger, log_file)
+
+    # Add locus-context filter so parallel log lines can be identified/filtered
+    logger.addFilter(_LocusFilter())
+
+    # Enable DEBUG output on console when verbose flag is set
+    if verbose:
+        for handler in logger.handlers:
+            if isinstance(handler, _logging.StreamHandler) and not isinstance(handler, _logging.FileHandler):
+                handler.setLevel(_logging.DEBUG)
 
     # Setup configuration
     config.anchor_len = anchor_length
@@ -345,7 +612,8 @@ def abacus(
     config.trim_window_size = trim_window_size
     config.max_trim = max_trim
     config.min_haplotyping_depth = min_haplotyping_depth
-    config.het_alpha = heterozygozity_alpha
+    config.het_alpha = heterozygosity_alpha
+    config.equal_length_alpha = equal_length_alpha
 
     # QC
     config.min_mean_str_quality = min_mean_str_quality
@@ -356,7 +624,13 @@ def abacus(
     config.tol_error_rate = tol_error_rate
     config.max_ref_divergence = max_ref_divergence
 
-    config.min_n_outlier_detection = min_n_outlier_detection
+    config.min_n_qc_filtering = min_n_qc_filtering
+    config.min_n_length_outlier_detection = min_n_length_outlier_detection
+    config.tol_length_outlier_pct = tol_length_outlier_pct
+    config.tol_length_outlier_bases = tol_length_outlier_bases
+
+    config.downsample = downsample
+    config.downsample_seed = downsample_seed
 
     # VCF options
     config.add_consensus_to_vcf = add_consensus_to_vcf
@@ -366,211 +640,143 @@ def abacus(
     logger.info(ascii_art)
 
     # Load loci data from JSON
+    if str_catalog is None:
+        str_catalog = _default_catalog_path()
     loci = load_loci_from_json(str_catalog, ref)
 
     # Subset loci if provided
-    if loci_subset:
-        if set(loci_subset).isdisjoint([locus.id for locus in loci]):
-            logger.error("No loci in subset found in STR catalog")
+    if loci_subset or loci_subset_file:
+        # Combine locus IDs from command line and file, ensuring no duplicates
+        selected_loci = list(loci_subset or [])
+        if loci_subset_file:
+            file_loci = {line.strip() for line in loci_subset_file.read_text().splitlines() if line.strip()}
+            selected_loci.extend(file_loci)
+
+        # Check that all loci are in the catalog
+        loci_not_found = set(selected_loci) - {locus.id for locus in loci}
+        if loci_not_found:
+            logger.warning("Some loci in subset not found in STR catalog: %s", ", ".join(loci_not_found))
             raise typer.Exit(code=1)
 
-        loci = [locus for locus in loci if locus.id in loci_subset]
+        # Filter loci
+        loci = [locus for locus in loci if locus.id in selected_loci]
 
-    # Initialize output data
-    het_params_dict: dict[str, HeterozygousParameters] = {}
-    hom_params_dict: dict[str, HomozygousParameters] = {}
-
-    locus_is_het_dict: dict[str, bool] = {}
-
-    all_read_calls: list[ReadCall] = []
-    all_filtered_reads: list[FilteredRead] = []
-    all_consensus_calls: list[ConsensusCall] = []
-
-    all_haplotyping_df: list[pd.DataFrame] = []
-    all_summaries_df: list[pd.DataFrame] = []
-    all_par_summaries_df: list[pd.DataFrame] = []
-
-    # Process each locus
-    logger.info("Processing loci...")
-    for locus in loci:
-        logger.info("Current locus:")
-        logger.info(f"- ID: {locus.id}")
-        logger.info(f"- Structure: {locus.structure}")
-        logger.info(f"- Position: {locus.location.chrom}:{locus.location.start}-{locus.location.end}")
-
-        # Get reads in locus
-        reads = get_reads_in_locus(bam, locus)
-
-        # Handle ploidy
-        # Set ploidy to 1 if locus is not covered by enough reads
-        if len(reads) < config.min_haplotyping_depth:
-            logger.warning(f"Low coverage for locus {locus.id}. Setting ploidy to 1.")
-            ploidy = 1
-        # Handle sex chromosomes
-        elif locus.location.chrom == "chrY":
-            ploidy = sex.value.count("Y")
-        elif locus.location.chrom == "chrX":
-            ploidy = sex.value.count("X")
-        # For all other chromosomes, set ploidy to 2
-        else:
-            ploidy = 2
-
-        # Call STR in individual reads
-        read_calls, unmapped_reads = get_read_calls(reads, locus)
-
-        # Filter read calls
-        good_read_calls, removed_read_calls = filter_read_calls(read_calls=read_calls)
-
-        # Group read calls
-        grouped_read_calls, outlier_read_calls, het_params, hom_params, test_summary_res_df = run_haplotyping(
-            read_calls=good_read_calls,
-            ploidy=ploidy,
-        )
-
-        # Add outlier read calls to removed read calls
-        removed_read_calls.extend(outlier_read_calls)
-
-        # Save parameters for VCF output
-        het_params_dict[locus.id] = het_params
-        hom_params_dict[locus.id] = hom_params
-        locus_is_het_dict[locus.id] = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2] if grouped_read_calls else False
-
-        # Summarize haplotype estimation
-        parameter_summary_df = summarize_parameter_estimates(het_params, hom_params)
-
-        # Create raw consensus for each haplotype
-        unique_haplotypes = {r.haplotype for r in grouped_read_calls}
-        raw_consensus_calls: list[ConsensusCall] = []
-        for haplotype in unique_haplotypes:
-            haplotyped_read_calls = [r for r in grouped_read_calls if r.haplotype == haplotype]
-            raw_consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype))
-
-        # Re-group flanking read calls based on the raw consensus
-        grouped_read_calls = update_flanking_labels_based_on_consensus(
-            read_calls=grouped_read_calls,
-            consensus_read_calls=raw_consensus_calls,
-        )
-
-        # Crerate final consensus for each haplotype
-        unique_haplotypes = {r.haplotype for r in grouped_read_calls}
-        final_consensus_calls: list[ConsensusCall] = []
-        for haplotype in unique_haplotypes:
-            haplotyped_read_calls = [r for r in grouped_read_calls if r.haplotype == haplotype]
-            final_consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype))
-
-        # Add consensus calls to output
-        all_consensus_calls.extend(final_consensus_calls)
-
-        # Combine results
-        grouped_read_calls.extend(removed_read_calls)
-
-        # Calculate final group summaries
-        haplotyping_df = calculate_final_group_summaries(grouped_read_calls)
-
-        # Annotate results with Locus ID
-        test_summary_res_df["locus_id"] = locus.id
-
-        # Annotate results with Locus ID and Satellite sequence
-        satellite_df_list = [
-            pd.DataFrame(
-                {
-                    "locus_id": locus.id,
-                    "idx": sat_idx,
-                    "satellite": "|".join(locus.satellites[sat_idx].sequences),
-                },
-                index=[0],
-            )
-            for sat_idx in range(len(locus.satellites))
-        ]
-        satellite_df = pd.concat(satellite_df_list)
-
-        haplotyping_df = haplotyping_df.merge(satellite_df, on="idx", how="left")
-        parameter_summary_df = parameter_summary_df.merge(satellite_df, on="idx", how="left")
-
-        # Concatenate results
-        all_read_calls.extend(grouped_read_calls)
-        all_filtered_reads.extend(unmapped_reads)
-
-        all_haplotyping_df.append(haplotyping_df)
-        all_summaries_df.append(test_summary_res_df)
-        all_par_summaries_df.append(parameter_summary_df)
-
-    # Create output directory
-    tmp_dir = report.parent / f"tmp_abacus_{sample_id}"
+    # Create tmp directory before processing so partial results are written on failure
+    tmp_dir = vcf.parent / f"tmp_abacus_{sample_id}"
     tmp_dir.mkdir(exist_ok=True)
 
-    # Write output files
     reads_csv = tmp_dir / "reads.csv"
     filtered_reads_csv = tmp_dir / "filtered_reads.csv"
     consensus_csv = tmp_dir / "consensus.csv"
-
     haplotypes_csv = tmp_dir / "haplotypes.csv"
     summary_csv = tmp_dir / "summary.csv"
-    par_summary_csv = tmp_dir / "par_summary.csv"
+    final_param_summary_csv = tmp_dir / "final_parameter_summary.csv"
+    test_params_summary_csv = tmp_dir / "test_parameter_summary.csv"
+    vcf_records_tmp = tmp_dir / "vcf_records.tmp"
 
-    with Path.open(reads_csv, "w") as f:
-        pd.DataFrame([r.to_dict() for r in all_read_calls]).to_csv(f, index=False)
-    with Path.open(filtered_reads_csv, "w") as f:
-        pd.DataFrame([r.to_dict() for r in all_filtered_reads]).to_csv(f, index=False)
-    with Path.open(consensus_csv, "w") as f:
-        pd.DataFrame([c.to_dict() for c in all_consensus_calls]).to_csv(f, index=False)
+    # Remove any existing temp files from previous runs with the same sample ID to avoid appending to old results
+    for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv, vcf_records_tmp]:
+        _f.unlink(missing_ok=True)
 
-    with Path.open(haplotypes_csv, "w") as f:
-        pd.concat(all_haplotyping_df).to_csv(f, index=False)
-    with Path.open(summary_csv, "w") as f:
-        pd.concat(all_summaries_df).to_csv(f, index=False)
-    with Path.open(par_summary_csv, "w") as f:
-        pd.concat(all_par_summaries_df).to_csv(f, index=False)
+    def _append_to_csv(df: pd.DataFrame, path: Path) -> None:
+        if df.empty:
+            return
+        df.to_csv(path, mode="a", header=not path.exists(), index=False)
+
+    unique_alts: set[int] = set()
+
+    def _handle_result(result: dict) -> None:
+        _append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
+        _append_to_csv(pd.DataFrame([r.to_dict() for r in result["unmapped_reads"]]), filtered_reads_csv)
+        _append_to_csv(pd.DataFrame([c.to_dict() for c in result["final_consensus_calls"]]), consensus_csv)
+        _append_to_csv(result["haplotyping_df"], haplotypes_csv)
+        _append_to_csv(result["test_summary_res_df"], summary_csv)
+        _append_to_csv(result["final_parameter_summary_df"], final_param_summary_csv)
+        _append_to_csv(result["test_parameter_summary_df"], test_params_summary_csv)
+        with vcf_records_tmp.open("a") as f:
+            for line in result["vcf_records"]:
+                if line:
+                    f.write(line + "\n")
+        unique_alts.update(result["vcf_unique_alts"])
+
+    # Process each locus (in parallel if --threads > 1), writing results incrementally
+    logger.info("Processing loci...")
+    process_fn = functools.partial(_process_locus, bam=bam, ref=ref, sex=sex)
+
+    if threads == 1:
+        for locus in loci:
+            _handle_result(process_fn(locus))
+    else:
+        log_queue: MPQueue = MPQueue()
+        queue_listener = QueueListener(log_queue, *logger.handlers, respect_handler_level=True)
+        queue_listener.start()
+        try:
+            with Pool(
+                processes=threads,
+                initializer=_worker_init,
+                initargs=(config.to_dict(), log_queue),
+                maxtasksperchild=100,  # recycle workers to release fragmented heap
+            ) as pool:
+                for result in pool.imap_unordered(process_fn, loci, chunksize=1):
+                    _handle_result(result)
+        finally:
+            queue_listener.stop()
 
     # Write VCF output
     write_vcf(
         vcf=vcf,
-        consensus_calls=all_consensus_calls,
+        vcf_records_tmp=vcf_records_tmp,
         reference=ref,
         sample_id=sample_id,
-        het_params_dict=het_params_dict,
-        hom_params_dict=hom_params_dict,
-        locus_is_het_dict=locus_is_het_dict,
+        unique_alts=unique_alts,
     )
 
-    # Render report
-    logger.info("Rendering report...")
-    report_template = Path(__file__).parent / "scripts" / "report_template.Rmd"
+    # Render report (only if --report was provided)
+    if report is not None:
+        logger.info("Rendering report...")
+        report_template = Path(__file__).parent / "scripts" / "report_template.Rmd"
+        logo_path = Path(__file__).parent.parent.parent / "img" / "logo.png"
 
-    process = subprocess.run(
-        [
-            "Rscript",
-            "-e",
-            f"""
-                    rmarkdown::render('{report_template}', \
-                        output_file='{report.name}', \
-                        output_dir='{report.parent}', \
-                        intermediates_dir='{tmp_dir}', \
-                        params=list( \
-                            sample_id = '{sample_id}', \
-                            input_bam = '{bam}', \
-                            str_catalog = '{str_catalog}', \
-                            reads_csv = '{reads_csv}', \
-                            filtered_reads_csv = '{filtered_reads_csv}', \
-                            consensus_csv = '{consensus_csv}', \
-                            clustering_summary_csv = '{haplotypes_csv}', \
-                            test_summary_csv = '{summary_csv}', \
-                            par_summary_csv = '{par_summary_csv}' \
+        process = subprocess.run(
+            [
+                "Rscript",
+                "-e",
+                f"""
+                        rmarkdown::render('{report_template}', \
+                            output_file='{report.name}', \
+                            output_dir='{report.parent}', \
+                            intermediates_dir='{tmp_dir}', \
+                            params=list( \
+                                abacus_version = '{__version__}', \
+                                sample_id = '{sample_id}', \
+                                input_bam = '{bam}', \
+                                str_catalog = '{str_catalog}', \
+                                reads_csv = '{reads_csv}', \
+                                filtered_reads_csv = '{filtered_reads_csv}', \
+                                consensus_csv = '{consensus_csv}', \
+                                clustering_summary_csv = '{haplotypes_csv}', \
+                                test_summary_csv = '{summary_csv}', \
+                                final_param_summary_csv = '{final_param_summary_csv}', \
+                                test_param_summary_csv = '{test_params_summary_csv}', \
+                                min_mean_str_quality = {config.min_mean_str_quality}, \
+                                min_q10_str_quality = {config.min_q10_str_quality}, \
+                                max_error_rate = {config.max_error_rate}, \
+                                max_ref_divergence = {config.max_ref_divergence}, \
+                                logo_path = '{logo_path}' \
+                            ) \
                         ) \
-                    ) \
-                    """,
-        ],
-        text=True,
-        check=False,
-        capture_output=True,
-    )
+                        """,
+            ],
+            text=True,
+            check=False,
+            capture_output=True,
+        )
 
-    logger.debug("Rscript output: %s", process.stdout)
-    logger.debug("Rscript error: %s", process.stderr)
-
-    if process.returncode != 0:
-        logger.error("Rscript failed with error code %d", process.returncode)
-        raise typer.Exit(code=1)
+        if process.returncode != 0:
+            logger.debug("Rscript stdout:\n%s", process.stdout)
+            logger.debug("Rscript stderr:\n%s", process.stderr)
+            logger.error("Rscript failed with error code %d", process.returncode)
+            raise typer.Exit(code=1)
 
     if not keep_temp_files:
         logger.info("Cleaning up temporary files...")
