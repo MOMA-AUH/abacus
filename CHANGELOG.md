@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     
 ## [Unreleased]
 
-## [2.0.0]
+## [2.0.0] - 2026-06-29
 ### Added
 - Built-in STR catalog bundled with the package; `--str-catalog` is now optional and defaults to the included abacus catalog
 - `--show-catalog` flag to print the built-in catalog JSON to stdout and exit (pipe to a file to use as a starting point for customization)
