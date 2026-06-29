@@ -15,7 +15,7 @@ dependencies = [
     "numpy>=1.26.4",
     "pandas>=2.2.3",
     "pyfaidx",
-    "python-levenshtein>=0.26.1",
+    "levenshtein>=0.26.1",
     "pysam>=0.22.1",
     "rich>=13.7.1",
     "scikit-learn>=1.2.2",
