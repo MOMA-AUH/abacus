@@ -180,6 +180,7 @@ A built-in catalog is bundled with the package and used by default. Run `abacus 
 
 - [gnomAD STR browser](https://gnomad.broadinstitute.org/short-tandem-repeats?dataset=gnomad_r4) — population-level STR variation from gnomAD v4
 - [STRipy database](https://stripy.org/database) — curated database of pathogenic STR loci
+- [TRexplorer](https://trexplorer.broadinstitute.org) — Tandem Repeat Explorer from the Broad Institute
 
 ## Notes on FGF14
 FGF14 is a complex locus with multiple haplotypes and a large number of variants. In the [provided catalog](./src/abacus/str_catalogs/abacus_catalog.json) we have included a `FGF14_complex` entry that contains the following information:
