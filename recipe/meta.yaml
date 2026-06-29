@@ -51,7 +51,7 @@ test:
     - abacus
   commands:
     - abacus --help
-
+    - python -c "import json, subprocess; json.loads(subprocess.check_output(['abacus','--show-catalog'])); print('ok')"
 about:
   home: "https://github.com/MOMA-AUH/abacus"
   license: MIT
