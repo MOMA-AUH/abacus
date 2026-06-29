@@ -1,4 +1,4 @@
-{% set name = "abacus" %}
+{% set name = "abacus-str" %}
 {% set version = "2.0.0" %}
 {% set python_min = "3.11" %}
 
@@ -8,12 +8,14 @@ package:
 
 source:
   url: "https://github.com/MOMA-AUH/abacus/archive/refs/tags/v{{ version }}.tar.gz"
-  sha256: "<FILL IN — compute after tagging v{{ version }}>"
+  sha256: "7ae1c0ac927e6de4afd873ad468624c304b082861ee5228dc27f5a7d6090c8d0"
 
 build:
   number: 0
   noarch: python
   script: "{{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation"
+  run_exports:
+    - {{ pin_subpackage('abacus-str', max_pin="x") }}
 
 requirements:
   host:
