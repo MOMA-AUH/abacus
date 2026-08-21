@@ -12,7 +12,7 @@ from abacus.graph import (
     get_graph_alignments,
     get_kmer_string,
     get_reference_sequence_from_path,
-    get_satellite_counts_from_path,
+    get_satellite_copy_lengths_from_path,
 )
 from abacus.locus import Location, Satellite, create_satellites, process_str_pattern
 
@@ -288,7 +288,7 @@ from abacus.locus import Location, Satellite, create_satellites, process_str_pat
         ),
     ],
 )
-def test_get_satellite_counts_from_path(structure, read, expected_satellite_counts, expected_str_reference):
+def test_get_satellite_copy_lengths_from_path(structure, read, expected_satellite_counts, expected_str_reference):
     alphabet = "ATCG"
 
     # Set seed for reproducibility
@@ -343,7 +343,8 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
     graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
     graph_alignment = next(a for a in graph_alignments if a.name == read_id)
     path = graph_alignment.path
-    satellite_counts = get_satellite_counts_from_path(locus=locus, path=path)
+    satellite_copy_lengths = get_satellite_copy_lengths_from_path(locus=locus, path=path)
+    satellite_counts = [len(lengths) for lengths in satellite_copy_lengths]
 
     assert satellite_counts == expected_satellite_counts
     if expected_str_reference is not None:
@@ -373,6 +374,13 @@ def test_get_satellite_counts_from_path(structure, read, expected_satellite_coun
             "|".join(["CAG"] * 10),
             "|".join(["CAG"] * 4 + ["TTT"] + ["CAG"] * 5),
             id="Single w error satellite x 10",
+        ),
+        pytest.param(
+            "(GAA|GA)+",
+            "GAA" * 3 + "GA" * 2,
+            "|".join(["GAA"] * 3 + ["GA"] * 2),
+            "|".join(["GAA"] * 3 + ["GA"] * 2),
+            id="OR operator: mixed alt lengths, GAA x3 then GA x2",
         ),
     ],
 )
@@ -431,23 +439,58 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
     graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
     graph_alignment = next(a for a in graph_alignments if a.name == read_id)
 
-    satellite_counts = get_satellite_counts_from_path(locus=locus, path=graph_alignment.path)
+    satellite_copy_lengths = get_satellite_copy_lengths_from_path(path=graph_alignment.path, locus=locus)
 
     # Create kmer strings
     expected_kmer_string = get_kmer_string(
         locus=locus,
         synced_list=[*graph_alignment.str_reference],
-        satellite_counts=satellite_counts,
+        satellite_copy_lengths=satellite_copy_lengths,
     )
 
     observed_kmer_string = get_kmer_string(
         locus=locus,
         synced_list=graph_alignment.str_sequence_synced,
-        satellite_counts=satellite_counts,
+        satellite_copy_lengths=satellite_copy_lengths,
     )
 
     assert expected_kmer_string == expected_expected_kmer_string
     assert observed_kmer_string == expected_observed_kmer_string
+
+
+def test_get_kmer_string_mixed_alternative_lengths():
+    # No minigraph involved here - isolates get_kmer_string's own chopping logic
+    # from what path the aligner picks (that's covered separately in test_get_satellite_strings).
+    structure = "(GAA|GA)+"
+    satellite_seqs, satellites_skippable, breaks = process_str_pattern(structure)
+
+    location = Location(chrom="chr1", start=100, end=200)
+    satellite_locations = [location] * len(satellite_seqs)
+    satelitte_ids = [f"satellite_{i}" for i in range(len(satellite_seqs))]
+    locus_id = "locus_test"
+    satellites = create_satellites(satellite_seqs, satellites_skippable, satellite_locations, satelitte_ids, locus_id)
+
+    locus = Locus(
+        id=locus_id,
+        location=location,
+        left_anchor="A" * config.anchor_len,
+        right_anchor="A" * config.anchor_len,
+        structure=structure,
+        satellites=satellites,
+        breaks=breaks,
+    )
+
+    # 3 copies of GAA followed by 2 copies of GA - a real mixed-length path
+    synced_list = list("GAA" * 3 + "GA" * 2)
+    satellite_copy_lengths = [[3, 3, 3, 2, 2]]
+
+    kmer_string = get_kmer_string(
+        locus=locus,
+        synced_list=synced_list,
+        satellite_copy_lengths=satellite_copy_lengths,
+    )
+
+    assert kmer_string == "|".join(["GAA"] * 3 + ["GA"] * 2)
 
 
 @pytest.mark.parametrize(

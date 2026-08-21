@@ -260,11 +260,28 @@ class GraphAlignment(Read):
         } | self.locus.to_dict()
 
 
-def get_satellite_counts_from_path(path: list[str], locus: Locus) -> list[int]:
-    # Filter all sub-satellites with j>0 i.e. satellite_i_1, satellite_i_2, ...
+def get_satellite_copy_lengths_from_path(path: list[str], locus: Locus) -> list[list[int]]:
+    """Return, per satellite, the ordered list of copy lengths actually traversed in the path.
 
-    # Count occurrences of each satellite
-    return [len([node for node in path if node.startswith(f"satellite_{i}")]) for i in range(len(locus.satellites))]
+    Distinguishes which alternative was used for each individual copy - needed to correctly
+    chop a synced sequence into per-copy kmers when alternatives have different lengths.
+    The total copy count per satellite (previously its own function) is just len() of each list.
+    """
+    # Filter all sub-satellites with j>0 i.e. satellite_i_1, satellite_i_2, ...
+    satellite_copy_lengths: list[list[int]] = []
+    for i, satellite in enumerate(locus.satellites):
+        prefix = f"satellite_{i}"
+        lengths: list[int] = []
+        for node in path:
+            if not node.startswith(prefix):
+                continue
+            if len(satellite.sequences) == 1:
+                lengths.append(len(satellite.sequences[0]))
+                continue
+            alt_idx = int(node[len(f"{prefix}_alt") :].split("_")[0])
+            lengths.append(len(satellite.sequences[alt_idx]))
+        satellite_copy_lengths.append(lengths)
+    return satellite_copy_lengths
 
 
 # TODO: Implement skip connections when creating the graph for alignment of flanking reads, i.e. left flanking needs skip connection for all nodes to the right anchor
@@ -508,10 +525,7 @@ def get_graph_alignments(reads: list[Read], graph: nx.DiGraph) -> list[GraphAlig
     return graph_alignments
 
 
-def get_kmer_string(locus: Locus, synced_list: list[str], satellite_counts: list[int]) -> str:
-    # Get satellite sequences and counts
-    satellite_seqs = [sat.sequences[0] for sat in locus.satellites]
-
+def get_kmer_string(locus: Locus, synced_list: list[str], satellite_copy_lengths: list[list[int]]) -> str:
     # Get breaks
     breaks = locus.breaks
 
@@ -519,10 +533,9 @@ def get_kmer_string(locus: Locus, synced_list: list[str], satellite_counts: list
     kmers = []
 
     # Add case for easy looping
-    satellites_loop = [*satellite_seqs, ""]
-    kmer_count_loop = np.concatenate([satellite_counts, np.array([0])])
+    satellite_copy_lengths_loop = [*satellite_copy_lengths, []]
 
-    for sat, cnt, brk in zip(satellites_loop, kmer_count_loop, breaks):
+    for lengths, brk in zip(satellite_copy_lengths_loop, breaks):
         if brk != "":
             # Add observed break
             kmers.append("".join(synced_list[: len(brk)]))
@@ -530,12 +543,10 @@ def get_kmer_string(locus: Locus, synced_list: list[str], satellite_counts: list
             # Clip break
             synced_list = synced_list[len(brk) :]
 
-        if sat != "":
-            # Add observed kmers
-            kmers.extend(["".join(synced_list[i : i + len(sat)]) for i in range(0, len(sat) * cnt, len(sat))])
-
-            # Clip kmers
-            synced_list = synced_list[len(sat) * cnt :]
+        # Add observed kmers, one per traversed copy, using that copy's actual length
+        for length in lengths:
+            kmers.append("".join(synced_list[:length]))
+            synced_list = synced_list[length:]
 
     return "|".join(kmers)
 
@@ -786,29 +797,30 @@ def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], lis
     alignments, unmapped_reads = graph_align_reads_to_locus(reads, locus)
 
     for aln in alignments:
-        # Count satellites from the mapping
-        satellite_counts = get_satellite_counts_from_path(aln.path, locus)
+        # Get per-copy satellite lengths from the mapping, and derive counts from them
+        satellite_copy_lengths = get_satellite_copy_lengths_from_path(aln.path, locus)
+        satellite_counts = [len(lengths) for lengths in satellite_copy_lengths]
 
         # Create kmer strings
         ref_kmer_string = get_kmer_string(
             locus=locus,
             synced_list=[*aln.str_reference],
-            satellite_counts=satellite_counts,
+            satellite_copy_lengths=satellite_copy_lengths,
         )
         obs_kmer_string = get_kmer_string(
             locus=locus,
             synced_list=aln.str_sequence_synced,
-            satellite_counts=satellite_counts,
+            satellite_copy_lengths=satellite_copy_lengths,
         )
         mod_5mc_kmer_string = get_kmer_string(
             locus=locus,
             synced_list=aln.str_mod_5mc_synced,
-            satellite_counts=satellite_counts,
+            satellite_copy_lengths=satellite_copy_lengths,
         )
         qual_kmer_string = get_kmer_string(
             locus=locus,
             synced_list=[qual_to_char(qual) for sublist in aln.str_qualities_synced for qual in sublist],
-            satellite_counts=satellite_counts,
+            satellite_copy_lengths=satellite_copy_lengths,
         )
 
         # Estimate error rate
