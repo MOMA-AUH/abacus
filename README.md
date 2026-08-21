@@ -194,14 +194,19 @@ FGF14 is a complex locus with multiple haplotypes and many variants. The [provid
 [
     {
         "LocusId": "FGF14_complex",
-        "LocusStructure": "(TAGTCATAGTACCCCAA)*(GAA)*",
+        "LocusStructure": "(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA|GA)*",
         "ReferenceRegion": "chr13:102161565-102161726"
     }
 ]
 ```
+The changes from the original FGF14 entry involve explicitly declaring alternative motifs (interuption) and try to correct for an observed strand bias in ONT data. 
+
+In some runs, basecalling on the reverse strand appears to confuse the `GAA` motif with a shorter `GA` motif — a true `GAA` repeat gets basecalled as if every copy dropped a base. Since minigraph's aligner picks whichever interpretation needs the fewest edit operations, a locus declared with only `(GAA)*` (as the plain `FGF14` entry in the catalog is) can end up under-counted and misrepresented when this happens. Declaring the alternative motif explicitly, e.g. `(GAA|GA)*`, gives the aligner a correctly-priced alternative and resolves it. The "Sequence (detailed)" plot in the report (faceted by strand) can be used to spot if this strand bias is a problem.
+
+Furthermore, `FGF14_complex` includes the possible interuptions `GCA` and `GGA` and combines this into `(GVA|GA)*` (`V` = A/C/G, matching whichever base appears at that position). It also adds a common set of flanking regions that are not present in the hg38 reference: `TAGTCATAGTACCCCAA` and `TAGTCATAGTACCA`, each length-matched so a clean `GAA`-phase repeat always follows immediately after.
 
 The insertion `(TAGTCATAGTACCCCAA)*` is described in the following paper:
 https://www.nature.com/articles/s41588-024-01808-5/figures/1
 
-A lot of additional variation around the FGF14 locus is discussed in the following paper:
+The interruptions `GCA` and `GGA`, the alternative flanking region `TAGTCATAGTACCA` and a lot of additional variation not yet captured by `FGF14_complex` are described in the following paper:
 https://www.nature.com/articles/s41467-024-52148-1
