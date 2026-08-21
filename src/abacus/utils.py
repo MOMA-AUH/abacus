@@ -2,6 +2,7 @@ from enum import StrEnum, auto
 from pathlib import Path
 
 import Levenshtein
+import pandas as pd
 
 REPORT_TEMPLATE = Path(__file__).parent / "report.Rmd"
 
@@ -149,3 +150,12 @@ def compute_ref_divergence(cigar: str, indel_cost: float = 1, replace_cost: floa
 
     # Normalize cost
     return cost / len(cigar)
+
+
+def append_to_csv(df: pd.DataFrame, path: Path) -> None:
+    if df.empty:
+        if not path.exists():
+            path.touch()
+        return
+    needs_header = not path.exists() or path.stat().st_size == 0
+    df.to_csv(path, mode="a", header=needs_header, index=False)

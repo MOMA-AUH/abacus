@@ -29,7 +29,7 @@ from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 from abacus.preprocess import get_reads_in_locus
 from abacus.str_vcf import create_vcf_records, write_vcf
-from abacus.utils import Haplotype, Sex
+from abacus.utils import Haplotype, Sex, append_to_csv
 
 ascii_art = r"""
 ╔═════════════════════════════════════════════════════════════════════════╗
@@ -678,21 +678,16 @@ def abacus(
     for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv, vcf_records_tmp]:
         _f.unlink(missing_ok=True)
 
-    def _append_to_csv(df: pd.DataFrame, path: Path) -> None:
-        if df.empty:
-            return
-        df.to_csv(path, mode="a", header=not path.exists(), index=False)
-
     unique_alts: set[int] = set()
 
     def _handle_result(result: dict) -> None:
-        _append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
-        _append_to_csv(pd.DataFrame([r.to_dict() for r in result["unmapped_reads"]]), filtered_reads_csv)
-        _append_to_csv(pd.DataFrame([c.to_dict() for c in result["final_consensus_calls"]]), consensus_csv)
-        _append_to_csv(result["haplotyping_df"], haplotypes_csv)
-        _append_to_csv(result["test_summary_res_df"], summary_csv)
-        _append_to_csv(result["final_parameter_summary_df"], final_param_summary_csv)
-        _append_to_csv(result["test_parameter_summary_df"], test_params_summary_csv)
+        append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
+        append_to_csv(pd.DataFrame([r.to_dict() for r in result["unmapped_reads"]]), filtered_reads_csv)
+        append_to_csv(pd.DataFrame([c.to_dict() for c in result["final_consensus_calls"]]), consensus_csv)
+        append_to_csv(result["haplotyping_df"], haplotypes_csv)
+        append_to_csv(result["test_summary_res_df"], summary_csv)
+        append_to_csv(result["final_parameter_summary_df"], final_param_summary_csv)
+        append_to_csv(result["test_parameter_summary_df"], test_params_summary_csv)
         with vcf_records_tmp.open("a") as f:
             for line in result["vcf_records"]:
                 if line:
