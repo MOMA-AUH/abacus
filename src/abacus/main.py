@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import faulthandler
 import functools
 import logging as _logging
 import math
 import subprocess
 import time
+
+faulthandler.enable()
 from importlib.resources import files
 from logging.handlers import QueueHandler, QueueListener
 from multiprocessing import Pool
@@ -91,13 +94,14 @@ class _LocusFilter(_logging.Filter):
         return True
 
 
-def _worker_init(config_dict: dict, log_queue: MPQueue) -> None:
+def _worker_init(config_dict: dict, log_queue: MPQueue, log_level: int) -> None:
     """Initializer for worker processes: set up queue logging and restore config."""
     from abacus.config import config as _config
 
     root = _logging.getLogger()
     root.handlers.clear()
     root.addHandler(QueueHandler(log_queue))
+    root.setLevel(log_level)
     for k, v in config_dict.items():
         setattr(_config, k, v)
 
@@ -152,8 +156,12 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
     )
 
     # Filter QC outliers per haplotype group
+    t0 = time.perf_counter()
     good_read_calls, outlier_quality_read_calls = filter_outlier_qual_read_calls(read_calls=initial_grouped_read_calls)
     all_removed_read_calls.extend(outlier_quality_read_calls)
+    logger.debug(
+        f"[TIMING] {locus.id} filter_outlier_qual_read_calls: {time.perf_counter() - t0:.3f}s  ({len(good_read_calls)} kept, {len(outlier_quality_read_calls)} removed)",
+    )
 
     # Second round haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
     t0 = time.perf_counter()
@@ -598,11 +606,11 @@ def abacus(
     # Add locus-context filter so parallel log lines can be identified/filtered
     logger.addFilter(_LocusFilter())
 
-    # Enable DEBUG output on console when verbose flag is set
+    # Enable DEBUG output on console and file when verbose flag is set
     if verbose:
+        logger.setLevel(_logging.DEBUG)
         for handler in logger.handlers:
-            if isinstance(handler, _logging.StreamHandler) and not isinstance(handler, _logging.FileHandler):
-                handler.setLevel(_logging.DEBUG)
+            handler.setLevel(_logging.DEBUG)
 
     # Setup configuration
     config.anchor_len = anchor_length
@@ -642,7 +650,9 @@ def abacus(
     # Load loci data from JSON
     if str_catalog is None:
         str_catalog = _default_catalog_path()
+    t0 = time.perf_counter()
     loci = load_loci_from_json(str_catalog, ref)
+    logger.debug(f"[TIMING] load_loci_from_json: {time.perf_counter() - t0:.3f}s  ({len(loci)} loci)")
 
     # Subset loci if provided
     if loci_subset or loci_subset_file:
@@ -697,6 +707,7 @@ def abacus(
     # Process each locus (in parallel if --threads > 1), writing results incrementally
     logger.info("Processing loci...")
     process_fn = functools.partial(_process_locus, bam=bam, ref=ref, sex=sex)
+    t0 = time.perf_counter()
 
     if threads == 1:
         for locus in loci:
@@ -709,7 +720,7 @@ def abacus(
             with Pool(
                 processes=threads,
                 initializer=_worker_init,
-                initargs=(config.to_dict(), log_queue),
+                initargs=(config.to_dict(), log_queue, logger.level),
                 maxtasksperchild=100,  # recycle workers to release fragmented heap
             ) as pool:
                 for result in pool.imap_unordered(process_fn, loci, chunksize=1):
@@ -717,7 +728,10 @@ def abacus(
         finally:
             queue_listener.stop()
 
+    logger.debug(f"[TIMING] All loci processed: {time.perf_counter() - t0:.3f}s  ({len(loci)} loci, {threads} threads)")
+
     # Write VCF output
+    t0 = time.perf_counter()
     write_vcf(
         vcf=vcf,
         vcf_records_tmp=vcf_records_tmp,
@@ -725,6 +739,7 @@ def abacus(
         sample_id=sample_id,
         unique_alts=unique_alts,
     )
+    logger.debug(f"[TIMING] write_vcf: {time.perf_counter() - t0:.3f}s")
 
     # Render report (only if --report was provided)
     if report is not None:
@@ -732,6 +747,7 @@ def abacus(
         report_template = Path(__file__).parent / "scripts" / "report_template.Rmd"
         logo_path = Path(__file__).parent.parent.parent / "img" / "logo.png"
 
+        t0 = time.perf_counter()
         process = subprocess.run(
             [
                 "Rscript",
@@ -766,6 +782,7 @@ def abacus(
             check=False,
             capture_output=True,
         )
+        logger.debug(f"[TIMING] Rscript render: {time.perf_counter() - t0:.3f}s")
 
         if process.returncode != 0:
             logger.debug("Rscript stdout:\n%s", process.stdout)
