@@ -214,7 +214,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ["CAG" * 2 + "CCG" + "CTG"],  # Left flanking matching H1
             ["CCG" + "CTG"],  # Right flanking matching H2
             {"h1": 3, "h2": 3},
-            {"h1": [2.0, 1.0, 3.0], "h2": [3.0, 2.0, 1.0]},
+            {"h1": [3.0, 2.0, 1.0], "h2": [2.0, 1.0, 3.0]},
             id="Complex-Three satellites - heterozygous",
         ),
         # OR operator test cases (satellite with multiple alternative sequences)
@@ -748,6 +748,34 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             {"h1": 14, "h2": 13},
             {"h1": [31.0], "h2": [31.0]},
             id="Case 21: CTG - same length, ATG interruptions - sequence split should be detected",
+        ),
+        pytest.param(
+            ["AAAAG"],
+            ["", ""],
+            [
+                # Haplotype 1: short allele, tight cluster (~417-490 repeats)
+                *["AAAAG" * 417] * 1,
+                *["AAAAG" * 420] * 2,
+                *["AAAAG" * 423] * 2,
+                *["AAAAG" * 424] * 2,
+                *["AAAAG" * 426] * 1,
+                *["AAAAG" * 428] * 1,
+                *["AAAAG" * 432] * 2,
+                *["AAAAG" * 436] * 1,
+                *["AAAAG" * 438] * 1,
+                *["AAAAG" * 453] * 1,
+                *["AAAAG" * 461] * 1,
+                *["AAAAG" * 462] * 1,
+                *["AAAAG" * 490] * 1,
+                # Haplotype 2: long allele, only 2 supporting spanning reads (~761-765 repeats)
+                "AAAAG" * 761,
+                "AAAAG" * 765,
+            ],
+            [],
+            [],
+            {"h1": 16, "h2": 2, "outlier": 1},
+            {"h1": [432.0], "h2": [763.0]},
+            id="Case 22: RFC1_complex - long allele with few spanning reads undetected due to biased initial split (regression test)",
         ),
     ],
 )

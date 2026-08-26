@@ -8,6 +8,7 @@ from spoa import poa
 
 from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
 from abacus.locus import Locus
+from abacus.logging import logger
 from abacus.utils import Haplotype, trim_sequences_for_comparison
 
 
@@ -71,15 +72,53 @@ def contract_kmer_string(kmer_string: str) -> str:
     return contracted_kmer
 
 
+# Printable single-byte ASCII (38-126) minus '-' (45, poa's gap char) and 33-37 (reserved for
+# anchors/missing-end char). Capped below 128: spoa encodes str as UTF-8, so higher code points
+# go multi-byte and desync its alignment-matrix indexing, causing a segfault.
+_RESERVED_CHARS = {chr(i) for i in (33, 34, 35, 36, 37, 45)}
+_USABLE_KMER_CHARS = [chr(i) for i in range(38, 127) if chr(i) not in _RESERVED_CHARS]
+_OTHER_KMER_CHAR = _USABLE_KMER_CHARS[-1]
+
+
 def build_kmer_char_maps(sequences: list[list[str]]) -> tuple[dict[str, str], dict[str, str]]:
     """Build bidirectional kmer <-> unique character translation maps.
 
-    Characters start from chr(47) to avoid '-' (chr(45)) used by poa as gap character.
-    Returns (kmer_to_unique_char, unique_char_to_kmer).
+    Kmers beyond len(_USABLE_KMER_CHARS) are bucketed into one "other" character
+    (least-observed first), with a warning logged.
     """
-    all_observed_kmers = sorted({kmer for seq in sequences for kmer in seq})
-    kmer_to_unique_char = {kmer: chr(47 + i) for i, kmer in enumerate(all_observed_kmers)}
-    unique_char_to_kmer = {v: k for k, v in kmer_to_unique_char.items()}
+    read_counts: dict[str, int] = defaultdict(int)
+    occurrence_counts: dict[str, int] = defaultdict(int)
+    for seq in sequences:
+        for kmer in set(seq):
+            read_counts[kmer] += 1
+        for kmer in seq:
+            occurrence_counts[kmer] += 1
+
+    all_observed_kmers = sorted(read_counts)
+    if len(all_observed_kmers) <= len(_USABLE_KMER_CHARS):
+        kmer_to_unique_char = dict(zip(all_observed_kmers, _USABLE_KMER_CHARS, strict=False))
+        unique_char_to_kmer = {v: k for k, v in kmer_to_unique_char.items()}
+        return kmer_to_unique_char, unique_char_to_kmer
+
+    # Most-observed kmers first, so the tail is what gets bucketed into "other"
+    importance = lambda k: (read_counts[k], occurrence_counts[k])  # noqa: E731
+    ranked_kmers = sorted(all_observed_kmers, key=importance, reverse=True)
+
+    num_keepable = len(_USABLE_KMER_CHARS) - 1  # reserve one character for the "other" bucket
+    kept_kmers = sorted(ranked_kmers[:num_keepable])
+    bucketed_kmers = ranked_kmers[num_keepable:]
+
+    logger.warning(
+        f"{len(all_observed_kmers)} distinct kmers observed, exceeding the {len(_USABLE_KMER_CHARS)} "
+        f"safe characters available for spoa. Grouping the {len(bucketed_kmers)} least-observed "
+        "kmers into a single 'other' character for alignment purposes.",
+    )
+
+    # "other" resolves back to whichever bucketed kmer was observed the most
+    kept_pairs = list(zip(kept_kmers, _USABLE_KMER_CHARS[:-1], strict=False))
+    kmer_to_unique_char = dict(kept_pairs) | dict.fromkeys(bucketed_kmers, _OTHER_KMER_CHAR)
+    unique_char_to_kmer = {char: kmer for kmer, char in kept_pairs} | {_OTHER_KMER_CHAR: max(bucketed_kmers, key=importance)}
+
     return kmer_to_unique_char, unique_char_to_kmer
 
 
@@ -91,8 +130,8 @@ def find_most_variable_msa_position(
     """Find the MSA column most useful for splitting reads into two groups.
 
     For each column, counts character frequencies (excluding gaps '-',
-    missing_end_char, and ignore_chars). Returns the column index where the
-    count of the 2nd most common character is highest.
+    missing_end_char, ignore_chars, and the "other" bucket char). Returns the
+    column index where the count of the 2nd most common character is highest.
 
     Returns (position_index, char_counts_at_that_position).
     Returns (-1, {}) if no suitable position exists.
@@ -100,8 +139,8 @@ def find_most_variable_msa_position(
     if not msa:
         return -1, {}
 
-    # Define characters to ignore when counting
-    skip_chars = set(ignore_chars) | {missing_end_char, "-"}
+    # "other" bucket lumps unrelated rare kmers together, so skip it too
+    skip_chars = set(ignore_chars) | {missing_end_char, "-", _OTHER_KMER_CHAR}
 
     # Initialize tracking variables
     best_pos = -1
@@ -183,7 +222,7 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> 
     spanning_consensus_sequence = ""
     left_flanking_consensus_sequence = ""
     right_flanking_consensus_sequence = ""
-    algorithm = 0
+    algorithm = 1  # global - keeps anchors pinned across reads of different lengths
     # If there are spanning sequences, use all sequences to create consensus
     # If not, create consensus for left and right flanking sequences separately
     # Translate unique character sequences back to kmers

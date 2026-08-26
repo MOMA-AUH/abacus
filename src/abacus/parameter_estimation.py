@@ -136,6 +136,25 @@ def flanking_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray, is_le
     return np.sum(logpdf, axis=1)
 
 
+def split_by_min_wss(sorted_counts: np.ndarray, split_dim: int, min_group_size: int = 2) -> tuple[np.ndarray, np.ndarray]:
+    # Split at the point (along split_dim) minimizing within-group variance. min_group_size
+    # guards against a single outlier being carved off as its own "group".
+    n = len(sorted_counts)
+    if n < 2 * min_group_size:
+        half = (n + 1) // 2
+        return sorted_counts[:half, :], sorted_counts[-half:, :]
+
+    values = sorted_counts[:, split_dim]
+    best_index, best_wss = None, None
+    for i in range(min_group_size, n - min_group_size + 1):
+        left, right = values[:i], values[i:]
+        wss = np.sum((left - left.mean()) ** 2) + np.sum((right - right.mean()) ** 2)
+        if best_wss is None or wss < best_wss:
+            best_index, best_wss = i, wss
+
+    return sorted_counts[:best_index, :], sorted_counts[best_index:, :]
+
+
 def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParameters:
     # Extract counts
     spanning_counts, flanking_counts, _ = unpack_read_calls(read_calls)
@@ -178,19 +197,15 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     if long_flanking_reads.size > 0:
         counts = np.concatenate((counts, long_flanking_reads))
 
-    # Sort counts by max count
-    max_counts = np.max(counts, axis=1)
-    idx = np.argsort(max_counts)
+    # Sort by the satellite dimension with the most variation across reads
+    split_dim = int(np.argmax(np.var(counts, axis=0)))
+    idx = np.argsort(counts[:, split_dim])
     sorted_counts = counts[idx, :]
 
-    # Split counts into two halves. In case of odd number of counts, the middle count is included in both halves (also in the case of 1 count)
-    counts_len = len(sorted_counts)
-    counts_half = (counts_len + 1) // 2
-    counts_h1 = sorted_counts[:counts_half, :]
-    counts_h2 = sorted_counts[-counts_half:, :]
+    counts_h1, counts_h2 = split_by_min_wss(sorted_counts, split_dim)
 
     # Mean
-    # Calculate mean for each half
+    # Calculate robust mean for each group
     mean_h1 = np.mean(counts_h1, axis=0)
     mean_h2 = np.mean(counts_h2, axis=0)
 
@@ -204,7 +219,7 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     counts_h1 = np.array([x for x in counts if np.linalg.norm(x - robust_mean_h1) <= np.linalg.norm(x - robust_mean_h2)])
     counts_h2 = np.array([x for x in counts if np.linalg.norm(x - robust_mean_h2) <= np.linalg.norm(x - robust_mean_h1)])
 
-    # Re-calculate means
+    # Re-calculate robust means
     mean_h1 = np.mean(counts_h1, axis=0)
     mean_h2 = np.mean(counts_h2, axis=0)
 
