@@ -132,7 +132,7 @@
     {
         "LocusId": "EIF4A3",
         "LocusStructure": "(CCTCGCTGTGCCGCTGCCGA|CCTCGCTGCCGCTGCCGA|CCTCGCTGCGCCGCTGCCGA)*",
-        "ReferenceRegion":"chr17:80147003-80147139"
+        "ReferenceRegion": "chr17:80147003-80147139"
     },
     {
         "LocusId": "FGF14",
@@ -290,11 +290,16 @@
         "ReferenceRegion": "chr4:39348424-39348485"
     },
     {
+        "LocusId": "RFC1_complex",
+        "LocusStructure": "(AARRS|AGAGG|AGGGC|GGACA|GGAAAG)*",
+        "ReferenceRegion": "chr4:39348424-39348485"
+    },
+    {
         "LocusId": "RUNX2",
         "LocusStructure": "(GCN)*",
         "ReferenceRegion": "chr6:45422750-45422801"
     },
-        {
+    {
         "LocusId": "SAMD12",
         "LocusStructure": "(TAAAA)*(TGAAA)*(TAAAA)*",
         "ReferenceRegion": [
@@ -344,7 +349,7 @@
         "LocusStructure": "(GNN)*",
         "ReferenceRegion": "chr16:17470907-17470922"
     },
-{
+    {
         "LocusId": "YEATS2",
         "LocusStructure": "(TTTTA)*(TTTCA)*",
         "ReferenceRegion": [

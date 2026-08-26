@@ -210,3 +210,18 @@ https://www.nature.com/articles/s41588-024-01808-5/figures/1
 
 The interruptions `GCA` and `GGA`, the alternative flanking region `TAGTCATAGTACCA` and a lot of additional variation not yet captured by `FGF14_complex` are described in the following paper:
 https://www.nature.com/articles/s41467-024-52148-1
+
+## Notes on RFC1
+RFC1 has one pentanucleotide repeat, but a wide range of observed motifs: a benign reference motif, several pathogenic motifs, and further benign motifs of uncertain significance reported in [gnomAD v4](https://gnomad.broadinstitute.org/short-tandem-repeat/RFC1?dataset=gnomad_r4). `RFC1_complex` tries to capture this diversity:
+
+```json
+[
+    {
+        "LocusId": "RFC1_complex",
+        "LocusStructure": "(AARRS|AGAGG|AGGGC|GGACA|GGAAAG)*",
+        "ReferenceRegion": "chr4:39348424-39348485"
+    }
+]
+```
+
+This covers the benign reference motif `AAAAG`, the benign `AAGAG`, the pathogenic motifs `AAGGC`, `AAGGG`, `AGAGG`, `AGGGC`, `GGACA`, and the benign 6bp motif `GGAAAG`, using `AARRS` (`R` = A/G, `S` = C/G) to fold `AAAAG`, `AAGAG`, `AAGGC` and `AAGGG` into one alternative. This also incidentally matches two further gnomAD motifs, `AAAAC` and `AAGAC`, and two sequences not reported in gnomAD, `AAAGC` and `AAAGG`.
