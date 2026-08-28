@@ -426,41 +426,46 @@ def optimize_estimates_integers(
     mean_grid_h1 = np.array(np.meshgrid(*ranges_h1)).T.reshape(-1, dim)
     mean_grid_h2 = np.array(np.meshgrid(*ranges_h2)).T.reshape(-1, dim)
 
-    # Calculate optimized log likelihood for each grid point combination
-    best_log_likelihood = -np.inf
-    best_mean_h1 = np.zeros(dim)
-    best_mean_h2 = np.zeros(dim)
-    best_unit_var = np.zeros(dim)
-
     # Define bounds for optimization
     unit_var_bound = (config.min_var, None)
 
-    # Loop through all combinations of mean_h1 and mean_h2
+    # Rank grid combinations cheaply by log likelihood at the shared (continuous-optimum)
+    # unit_var, without re-optimizing unit_var for every combination. Only the best
+    # combination is then refined with L-BFGS-B.
+    best_log_likelihood = -np.inf
+    best_mean_h1 = mean_grid_h1[0]
+    best_mean_h2 = mean_grid_h2[0]
     for mean_h1_int, mean_h2_int in product(mean_grid_h1, mean_grid_h2):
-        # Optimize variance while keeping integer means fixed
-        dim = mean_h1_int.shape[0]
-        optim_res = minimize(
-            fun=lambda x, mean_h1_int=mean_h1_int, mean_h2_int=mean_h2_int, dim=dim: (
-                -calculate_log_likelihood_heterozygous(
-                    spanning_counts=spanning_counts,
-                    flanking_counts=flanking_counts,
-                    is_left_flank=is_left_flank,
-                    mean_h1=mean_h1_int,
-                    mean_h2=mean_h2_int,
-                    unit_var=np.array(x[:dim]),
-                )
-            ),
-            x0=unit_var_optim,
-            method="L-BFGS-B",
-            bounds=[unit_var_bound] * dim,
+        log_likelihood = calculate_log_likelihood_heterozygous(
+            spanning_counts=spanning_counts,
+            flanking_counts=flanking_counts,
+            is_left_flank=is_left_flank,
+            mean_h1=mean_h1_int,
+            mean_h2=mean_h2_int,
+            unit_var=unit_var_optim,
         )
-
-        # Update best estimates
-        if -optim_res.fun > best_log_likelihood:
-            best_log_likelihood = -optim_res.fun
+        if log_likelihood > best_log_likelihood:
+            best_log_likelihood = log_likelihood
             best_mean_h1 = mean_h1_int
             best_mean_h2 = mean_h2_int
-            best_unit_var = np.array(optim_res.x[:dim])
+
+    # Refine unit_var for the best combination only
+    optim_res = minimize(
+        fun=lambda x: (
+            -calculate_log_likelihood_heterozygous(
+                spanning_counts=spanning_counts,
+                flanking_counts=flanking_counts,
+                is_left_flank=is_left_flank,
+                mean_h1=best_mean_h1,
+                mean_h2=best_mean_h2,
+                unit_var=np.array(x[:dim]),
+            )
+        ),
+        x0=unit_var_optim,
+        method="L-BFGS-B",
+        bounds=[unit_var_bound] * dim,
+    )
+    best_unit_var = np.array(optim_res.x[:dim])
 
     return HeterozygousParameters(
         mean_h1=best_mean_h1,
@@ -770,38 +775,42 @@ def optimize_estimates_integers_homozygous(
     # Create grids - all combinations of min and max values
     mean_grid = np.array(np.meshgrid(*mean_ranges)).T.reshape(-1, dim)
 
-    # Calculate optimized log likelihood for each grid point combination
-    best_log_likelihood = -np.inf
-    best_mean = np.zeros(dim)
-    best_unit_var = np.zeros(dim)
-
     # Define bounds for optimization
     unit_var_bound = (config.min_var, None)
 
-    # Loop through all combinations of mean
+    # Rank grid points cheaply by log likelihood at the shared (continuous-optimum)
+    # unit_var, without re-optimizing unit_var for every grid point. Only the best
+    # grid point is then refined with L-BFGS-B.
+    best_log_likelihood = -np.inf
+    best_mean = mean_grid[0]
     for mean_int in mean_grid:
-        # Optimize variance while keeping integer means fixed
-        dim = mean_int.shape[0]
-        optim_res = minimize(
-            fun=lambda x, mean_int=mean_int, dim=dim: (
-                -calculate_log_likelihood_homozygous(
-                    spanning_counts=spanning_counts,
-                    flanking_counts=flanking_counts,
-                    is_left_flank=is_left_flank,
-                    mean=mean_int,
-                    unit_var=np.array(x[:dim]),
-                )
-            ),
-            x0=unit_var_optim,
-            method="L-BFGS-B",
-            bounds=[unit_var_bound] * dim,
+        log_likelihood = calculate_log_likelihood_homozygous(
+            spanning_counts=spanning_counts,
+            flanking_counts=flanking_counts,
+            is_left_flank=is_left_flank,
+            mean=mean_int,
+            unit_var=unit_var_optim,
         )
-
-        # Update best estimates
-        if -optim_res.fun > best_log_likelihood:
-            best_log_likelihood = -optim_res.fun
+        if log_likelihood > best_log_likelihood:
+            best_log_likelihood = log_likelihood
             best_mean = mean_int
-            best_unit_var = np.array(optim_res.x[:dim])
+
+    # Refine unit_var for the best grid point only
+    optim_res = minimize(
+        fun=lambda x: (
+            -calculate_log_likelihood_homozygous(
+                spanning_counts=spanning_counts,
+                flanking_counts=flanking_counts,
+                is_left_flank=is_left_flank,
+                mean=best_mean,
+                unit_var=np.array(x[:dim]),
+            )
+        ),
+        x0=unit_var_optim,
+        method="L-BFGS-B",
+        bounds=[unit_var_bound] * dim,
+    )
+    best_unit_var = np.array(optim_res.x[:dim])
 
     return best_mean, best_unit_var
 
@@ -860,6 +869,9 @@ def estimate_confidence_intervals_heterozygous(
     # Find where log likelihood ratio is equal to chi2(0.95, 1)
     chi2_val = np.float64(chi2.ppf(0.95, 1))
 
+    # Alternative hypothesis log likelihood - fixed at the optimum, independent of x and i
+    ll_alt = calculate_log_likelihood_heterozygous(spanning_counts, flanking_counts, is_left_flank, mean_h1, mean_h2, unit_var)
+
     def find_confidence_interval(mean: np.ndarray, is_h1: bool) -> tuple[np.ndarray, np.ndarray]:
         conf_lower = np.full(mean.shape, np.nan)
         conf_upper = np.full(mean.shape, np.nan)
@@ -867,8 +879,6 @@ def estimate_confidence_intervals_heterozygous(
         for i in range(mean.shape[0]):
             # Define objective function
             def objective(x: np.float64, i: int) -> np.float64:
-                # Alternative hypothesis
-                ll_alt = calculate_log_likelihood_heterozygous(spanning_counts, flanking_counts, is_left_flank, mean_h1, mean_h2, unit_var)
                 # Null hypothesis
                 mean_null = mean.copy()
                 mean_null[i] = x
@@ -932,17 +942,18 @@ def estimate_confidence_intervals_homozygous(
         conf_lower = np.full(mean.shape, np.nan)
         conf_upper = np.full(mean.shape, np.nan)
 
+        # Alternative hypothesis log likelihood - fixed at the optimum, independent of x and i
+        ll_alt = calculate_log_likelihood_homozygous(
+            spanning_counts,
+            flanking_counts,
+            is_left_flank,
+            mean,
+            unit_var,
+        )
+
         for i in range(mean.shape[0]):
             # Define objective function
             def objective(x: np.float64, i: int) -> np.float64:
-                # Alternative hypothesis
-                ll_alt = calculate_log_likelihood_homozygous(
-                    spanning_counts,
-                    flanking_counts,
-                    is_left_flank,
-                    mean,
-                    unit_var,
-                )
                 # Null hypothesis
                 mean_null = mean.copy()
                 mean_null[i] = x
