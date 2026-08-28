@@ -6,7 +6,8 @@ from itertools import product
 
 import numpy as np
 from scipy.optimize import brentq, minimize
-from scipy.stats import chi2, norm
+from scipy.special import log_ndtr
+from scipy.stats import chi2
 
 from abacus.config import config
 from abacus.graph import ReadCall
@@ -53,8 +54,8 @@ def discrete_multivariate_normal_logpdf(x: np.ndarray, mean: np.ndarray, unit_va
         s = sd[i]
 
         # Get logpdf as "mass" between integers
-        logcdf_lower = norm.logcdf(x_i - 0.5, loc=m, scale=s)
-        logcdf_upper = norm.logcdf(x_i + 0.5, loc=m, scale=s)
+        logcdf_lower = log_ndtr((x_i - 0.5 - m) / s)
+        logcdf_upper = log_ndtr((x_i + 0.5 - m) / s)
 
         # Substract logcdf_lower from logcdf_upper in log space
         # log(cdf_upper - cdf_lower) = logcdf_upper + log(1 - exp(logcdf_lower - logcdf_upper))
@@ -76,61 +77,63 @@ def flanking_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray, is_le
     if not x.size:
         return np.array([])
 
-    # Initialize logpdf as array of same size as x
+    n_reads, n_dims = x.shape
+    is_left = np.asarray(is_left_flank, dtype=bool)
+
+    # For every read/dimension, do we have usable count info at-or-after d (x_i[d:]),
+    # at-or-before d (x_i[:d+1]), strictly after d (x_i[d+1:]), and strictly before d (x_i[:d])?
+    is_nonzero = x != 0
+    nonzero_from_d = np.maximum.accumulate(is_nonzero[:, ::-1], axis=1)[:, ::-1]
+    nonzero_to_d = np.maximum.accumulate(is_nonzero, axis=1)
+    nonzero_after_d = np.concatenate([nonzero_from_d[:, 1:], np.zeros((n_reads, 1), dtype=bool)], axis=1)
+    nonzero_before_d = np.concatenate([np.zeros((n_reads, 1), dtype=bool), nonzero_to_d[:, :-1]], axis=1)
+
+    # If left flank and this and all following repeats are 0, skip (mirrored for right flank)
+    skip = np.where(is_left[:, None], ~nonzero_from_d, ~nonzero_to_d)
+    # Figure out if this is the cut dimension i.e. last dimension with usable count info
+    is_cut_dim = np.where(is_left[:, None], ~nonzero_after_d, ~nonzero_before_d)
+
+    # logpdf under the normal distribution for every (read, dim) cell - one vectorized call per
+    # dimension instead of one call per read, since mean/var only vary by dimension
+    normal_logpdf = np.zeros_like(x, dtype=np.float64)
+    for d in range(n_dims):
+        normal_logpdf[:, d] = discrete_multivariate_normal_logpdf(x[:, d : d + 1], mean[d : d + 1], unit_var[d : d + 1])
+
     logpdf = np.zeros_like(x, dtype=np.float64)
+    for d in range(n_dims):
+        # If this is NOT the cut dimension, simply use the normal distribution
+        use_normal = ~skip[:, d] & ~is_cut_dim[:, d]
+        logpdf[use_normal, d] = normal_logpdf[use_normal, d]
 
-    # Loop through individual reads
-    for i in range(x.shape[0]):
-        # Extract counts for the current read
-        x_i = x[i, :]
-        # Loop through dimensions
-        for d in range(x.shape[1]):
-            is_left = is_left_flank[i]
+        # If this is the cut dimension, we need to use the uniform distribution
+        use_cut_dim = ~skip[:, d] & is_cut_dim[:, d]
+        if not use_cut_dim.any():
+            continue
+        m = mean[d : d + 1]
+        v = unit_var[d : d + 1]
 
-            # If left flank and this and all following repeats are 0, skip
-            if is_left and all(x_i[d:] == 0):
-                continue
-            # If right flank and this and all preceding repeats are 0, skip
-            if not is_left and all(x_i[: d + 1] == 0):
-                continue
+        # Calculate logpdf at mean
 
-            # Figure out if this is the cut dimension i.e. last dimension with usable count info
-            is_cut_dim = all(x_i[d + 1 :] == 0) if is_left else all(x_i[:d] == 0)
+        # Calculate sum of unnormalized pdf over support
+        split_point = int(np.round(m[0]))
+        upper_bound = int(np.ceil(m[0] + 5 * np.sqrt(m[0] * v[0])))
 
-            # Extract mean and variance for the current dimension
-            x_id = np.array([[x[i, d]]])
-            m = np.array([mean[d]])
-            v = np.array([unit_var[d]])
+        # 0 to split_point: Use uniform distribution
+        # split_point to upper bound: Use normal distribution
+        normal_support = np.arange(split_point, upper_bound + 1).reshape(-1, 1)
+        norm_const = np.sum(np.exp(discrete_multivariate_normal_logpdf(normal_support, m, v)))
 
-            # If this is NOT the cut dimension, simply use the normal distribution
-            if not is_cut_dim:
-                logpdf[i, d] = discrete_multivariate_normal_logpdf(x_id, m, v)[0]
-                continue
+        # Add uniform part:
+        norm_pdf_at_split = np.exp(discrete_multivariate_normal_logpdf(np.array([[split_point]]), m, v)).item()
+        if split_point > 0:
+            norm_const += norm_pdf_at_split * (split_point - 1)
 
-            # If this is the cut dimension, we need to use the uniform distribution
-
-            # Calculate logpdf at mean
-
-            # Calculate sum of unnormalized pdf over support
-            split_point = int(np.round(m[0]))
-            upper_bound = int(np.ceil(m[0] + 5 * np.sqrt(m[0] * v[0])))
-
-            # 0 to split_point: Use uniform distribution
-            # split_point to upper bound: Use normal distribution
-            normal_support = np.array([[x] for x in range(split_point, upper_bound + 1)])
-            norm_const = np.sum(np.exp(discrete_multivariate_normal_logpdf(normal_support, m, v)))
-
-            # Add uniform part:
-            norm_pdf_at_split = np.exp(discrete_multivariate_normal_logpdf(np.array([[split_point]]), m, v)).item()
-            if split_point > 0:
-                norm_const += norm_pdf_at_split * (split_point - 1)
-
-            # For x > mean: Use normal distribution
-            if x[i, d] >= split_point:
-                logpdf[i, d] = discrete_multivariate_normal_logpdf(x_id, m, v)[0] - np.log(norm_const)
-            # For x < mean: Use uniform distribution
-            else:
-                logpdf[i, d] = np.log(norm_pdf_at_split / norm_const)
+        # For x > mean: Use normal distribution
+        above_split = use_cut_dim & (x[:, d] >= split_point)
+        logpdf[above_split, d] = normal_logpdf[above_split, d] - np.log(norm_const)
+        # For x < mean: Use uniform distribution
+        below_split = use_cut_dim & ~above_split
+        logpdf[below_split, d] = np.log(norm_pdf_at_split / norm_const)
 
     # Sum logpdf over repeat dimensions
     return np.sum(logpdf, axis=1)
