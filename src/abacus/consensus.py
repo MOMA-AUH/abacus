@@ -1,14 +1,11 @@
-import random
-from collections import defaultdict
 from dataclasses import dataclass, field
 
 import numpy as np
 from Levenshtein import distance as levenshtein_distance
-from spoa import poa
 
+from abacus.consensus_search import hill_climb
 from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
 from abacus.locus import Locus
-from abacus.logging import logger
 from abacus.utils import Haplotype, trim_sequences_for_comparison
 
 
@@ -72,108 +69,6 @@ def contract_kmer_string(kmer_string: str) -> str:
     return contracted_kmer
 
 
-# Printable single-byte ASCII (38-126) minus '-' (45, poa's gap char) and 33-37 (reserved for
-# anchors/missing-end char). Capped below 128: spoa encodes str as UTF-8, so higher code points
-# go multi-byte and desync its alignment-matrix indexing, causing a segfault.
-_RESERVED_CHARS = {chr(i) for i in (33, 34, 35, 36, 37, 45)}
-_USABLE_KMER_CHARS = [chr(i) for i in range(38, 127) if chr(i) not in _RESERVED_CHARS]
-_OTHER_KMER_CHAR = _USABLE_KMER_CHARS[-1]
-
-
-def build_kmer_char_maps(sequences: list[list[str]]) -> tuple[dict[str, str], dict[str, str]]:
-    """Build bidirectional kmer <-> unique character translation maps.
-
-    Kmers beyond len(_USABLE_KMER_CHARS) are bucketed into one "other" character
-    (least-observed first), with a warning logged.
-    """
-    read_counts: dict[str, int] = defaultdict(int)
-    occurrence_counts: dict[str, int] = defaultdict(int)
-    for seq in sequences:
-        for kmer in set(seq):
-            read_counts[kmer] += 1
-        for kmer in seq:
-            occurrence_counts[kmer] += 1
-
-    all_observed_kmers = sorted(read_counts)
-    if len(all_observed_kmers) <= len(_USABLE_KMER_CHARS):
-        kmer_to_unique_char = dict(zip(all_observed_kmers, _USABLE_KMER_CHARS, strict=False))
-        unique_char_to_kmer = {v: k for k, v in kmer_to_unique_char.items()}
-        return kmer_to_unique_char, unique_char_to_kmer
-
-    # Most-observed kmers first, so the tail is what gets bucketed into "other"
-    importance = lambda k: (read_counts[k], occurrence_counts[k])  # noqa: E731
-    ranked_kmers = sorted(all_observed_kmers, key=importance, reverse=True)
-
-    num_keepable = len(_USABLE_KMER_CHARS) - 1  # reserve one character for the "other" bucket
-    kept_kmers = sorted(ranked_kmers[:num_keepable])
-    bucketed_kmers = ranked_kmers[num_keepable:]
-
-    logger.warning(
-        f"{len(all_observed_kmers)} distinct kmers observed, exceeding the {len(_USABLE_KMER_CHARS)} "
-        f"safe characters available for spoa. Grouping the {len(bucketed_kmers)} least-observed "
-        "kmers into a single 'other' character for alignment purposes.",
-    )
-
-    # "other" resolves back to whichever bucketed kmer was observed the most
-    kept_pairs = list(zip(kept_kmers, _USABLE_KMER_CHARS[:-1], strict=False))
-    kmer_to_unique_char = dict(kept_pairs) | dict.fromkeys(bucketed_kmers, _OTHER_KMER_CHAR)
-    unique_char_to_kmer = {char: kmer for kmer, char in kept_pairs} | {_OTHER_KMER_CHAR: max(bucketed_kmers, key=importance)}
-
-    return kmer_to_unique_char, unique_char_to_kmer
-
-
-def find_most_variable_msa_position(
-    msa: list[str],
-    missing_end_char: str,
-    ignore_chars: list[str],
-) -> tuple[int, dict[str, int]]:
-    """Find the MSA column most useful for splitting reads into two groups.
-
-    For each column, counts character frequencies (excluding gaps '-',
-    missing_end_char, ignore_chars, and the "other" bucket char). Returns the
-    column index where the count of the 2nd most common character is highest.
-
-    Returns (position_index, char_counts_at_that_position).
-    Returns (-1, {}) if no suitable position exists.
-    """
-    if not msa:
-        return -1, {}
-
-    # "other" bucket lumps unrelated rare kmers together, so skip it too
-    skip_chars = set(ignore_chars) | {missing_end_char, "-", _OTHER_KMER_CHAR}
-
-    # Initialize tracking variables
-    best_pos = -1
-    best_second_count = -1
-    best_char_counts: dict[str, int] = {}
-
-    # Iterate over columns in MSA
-    for col in range(len(msa[0])):
-        char_counts: dict[str, int] = defaultdict(int)
-
-        # Count characters in this column, skipping specified characters
-        for row in msa:
-            c = row[col]
-            if c not in skip_chars:
-                char_counts[c] += 1
-
-        # Need at least 2 different characters to consider this position for splitting
-        if len(char_counts) < 2:
-            continue
-
-        # Get counts of characters sorted by frequency
-        sorted_counts = sorted(char_counts.values(), reverse=True)
-        second_count = sorted_counts[1]
-
-        # Check if this column has a higher 2nd most common character count
-        if second_count > best_second_count:
-            best_second_count = second_count
-            best_pos = col
-            best_char_counts = dict(char_counts)
-
-    return best_pos, best_char_counts
-
-
 def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> list[ConsensusCall]:
     locus = read_calls[0].alignment.locus
 
@@ -190,57 +85,25 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> 
     spanning_count: int = len(spanning_sequences)
     flanking_count: int = len(left_flanking_sequences) + len(right_flanking_sequences)
 
-    # For flanking reads remove last kmer
-    left_flanking_sequences = [seq[:-1] for seq in left_flanking_sequences]
-    right_flanking_sequences = [seq[1:] for seq in right_flanking_sequences]
-
-    # Get dictionaries to translate kmers <-> unique characters
-    all_sequences = spanning_sequences + left_flanking_sequences + right_flanking_sequences
-    kmer_to_unique_char, uniqe_char_to_kmer = build_kmer_char_maps(all_sequences)
-
-    # Translate kmer strings to unique character strings
-    translated_spanning_sequences: list[str] = ["".join(kmer_to_unique_char[kmer] for kmer in seq) for seq in spanning_sequences]
-    translated_left_flanking_sequences: list[str] = ["".join(kmer_to_unique_char[kmer] for kmer in seq) for seq in left_flanking_sequences]
-    translated_right_flanking_sequences: list[str] = ["".join(kmer_to_unique_char[kmer] for kmer in seq) for seq in right_flanking_sequences]
-
-    # Reserve special characters for anchors and missing end character
-    left_anchor_chars = [chr(i) for i in [33, 34]]
-    right_anchor_chars = [chr(i) for i in [35, 36]]
-    missing_end_char = chr(37)
-
-    # Add random anchors to sequences
-    random.seed(42)
-    anchor_len = 100
-    random_left_anchor = "".join([random.choice(left_anchor_chars) for _ in range(anchor_len)])
-    random_right_anchor = "".join([random.choice(right_anchor_chars) for _ in range(anchor_len)])
-
-    translated_spanning_sequences = [random_left_anchor + seq + random_right_anchor for seq in translated_spanning_sequences]
-    translated_left_flanking_sequences = [random_left_anchor + seq for seq in translated_left_flanking_sequences]
-    translated_right_flanking_sequences = [seq + random_right_anchor for seq in translated_right_flanking_sequences]
-
-    # Use poa to create consensus sequences
+    # With spanning reads, search one consensus over all reads together - a flanking read only
+    # ever moves positions its own alignment reaches, so it can't corrupt the rest. With none,
+    # search left and right consensuses separately: there's no shared coordinate system to
+    # combine them in.
     spanning_consensus_sequence = ""
     left_flanking_consensus_sequence = ""
     right_flanking_consensus_sequence = ""
-    algorithm = 1  # global - keeps anchors pinned across reads of different lengths
-    # If there are spanning sequences, use all sequences to create consensus
-    # If not, create consensus for left and right flanking sequences separately
-    # Translate unique character sequences back to kmers
     if spanning_sequences:
-        msa = generate_msa(translated_spanning_sequences, translated_left_flanking_sequences, translated_right_flanking_sequences, missing_end_char, algorithm)
-        spanning_consensus_sequence = generate_majority_consensus(msa, missing_end_char, left_anchor_chars + right_anchor_chars)
+        reads = (
+            [(seq, "spanning") for seq in spanning_sequences]
+            + [(seq, "left") for seq in left_flanking_sequences]
+            + [(seq, "right") for seq in right_flanking_sequences]
+        )
+        spanning_consensus_sequence = "".join(hill_climb(reads))
     else:
         if left_flanking_sequences:
-            msa = generate_msa([], translated_left_flanking_sequences, [], missing_end_char, algorithm)
-            left_flanking_consensus_sequence = generate_majority_consensus(msa, missing_end_char, left_anchor_chars + right_anchor_chars)
+            left_flanking_consensus_sequence = "".join(hill_climb([(seq, "left") for seq in left_flanking_sequences]))
         if right_flanking_sequences:
-            msa = generate_msa([], [], translated_right_flanking_sequences, missing_end_char, algorithm)
-            right_flanking_consensus_sequence = generate_majority_consensus(msa, missing_end_char, left_anchor_chars + right_anchor_chars)
-
-    # Translate unique character sequences back to kmers
-    spanning_consensus_sequence = "".join([uniqe_char_to_kmer[char] for char in spanning_consensus_sequence])
-    left_flanking_consensus_sequence = "".join([uniqe_char_to_kmer[char] for char in left_flanking_consensus_sequence])
-    right_flanking_consensus_sequence = "".join([uniqe_char_to_kmer[char] for char in right_flanking_consensus_sequence])
+            right_flanking_consensus_sequence = "".join(hill_climb([(seq, "right") for seq in right_flanking_sequences]))
 
     # Create reads for consensus sequences
     consensus_read_calls: list[ReadCall] = []
@@ -267,58 +130,6 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> 
         )
         for consensus_read_call in consensus_read_calls
     ]
-
-
-def generate_msa(
-    spanning_sequences: list[str],
-    left_flanking_sequences: list[str],
-    right_flanking_sequences: list[str],
-    missing_end_char: str,
-    algorithm: int,
-    gap_open: int = -8,
-) -> list[str]:
-    # Combine all sequences
-    all_translated_sequences = spanning_sequences + left_flanking_sequences + right_flanking_sequences
-    _, msa = poa(all_translated_sequences, algorithm=algorithm, g=gap_open)
-
-    # Split MSA
-    spanning_msa: list[str] = msa[: len(spanning_sequences)]
-    left_flanking_msa: list[str] = msa[len(spanning_sequences) : len(spanning_sequences) + len(left_flanking_sequences)]
-    right_flanking_msa: list[str] = msa[len(spanning_sequences) + len(left_flanking_sequences) :]
-
-    # For flankings change missing end character "-" to missing_end_char
-    # Left flanking: Remove from right end
-    for i, seq in enumerate(left_flanking_msa):
-        end_stripped_seq = seq.rstrip("-")
-        left_flanking_msa[i] = end_stripped_seq + missing_end_char * (len(seq) - len(end_stripped_seq))
-
-    # Right flanking: Remove from left end
-    for i, seq in enumerate(right_flanking_msa):
-        start_stripped_seq = seq.lstrip("-")
-        right_flanking_msa[i] = missing_end_char * (len(seq) - len(start_stripped_seq)) + start_stripped_seq
-
-    return spanning_msa + left_flanking_msa + right_flanking_msa
-
-
-def generate_majority_consensus(msa: list[str], missing_end_char: str, remove_chars: list[str]) -> str:
-    consensus_sequence = ""
-    for i in range(len(msa[0])):
-        char_votes: dict[str, int] = defaultdict(int)
-        for seq in msa:
-            char = seq[i]
-            # Skip missing end character
-            if char == missing_end_char:
-                continue
-            # Add vote
-            char_votes[char] += 1
-        majority_char = max(char_votes, key=lambda k: char_votes[k])
-        consensus_sequence += majority_char
-
-    # Remove "-" and other characters from consensus sequence
-    for char in [*remove_chars, "-"]:
-        consensus_sequence = consensus_sequence.replace(char, "")
-
-    return consensus_sequence
 
 
 def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: AlignmentType, haplotype: str) -> ReadCall:
