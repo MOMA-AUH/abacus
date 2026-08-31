@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import time
-
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2
@@ -22,6 +20,7 @@ from abacus.parameter_estimation import (
     estimate_homozygous_parameters,
     unpack_read_calls,
 )
+from abacus.timing import timed
 from abacus.utils import AlignmentType, Haplotype
 
 
@@ -42,14 +41,12 @@ def run_haplotyping(
 
     # PHASE 1: Initial grouping
 
-    t0 = time.perf_counter()
-    het_params_test = estimate_heterozygous_parameters(read_calls)
-    logger.debug(f"[TIMING] haplotyping estimate_heterozygous_parameters (initial): {time.perf_counter() - t0:.3f}s")
+    with timed("haplotyping estimate_heterozygous_parameters (initial)"):
+        het_params_test = estimate_heterozygous_parameters(read_calls)
 
     # Initialize grouping
-    t0 = time.perf_counter()
-    grouped_read_calls = group_read_calls(read_calls, het_params_test, ploidy)
-    logger.debug(f"[TIMING] haplotyping group_read_calls (initial): {time.perf_counter() - t0:.3f}s")
+    with timed("haplotyping group_read_calls (initial)"):
+        grouped_read_calls = group_read_calls(read_calls, het_params_test, ploidy)
 
     # PHASE 2: Iterative outlier detection and re-grouping
 
@@ -77,14 +74,12 @@ def run_haplotyping(
             grouped_read_calls.remove(outlier)
 
         # Re-estimate heterozygous parameters
-        t0 = time.perf_counter()
-        het_params_test = estimate_heterozygous_parameters(grouped_read_calls)
-        logger.debug(f"[TIMING] haplotyping re-estimate het parameters (outlier iter {_outlier_iter}): {time.perf_counter() - t0:.3f}s")
+        with timed(f"haplotyping re-estimate het parameters (outlier iter {_outlier_iter})"):
+            het_params_test = estimate_heterozygous_parameters(grouped_read_calls)
 
         # Re-group reads based on new estimates
-        t0 = time.perf_counter()
-        grouped_read_calls = group_read_calls(grouped_read_calls, het_params_test, ploidy)
-        logger.debug(f"[TIMING] haplotyping group_read_calls (outlier iter {_outlier_iter}): {time.perf_counter() - t0:.3f}s")
+        with timed(f"haplotyping group_read_calls (outlier iter {_outlier_iter})"):
+            grouped_read_calls = group_read_calls(grouped_read_calls, het_params_test, ploidy)
 
     if _outlier_iter > 0:
         logger.debug(f"[TIMING] haplotyping outlier detection: {_outlier_iter} iteration(s), {len(all_outlier_read_calls)} outliers removed")
@@ -92,9 +87,8 @@ def run_haplotyping(
     # PHASE 3: Test for heterozygosity
 
     # Estimate hom_params once after all outlier removal — only needed for the LRT below
-    t0 = time.perf_counter()
-    hom_params_test = estimate_homozygous_parameters(grouped_read_calls)
-    logger.debug(f"[TIMING] haplotyping estimate_homozygous_parameters: {time.perf_counter() - t0:.3f}s")
+    with timed("haplotyping estimate_homozygous_parameters"):
+        hom_params_test = estimate_homozygous_parameters(grouped_read_calls)
 
     # If ploidy=1, skip heterozygosity test, estimate final parameters using homozygous model, and return
     if ploidy == 1:
@@ -118,13 +112,12 @@ def run_haplotyping(
         return grouped_read_calls, all_outlier_read_calls, het_params_test, hom_params_test, final_params, test_summary_df
 
     # Test for heterozygosity
-    t0 = time.perf_counter()
-    log_lik_hom, log_lik_hetero, n_par_hom, n_par_hetero, test_statistic, df, heterozygosity_p_value = test_heterozygosity(
-        grouped_read_calls,
-        het_params_test,
-        hom_params_test,
-    )
-    logger.debug(f"[TIMING] haplotyping test_heterozygosity: {time.perf_counter() - t0:.3f}s")
+    with timed("haplotyping test_heterozygosity"):
+        log_lik_hom, log_lik_hetero, n_par_hom, n_par_hetero, test_statistic, df, heterozygosity_p_value = test_heterozygosity(
+            grouped_read_calls,
+            het_params_test,
+            hom_params_test,
+        )
 
     # Check if heterozygosity test is significant
     heterozygosity_test_significant = bool(heterozygosity_p_value < config.het_alpha)
@@ -342,12 +335,11 @@ def _run_sequence_split_test_and_update_params(
     Parameter re-estimation is not done here; it is the responsibility of
     _estimate_final_parameters(), which is called after this function returns.
     """
-    t0 = time.perf_counter()
-    grouped_read_calls, backup_outliers, backup_summary_df = run_equal_length_backup_test(
-        grouped_read_calls,
-        config.equal_length_alpha,
-    )
-    logger.debug(f"[TIMING] haplotyping equal_length_backup_test: {time.perf_counter() - t0:.3f}s")
+    with timed("haplotyping equal_length_backup_test"):
+        grouped_read_calls, backup_outliers, backup_summary_df = run_equal_length_backup_test(
+            grouped_read_calls,
+            config.equal_length_alpha,
+        )
 
     backup_split_made = backup_summary_df["backup_test_run"].iloc[0] and not backup_summary_df["backup_test_significant"].iloc[0]
     if backup_split_made:

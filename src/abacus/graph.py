@@ -4,7 +4,6 @@ import itertools
 import re
 import subprocess
 import tempfile
-import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +16,7 @@ from abacus.config import config
 from abacus.locus import Locus
 from abacus.logging import logger
 from abacus.read import FilteredRead, Read
+from abacus.timing import timed
 from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType, Haplotype, compute_levenshtein_rate, compute_ref_divergence
 
 
@@ -498,15 +498,15 @@ def get_graph_alignments(reads: list[Read], graph: nx.DiGraph) -> list[GraphAlig
         input_graph_gfa = Path(_temp_dir) / "graph.gfa"
         input_graph_gfa.write_text(graph_str)
 
-        _t0 = time.perf_counter()
-        process = subprocess.run(
-            ["minigraph", "-c", "-j", "0.3", "-x", "lr", str(input_graph_gfa), "-"],
-            input=fastq_str,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        logger.debug(f"[TIMING] minigraph alignment: {time.perf_counter() - _t0:.3f}s  ({len(reads)} reads)")
+        with timed("minigraph alignment") as t:
+            process = subprocess.run(
+                ["minigraph", "-c", "-j", "0.3", "-x", "lr", str(input_graph_gfa), "-"],
+                input=fastq_str,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            t.info = f"{len(reads)} reads"
         if process.returncode != 0:
             logger.error("minigraph stdout:\n%s", process.stdout)
             logger.debug("minigraph stderr:\n%s", process.stderr)
@@ -515,12 +515,14 @@ def get_graph_alignments(reads: list[Read], graph: nx.DiGraph) -> list[GraphAlig
 
         output_string = process.stdout
 
+    gaf_lines_by_read_name = {line.split("\t", 1)[0]: line for line in output_string.split("\n") if line}
+
     graph_alignments: list[GraphAlignment] = []
     for read in reads:
-        gaf_lines = next((line for line in output_string.split("\n") if line.startswith(read.name)), None)
-        if gaf_lines is None:
+        gaf_line = gaf_lines_by_read_name.get(read.name)
+        if gaf_line is None:
             continue
-        graph_alignments.append(GraphAlignment.from_gaf_line(read=read, gaf_line=gaf_lines, graph=graph))
+        graph_alignments.append(GraphAlignment.from_gaf_line(read=read, gaf_line=gaf_line, graph=graph))
 
     return graph_alignments
 
@@ -564,7 +566,7 @@ def graph_align_reads_to_locus(
     graph_alignments = get_graph_alignments(reads, graph)
 
     # Mark unmapped reads
-    mapped_read_names = [aln.name for aln in graph_alignments]
+    mapped_read_names = {aln.name for aln in graph_alignments}
     unmapped_reads.extend(
         [
             FilteredRead.from_read(
@@ -604,8 +606,14 @@ def graph_align_reads_to_locus(
     unmapped_reads.extend(unmapped_flanking_reads)
 
     # Remove flanking reads that do not visit the STR region
-    non_overlapping_reads = [aln for aln in alignments if aln.str_sequence == "" and aln.type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING]]
-    alignments = [aln for aln in alignments if aln not in non_overlapping_reads]
+    non_overlapping_reads = []
+    overlapping_alignments = []
+    for aln in alignments:
+        if aln.str_sequence == "" and aln.type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING]:
+            non_overlapping_reads.append(aln)
+        else:
+            overlapping_alignments.append(aln)
+    alignments = overlapping_alignments
 
     # Mark reads that do not overlap the STR region
     unmapped_reads.extend([FilteredRead.from_read(read=aln, error_flags="not_overlapping_str") for aln in non_overlapping_reads])
@@ -700,7 +708,8 @@ def remap_flanking_alignments_to_locus(
     filtered_alignments: list[FilteredRead] = []
 
     # Mark unmapped reads
-    unmapped_reads = [read for read in synthetic_reads if read.name not in [aln.name for aln in remapped_flanking_reads]]
+    remapped_flanking_read_names = {aln.name for aln in remapped_flanking_reads}
+    unmapped_reads = [read for read in synthetic_reads if read.name not in remapped_flanking_read_names]
     filtered_alignments.extend([FilteredRead.from_read(read=r, error_flags="unmappable_flanking_read") for r in unmapped_reads])
 
     for aln in remapped_flanking_reads:

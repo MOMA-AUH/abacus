@@ -6,6 +6,7 @@ from Levenshtein import distance as levenshtein_distance
 from abacus.consensus_search import hill_climb
 from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
 from abacus.locus import Locus
+from abacus.timing import timed
 from abacus.utils import Haplotype, trim_sequences_for_comparison
 
 
@@ -69,6 +70,28 @@ def contract_kmer_string(kmer_string: str) -> str:
     return contracted_kmer
 
 
+def build_consensus_for_locus(grouped_read_calls: list[ReadCall]) -> list[ConsensusCall]:
+    """Build final per-haplotype consensus calls for a locus.
+
+    Two passes are required: a raw consensus is built first and used to re-group flanking read
+    calls (a flanking read only ever moves positions its own alignment reaches, so grouping must
+    be settled against a real consensus before the final one is built). `grouped_read_calls` is
+    relabeled in place by the re-grouping step.
+    """
+    with timed("consensus"):
+        raw_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls)
+        update_flanking_labels_based_on_consensus(read_calls=grouped_read_calls, consensus_read_calls=raw_consensus_calls)
+        return consensus_calls_by_haplotype(grouped_read_calls)
+
+
+def consensus_calls_by_haplotype(read_calls: list[ReadCall]) -> list[ConsensusCall]:
+    consensus_calls: list[ConsensusCall] = []
+    for haplotype in {r.haplotype for r in read_calls}:
+        haplotyped_read_calls = [r for r in read_calls if r.haplotype == haplotype]
+        consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype))
+    return consensus_calls
+
+
 def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> list[ConsensusCall]:
     locus = read_calls[0].alignment.locus
 
@@ -119,7 +142,7 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> 
 
     # Add haplotype to read calls - use read name
     for read_call in consensus_read_calls:
-        read_call.haplotype = haplotype
+        read_call.set_haplotype(haplotype)
 
     # Create consensus calls
     return [
@@ -169,7 +192,7 @@ def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: Alignme
 def update_flanking_labels_based_on_consensus(
     read_calls: list[ReadCall],
     consensus_read_calls: list[ConsensusCall],
-) -> list[ReadCall]:
+) -> None:
     # Get unique consensus haplotypes
     unique_haplotypes = {read_call.haplotype for read_call in consensus_read_calls}
     for read_call in read_calls:
@@ -180,7 +203,7 @@ def update_flanking_labels_based_on_consensus(
         # Find closest consensus and use this as haplotype
         # Initialize
         current_haplotype = read_call.haplotype
-        closest_consensus = Haplotype.NONE
+        closest_consensus_haplotype = Haplotype.NONE
         dist_to_closest = np.inf
         for haplotype in unique_haplotypes:
             # Get consensus read calls for this haplotype
@@ -195,11 +218,9 @@ def update_flanking_labels_based_on_consensus(
             # Check if this is the closest consensus (or tied for closest, in which case prefer current haplotype to avoid unnecessary label changes)
             if dist_to_consensus < dist_to_closest or (dist_to_closest == dist_to_consensus and haplotype == current_haplotype):
                 dist_to_closest = dist_to_consensus
-                closest_consensus = haplotype
+                closest_consensus_haplotype = haplotype
 
-            read_call.haplotype = closest_consensus
-
-    return read_calls
+            read_call.set_haplotype(closest_consensus_haplotype)
 
 
 def calc_dist_to_consensus(
