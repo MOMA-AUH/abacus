@@ -5,6 +5,7 @@ import re
 import subprocess
 import tempfile
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean
@@ -47,6 +48,7 @@ def sync_with_cigar(input_list: list, cig: str) -> list[list]:
     cigar_matches = re.findall(cigar_pattern, cig)
 
     res_list: list[list] = []
+    pos = 0
 
     for item in cigar_matches:
         cigar_len = int(item[0])
@@ -54,17 +56,15 @@ def sync_with_cigar(input_list: list, cig: str) -> list[list]:
 
         if cigar_ops in ["M", "=", "X"]:
             # For match, equal and mismatch: add input list 1:1
-            res_list.extend([[itm] for itm in input_list[:cigar_len]])
-            # Trim "used" input list
-            input_list = input_list[cigar_len:]
+            res_list.extend([[itm] for itm in input_list[pos : pos + cigar_len]])
+            pos += cigar_len
         elif cigar_ops == "D":
             # For deletion: add empty elements
             res_list.extend([[] for _ in range(cigar_len)])
         elif cigar_ops == "I":
             # For insertion: add elements to the previous position
-            res_list[-1].extend(input_list[:cigar_len])
-            # Trim "used" input list
-            input_list = input_list[cigar_len:]
+            res_list[-1].extend(input_list[pos : pos + cigar_len])
+            pos += cigar_len
 
     return res_list
 
@@ -531,6 +531,7 @@ def get_kmer_string(locus: Locus, synced_list: list[str], satellite_copy_lengths
 
     # Create kmer string
     kmers = []
+    pos = 0
 
     # Add case for easy looping
     satellite_copy_lengths_loop = [*satellite_copy_lengths, []]
@@ -538,15 +539,13 @@ def get_kmer_string(locus: Locus, synced_list: list[str], satellite_copy_lengths
     for lengths, brk in zip(satellite_copy_lengths_loop, breaks):
         if brk != "":
             # Add observed break
-            kmers.append("".join(synced_list[: len(brk)]))
-
-            # Clip break
-            synced_list = synced_list[len(brk) :]
+            kmers.append("".join(synced_list[pos : pos + len(brk)]))
+            pos += len(brk)
 
         # Add observed kmers, one per traversed copy, using that copy's actual length
         for length in lengths:
-            kmers.append("".join(synced_list[:length]))
-            synced_list = synced_list[length:]
+            kmers.append("".join(synced_list[pos : pos + length]))
+            pos += length
 
     return "|".join(kmers)
 
@@ -796,6 +795,10 @@ def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], lis
     # Align reads to locus
     alignments, unmapped_reads = graph_align_reads_to_locus(reads, locus)
 
+    # Build the k-mer background once for all reads, instead of per read
+    error_rate_k = 11
+    kmer_counts, kmer_sets = build_kmer_background(alignments, error_rate_k)
+
     for aln in alignments:
         # Get per-copy satellite lengths from the mapping, and derive counts from them
         satellite_copy_lengths = get_satellite_copy_lengths_from_path(aln.path, locus)
@@ -824,8 +827,7 @@ def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], lis
         )
 
         # Estimate error rate
-        other_alns = [x for x in alignments if x.name != aln.name]
-        str_error_rate = estimate_error_rate(aln, other_alns)
+        str_error_rate = estimate_error_rate(aln, kmer_counts, kmer_sets, error_rate_k)
 
         read_calls.append(
             ReadCall(
@@ -843,46 +845,44 @@ def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], lis
     return read_calls, unmapped_reads
 
 
-def estimate_error_rate(aln: GraphAlignment, other_alns: list[GraphAlignment]) -> float:
-    # Helper function to extract k-mers
-    def extract_kmers(sequences: list[str], k: int) -> list[str]:
-        kmers: list[str] = []
-        for seq in sequences:
-            # Skip sequences that are shorter than k
-            if len(seq) < k:
-                continue
-            # Extract k-mers
-            kmers.extend(seq[i : i + k] for i in range(len(seq) - k + 1))
-        return kmers
+def build_kmer_background(alignments: list[GraphAlignment], k: int) -> tuple[Counter[str], dict[str, set[str]]]:
+    # For each alignment, its set of unique k-mers, plus how many alignments (by name)
+    # contain each k-mer - lets estimate_error_rate look up "does some *other* read
+    # contain this k-mer" without rebuilding a background set per read.
+    kmer_sets: dict[str, set[str]] = {}
+    kmer_counts: Counter[str] = Counter()
+    for aln in alignments:
+        seq = aln.str_sequence
+        kmers = {seq[i : i + k] for i in range(len(seq) - k + 1)} if len(seq) >= k else set()
+        kmer_sets[aln.name] = kmers
+        kmer_counts.update(kmers)
+    return kmer_counts, kmer_sets
 
+
+def estimate_error_rate(aln: GraphAlignment, kmer_counts: Counter[str], kmer_sets: dict[str, set[str]], k: int) -> float:
     read = aln.str_sequence
-    background_reads = [aln.str_sequence for aln in other_alns]
-    k = 11  # Length of k-mers
 
-    # Step 0: Check if the read is empty
-    if not read:
-        return 0.0
-    if not background_reads:
+    # Step 0: Check if the read is empty, or there are no other alignments to compare against
+    if not read or len(kmer_sets) <= 1:
         return 0.0
 
     # Step 1: Get all k-mers from the read of interest
-    read_kmers = extract_kmers([read], k)
+    if len(read) < k:
+        return 0.0
+    read_kmers = [read[i : i + k] for i in range(len(read) - k + 1)]
 
-    # Step 2: Build a k-mer count dictionary from the background reads
-    background_kmers = extract_kmers(background_reads, k)
-    unique_background_kmers = set(background_kmers)
-
-    # Step 3: Count how many k-mers in the read are not found in the background
-    error_kmers = [kmer for kmer in read_kmers if kmer not in unique_background_kmers]
+    # Step 2: A k-mer is "background" if some other read (by name) also contains it
+    own_kmers = kmer_sets[aln.name]
+    error_kmers = [kmer for kmer in read_kmers if kmer_counts[kmer] - (kmer in own_kmers) <= 0]
     num_error_kmers = len(error_kmers)
 
-    # Step 4: Estimate erroneous bases. Each base affects (up to) k k-mers
+    # Step 3: Estimate erroneous bases. Each base affects (up to) k k-mers
     n_errors = num_error_kmers / k
 
-    # Step 5: Total bases in the read
+    # Step 4: Total bases in the read
     total_bases = len(read)
 
-    # Step 6: Per-base error rate
+    # Step 5: Per-base error rate
     return n_errors / total_bases
 
 
