@@ -20,7 +20,7 @@ from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from itertools import accumulate, groupby
 
-from rapidfuzz.distance import OSA
+from rapidfuzz.distance import OSA, Opcodes
 from rapidfuzz.distance import Levenshtein as RFLevenshtein
 
 MARGIN = 1
@@ -60,7 +60,8 @@ def total_dist(
 ) -> int:
     """Summed distance to every read, or `limit` once it provably reaches it. `suffix` - valid
     only for a seed ONE edit from the one it was built on - bounds what the unscored reads can
-    still recover, since one edit moves any read's distance by at most 1."""
+    still recover, since one edit moves any read's distance by at most 1.
+    """
     total, n = 0, len(reads)
     for i, (kmers, rtype) in enumerate(reads):
         trimmed, _ = trim_seed_for(seed, len(kmers), rtype)
@@ -72,10 +73,9 @@ def total_dist(
 
 def median_length(reads: list[EncodedRead], spanning_only: bool) -> int | None:
     """Median read length; None if `spanning_only` and nothing spans. A flank read stops where
-    its alignment ran out, so its length says nothing about the allele."""
-    lens = sorted(len(k) for k, t in reads if t == "spanning") or (
-        [] if spanning_only else sorted(len(k) for k, _ in reads)
-    )
+    its alignment ran out, so its length says nothing about the allele.
+    """
+    lens = sorted(len(k) for k, t in reads if t == "spanning") or ([] if spanning_only else sorted(len(k) for k, _ in reads))
     return lens[len(lens) // 2] if lens else None
 
 
@@ -88,7 +88,9 @@ def starting_seed(reads: list[EncodedRead]) -> str:
     """
     spanning = [(kmers, t) for kmers, t in reads if t == "spanning"]
     counts = Counter(k for kmers, _ in (spanning or reads) for k in kmers)
-    return counts.most_common(1)[0][0] * median_length(reads, spanning_only=False)
+    length = median_length(reads, spanning_only=False)
+    assert length is not None  # reads is non-empty here
+    return counts.most_common(1)[0][0] * length
 
 
 def apply_op(seed: str, op: Op) -> str:
@@ -109,7 +111,7 @@ def build_vocab(reads: list[EncodedRead], min_support: int = MIN_READ_SUPPORT) -
     return sorted(k for k, c in counts.items() if c >= min_support)
 
 
-AlignedRead = tuple[str, int, list[int], list[int], list]
+AlignedRead = tuple[str, int, list[int], list[int], Opcodes]
 
 
 def align_reads(seed: str, reads: list[EncodedRead]) -> list[AlignedRead]:
@@ -125,13 +127,13 @@ def align_reads(seed: str, reads: list[EncodedRead]) -> list[AlignedRead]:
         opcodes = RFLevenshtein.opcodes(trimmed, kmers)
         pos_map = [0] * (len(trimmed) + 1)
         anchors = [0]
-        for tag, i1, i2, j1, _j2 in opcodes:
-            if tag == "insert":
+        for op in opcodes:
+            if op.tag == "insert":
                 continue
-            for d in range(i2 - i1):
-                pos_map[i1 + d] = j1 if tag == "delete" else j1 + d
-            if tag == "equal":
-                anchors.extend(range(i1, i2))
+            for d in range(op.src_end - op.src_start):
+                pos_map[op.src_start + d] = op.dest_start if op.tag == "delete" else op.dest_start + d
+            if op.tag == "equal":
+                anchors.extend(range(op.src_start, op.src_end))
         pos_map[len(trimmed)] = len(kmers)
         anchors.append(len(trimmed))
         aligned.append((kmers, offset, pos_map, anchors, opcodes))
@@ -153,21 +155,21 @@ def collect_votes(seed: str, aligned: list[AlignedRead], vocab_set: set[str]) ->
     ins_votes: dict[tuple[int, str], int] = defaultdict(int)
     positions: set[int] = set()
     for kmers, offset, _pos_map, _anchors, opcodes in aligned:
-        for tag, i1, i2, j1, j2 in opcodes:
-            if tag == "equal":
+        for op in opcodes:
+            if op.tag == "equal":
                 continue
-            positions.update(range(i1 + offset, max(i2, i1 + 1) + offset))
-            if tag == "replace":
-                for d in range(i2 - i1):
-                    if kmers[j1 + d] in vocab_set:
-                        sub_votes[(i1 + d + offset, kmers[j1 + d])] += 1
-            elif tag == "delete":
-                for d in range(i2 - i1):
-                    del_votes[i1 + d + offset] += 1
+            positions.update(range(op.src_start + offset, max(op.src_end, op.src_start + 1) + offset))
+            if op.tag == "replace":
+                for d in range(op.src_end - op.src_start):
+                    if kmers[op.dest_start + d] in vocab_set:
+                        sub_votes[(op.src_start + d + offset, kmers[op.dest_start + d])] += 1
+            elif op.tag == "delete":
+                for d in range(op.src_end - op.src_start):
+                    del_votes[op.src_start + d + offset] += 1
             else:
-                for j in range(j1, j2):
+                for j in range(op.dest_start, op.dest_end):
                     if kmers[j] in vocab_set:
-                        ins_votes[(i1 + offset, kmers[j])] += 1
+                        ins_votes[(op.src_start + offset, kmers[j])] += 1
     expanded = {p + d for p in positions for d in range(-MARGIN, MARGIN + 1) if 0 <= p + d <= len(seed)}
     return expanded | {len(seed)}, sub_votes, del_votes, ins_votes
 
@@ -175,7 +177,8 @@ def collect_votes(seed: str, aligned: list[AlignedRead], vocab_set: set[str]) ->
 def windowed_delta(seed: str, op: Op, lo: int, hi: int, aligned: list[AlignedRead]) -> int:
     """Improvement from `op`, scored on a local window. Length-preserving ops ONLY: an indel
     shifts registration for everything downstream, which no fixed window sees (measured: a
-    systematic ~1 per read), so those get scored exactly instead."""
+    systematic ~1 per read), so those get scored exactly instead.
+    """
     n = len(seed)
     w_lo, w_hi = max(0, lo - WINDOW_MARGIN), min(n, hi + 1 + WINDOW_MARGIN)
     candidate = apply_op(seed, op)
@@ -215,26 +218,16 @@ def find_improving_moves(
 ) -> list[Move]:
     """Supported candidates that lower the total, as (lo, hi, delta, op)."""
     n = len(seed)
-    windowed = [
-        (pos, pos, ("sub", pos, k))
-        for (pos, k), votes in sub_votes.items()
-        if votes >= min_support and pos < n and seed[pos] != k
+    windowed: list[tuple[int, int, Op]] = [
+        (pos, pos, ("sub", pos, k)) for (pos, k), votes in sub_votes.items() if votes >= min_support and pos < n and seed[pos] != k
     ]
-    windowed += [
-        (pos, pos + 1, ("swap", pos)) for pos in sorted(positions) if pos + 1 < n and seed[pos] != seed[pos + 1]
-    ]
-    exact = [(pos, pos, ("del", pos)) for pos, votes in del_votes.items() if votes >= min_support and pos < n]
+    windowed += [(pos, pos + 1, ("swap", pos)) for pos in sorted(positions) if pos + 1 < n and seed[pos] != seed[pos + 1]]
+    exact: list[tuple[int, int, Op]] = [(pos, pos, ("del", pos)) for pos, votes in del_votes.items() if votes >= min_support and pos < n]
     exact += [(pos, pos, ("ins", pos, k)) for (pos, k), votes in ins_votes.items() if votes >= min_support]
 
-    moves = [
-        (lo, hi, delta, op) for lo, hi, op in windowed if (delta := windowed_delta(seed, op, lo, hi, aligned)) > 0
-    ]
+    moves = [(lo, hi, delta, op) for lo, hi, op in windowed if (delta := windowed_delta(seed, op, lo, hi, aligned)) > 0]
     # a bailed-out exact score comes back as `baseline`, i.e. delta 0, i.e. rejected
-    moves += [
-        (lo, hi, delta, op)
-        for lo, hi, op in exact
-        if (delta := baseline - total_dist(apply_op(seed, op), reads, baseline, suffix)) > 0
-    ]
+    moves += [(lo, hi, delta, op) for lo, hi, op in exact if (delta := baseline - total_dist(apply_op(seed, op), reads, baseline, suffix)) > 0]
     return moves
 
 
@@ -277,7 +270,8 @@ def slippage_candidates(seed: str, grow: bool):
 
     Length errors come from slippage, which resizes a stretch of identical units rather than
     inventing one inside unrelated sequence - so one candidate per run, not per position. Growth
-    needs MIN_SLIPPAGE_RUN, so a lone interruption never becomes a false repeat."""
+    needs MIN_SLIPPAGE_RUN, so a lone interruption never becomes a false repeat.
+    """
     start = 0
     for _kmer, group in groupby(seed):
         length = len(list(group))
@@ -295,7 +289,8 @@ def repair_length(seed: str, reads: list[EncodedRead], target: int | None) -> st
     short (k <= e) scores identically, since inserting the read's error unit costs what
     substituting it costs. So no alignment ever proposes the missing unit, and the objective
     cannot say when to stop either - hence `target`, without which a non-worsening step is always
-    available and the seed grows past the flank reads that no longer constrain it."""
+    available and the seed grows past the flank reads that no longer constrain it.
+    """
     if target is None:
         return seed
     baseline = total_dist(seed, reads)
@@ -349,11 +344,7 @@ def trim_partial_boundary_kmers(reads: list[KmerRead]) -> list[KmerRead]:
     only counts from interior kmers, never from another read's own boundary, so two reads
     independently truncated at the same point can't validate each other.
     """
-    interior_kmers = {
-        k
-        for kmers, rtype in reads
-        for k in (kmers if rtype == "spanning" else kmers[:-1] if rtype == "left" else kmers[1:])
-    }
+    interior_kmers = {k for kmers, rtype in reads for k in (kmers if rtype == "spanning" else kmers[:-1] if rtype == "left" else kmers[1:])}
     trimmed = []
     for kmers, rtype in reads:
         if rtype == "left" and kmers and kmers[-1] not in interior_kmers:
@@ -377,7 +368,8 @@ def encode_reads(reads: list[KmerRead]) -> tuple[list[EncodedRead], dict[str, st
 
 def hill_climb(reads: list[KmerRead], max_iters: int = 100, filter_vocab: bool = True) -> list[str]:
     """Consensus kmer list for `reads` (kmer list, "spanning"|"left"|"right" type). Trims partial
-    boundary kmers, encodes, runs the search, decodes."""
+    boundary kmers, encodes, runs the search, decodes.
+    """
     encoded_reads, char_to_kmer = encode_reads(trim_partial_boundary_kmers(reads))
     result = hill_climb_encoded(encoded_reads, max_iters=max_iters, filter_vocab=filter_vocab)
     return [char_to_kmer[c] for c in result]
