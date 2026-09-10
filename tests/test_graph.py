@@ -382,6 +382,13 @@ def test_get_satellite_copy_lengths_from_path(structure, read, expected_satellit
             "|".join(["GAA"] * 3 + ["GA"] * 2),
             id="OR operator: mixed alt lengths, GAA x3 then GA x2",
         ),
+        pytest.param(
+            "(CGG)+",
+            "C" + "CGG" * 3,  # a base inserted right at the repeat's edge, not a chopping artifact
+            "|".join(["CGG"] * 3),
+            "CCGG|CGG|CGG",
+            id="Insertion at the repeat's leading edge must not vanish into the trimmed anchor",
+        ),
     ],
 )
 def test_get_satellite_strings(structure, read, expected_expected_kmer_string, expected_observed_kmer_string):

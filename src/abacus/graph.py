@@ -69,6 +69,21 @@ def sync_with_cigar(input_list: list, cig: str) -> list[list]:
     return res_list
 
 
+def rescue_boundary(synced: list, trim_start: int) -> list:
+    """Trim to `synced[trim_start:]`, merging any insertion folded onto the cut position (index
+    trim_start - 1) into the first kept entry instead of discarding it. An insertion right at the
+    anchor/satellite boundary can otherwise fold onto the anchor's last position and get trimmed
+    away with it.
+    """
+    if trim_start <= 0 or trim_start > len(synced):
+        return synced[trim_start:]
+    residue = synced[trim_start - 1][1:]
+    kept = synced[trim_start:]
+    if not residue:
+        return kept
+    return [residue + kept[0], *kept[1:]] if kept else [residue]
+
+
 def get_reference_sequence_from_path(path: list[str], locus: Locus, graph: nx.DiGraph) -> str:
     """Reconstruct the reference sequence for an alignment path through the graph.
 
@@ -211,10 +226,10 @@ class GraphAlignment(Read):
         )
 
         # Trim the sequence, qualities, CIGAR, mod 5mC string
-        self.str_sequence_synced = locus_sequence_synced[trim_start:]
-        self.str_qualities_synced = locus_quals_synced[trim_start:]
-        self.str_cigar_synced = locus_cigar_synced[trim_start:]
-        self.str_mod_5mc_synced = locus_mod_5mc_synced[trim_start:]
+        self.str_sequence_synced = rescue_boundary(locus_sequence_synced, trim_start)
+        self.str_qualities_synced = rescue_boundary(locus_quals_synced, trim_start)
+        self.str_cigar_synced = rescue_boundary(locus_cigar_synced, trim_start)
+        self.str_mod_5mc_synced = rescue_boundary(locus_mod_5mc_synced, trim_start)
 
         if trim_end > 0:
             self.str_sequence_synced = self.str_sequence_synced[:-trim_end]
