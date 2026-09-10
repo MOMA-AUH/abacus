@@ -117,16 +117,18 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> 
     right_flanking_consensus_sequence = ""
     if spanning_sequences:
         reads = (
-            [(seq, "spanning") for seq in spanning_sequences]
-            + [(seq, "left") for seq in left_flanking_sequences]
-            + [(seq, "right") for seq in right_flanking_sequences]
+            [(seq, "spanning", r.alignment.strand) for seq, r in zip(spanning_sequences, spanning_read_calls, strict=True)]
+            + [(seq, "left", r.alignment.strand) for seq, r in zip(left_flanking_sequences, left_flanking_read_calls, strict=True)]
+            + [(seq, "right", r.alignment.strand) for seq, r in zip(right_flanking_sequences, right_flanking_read_calls, strict=True)]
         )
         spanning_consensus_sequence = "".join(hill_climb(reads))
     else:
         if left_flanking_sequences:
-            left_flanking_consensus_sequence = "".join(hill_climb([(seq, "left") for seq in left_flanking_sequences]))
+            left_reads = [(seq, "left", r.alignment.strand) for seq, r in zip(left_flanking_sequences, left_flanking_read_calls, strict=True)]
+            left_flanking_consensus_sequence = "".join(hill_climb(left_reads))
         if right_flanking_sequences:
-            right_flanking_consensus_sequence = "".join(hill_climb([(seq, "right") for seq in right_flanking_sequences]))
+            right_reads = [(seq, "right", r.alignment.strand) for seq, r in zip(right_flanking_sequences, right_flanking_read_calls, strict=True)]
+            right_flanking_consensus_sequence = "".join(hill_climb(right_reads))
 
     # Create reads for consensus sequences
     consensus_read_calls: list[ReadCall] = []

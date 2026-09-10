@@ -50,14 +50,14 @@ def create_synthetic_locus(satellite_seqs: list[str], breaks: list[str] | None =
     )
 
 
-def make_read(name: str, sequence: str, locus: Locus) -> Read:
+def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read:
     """Create a synthetic read with the given full sequence (including anchors)."""
     return Read(
         name=name,
         sequence=sequence,
         qualities=[30] * len(sequence),
         mod_5mc_probs="!" * len(sequence),
-        strand="+",
+        strand=strand,
         n_soft_clipped_left=0,
         n_soft_clipped_right=0,
         locus=locus,
@@ -229,6 +229,79 @@ def test_create_consensus_calls_respects_flanking_read_coverage(
         + [make_read(f"left_flanking_{i}", locus.left_anchor + seq, locus) for i, seq in enumerate(left_flanking_sequences)]
         + [make_read(f"right_flanking_{i}", seq + locus.right_anchor, locus) for i, seq in enumerate(right_flanking_sequences)]
     )
+    read_calls, _ = get_read_calls(reads, locus)
+    for read_call in read_calls:
+        read_call.haplotype = Haplotype.H1
+
+    consensus_calls = create_consensus_calls(read_calls=read_calls, haplotype=Haplotype.H1)
+
+    assert len(consensus_calls) == 1
+    assert consensus_calls[0].alignment.str_sequence == expected_consensus
+
+
+# Each entry: (unit sequence repeated to build the read, alignment type, strand, read count).
+StrandedReadSpec = tuple[str, str, str, int]
+
+
+def make_stranded_reads(specs: list[StrandedReadSpec], locus: Locus) -> list[Read]:
+    """Build reads from (sequence, alignment type, strand, count) specs - see StrandedReadSpec."""
+    full_sequence_for_type = {
+        "spanning": lambda seq: locus.left_anchor + seq + locus.right_anchor,
+        "left": lambda seq: locus.left_anchor + seq,
+        "right": lambda seq: seq + locus.right_anchor,
+    }
+    reads = []
+    for spec_i, (seq, read_type, strand, count) in enumerate(specs):
+        full_sequence = full_sequence_for_type[read_type](seq)
+        reads += [make_read(f"{read_type}_{strand}_{spec_i}_{j}", full_sequence, locus, strand=strand) for j in range(count)]
+    return reads
+
+
+@pytest.mark.parametrize(
+    ("satellite_seqs", "read_specs", "expected_consensus"),
+    [
+        pytest.param(
+            ["CGG|GGG"],
+            [
+                ("CGG" * 4, "spanning", "+", 1),
+                ("GGG" * 4, "spanning", "+", 10),
+                ("CGG" * 4, "spanning", "-", 3),
+            ],
+            "CGG" * 4,
+            id="Plus-strand-only error is the pooled majority, but has no minus-strand support",
+        ),
+        pytest.param(
+            ["CGG|GGG"],
+            [
+                ("CGG" * 4, "spanning", "+", 1),
+                ("GGG" * 4, "spanning", "+", 10),
+                ("CGG" * 4, "spanning", "-", 1),
+                ("CGG" * 3, "left", "-", 1),
+                ("CGG" * 3, "right", "-", 1),
+            ],
+            "CGG" * 4,
+            id="Minus-strand support for the correct motif comes from flanking reads, not just spanning ones",
+        ),
+        pytest.param(
+            ["CAG|AAA"],
+            [
+                ("CAG" + "AAA" + "CAG" + "AAA" + "CAG", "spanning", "+", 10),
+                ("CAG" + "CAG" + "CAG" + "AAA" + "CAG", "spanning", "+", 1),
+                ("CAG" + "CAG" + "CAG" + "AAA" + "CAG", "spanning", "-", 3),
+            ],
+            "CAG" + "CAG" + "CAG" + "AAA" + "CAG",
+            id="AAA is a plus-strand-only error at unit 1 but a genuine both-strand interruption at unit 3 - eligibility must be positional, not global",
+        ),
+    ],
+)
+def test_create_consensus_calls_resist_strand_biased_errors(satellite_seqs: list[str], read_specs: list[StrandedReadSpec], expected_consensus: str):
+    """A motif that is common on one strand but rare/wrong-directioned should not out-vote a
+    minority motif that is actually seen on both strands (a plus-strand-only ONT error should not
+    be allowed to overrule a motif also confirmed by minus-strand reads)."""
+    random.seed(0)
+    locus = create_synthetic_locus(satellite_seqs, ["", ""])
+    reads = make_stranded_reads(read_specs, locus)
+
     read_calls, _ = get_read_calls(reads, locus)
     for read_call in read_calls:
         read_call.haplotype = Haplotype.H1
