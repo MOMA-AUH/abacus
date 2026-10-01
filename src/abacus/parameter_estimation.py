@@ -703,12 +703,11 @@ def estimate_homozygous_parameters(
         mean_init = np.average(counts, axis=0)
         unit_var_init = np.average((counts - mean_init) ** 2, axis=0) / (mean_init + 1e-5)
     else:
-        # Get longest flanking read based on sum of counts
-        longest_flanking_idx = np.argmax(np.sum(flanking_counts, axis=1))
-        longest_flanking = flanking_counts[longest_flanking_idx]
-
-        # Calculate initial estimates
-        mean_init = np.maximum(longest_flanking, 1)
+        # A single longest flanking read only ever informs the dimensions it itself reaches - with
+        # directional coverage (e.g. left reads reaching satellite 1, right reads reaching satellite
+        # 3), no single read reflects every dimension. Pool every flanking read's evidence per
+        # dimension instead, the same way the heterozygous estimate's refinement step does.
+        mean_init = np.maximum(estimate_mean_flanking(flanking_counts, np.ones(len(flanking_counts)), is_left_flank), 1)
         unit_var_init = np.full_like(mean_init, 0.5)
 
     # Step 2: Optimize estimates

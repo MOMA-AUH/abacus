@@ -3,11 +3,17 @@ from dataclasses import dataclass, field
 import numpy as np
 from Levenshtein import distance as levenshtein_distance
 
-from abacus.consensus_search import hill_climb
+from abacus.consensus_search import KmerRead, hill_climb
 from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
 from abacus.locus import Locus
+from abacus.logging import logger
+from abacus.parameter_estimation import HomozygousParameters
 from abacus.timing import timed
 from abacus.utils import Haplotype, trim_sequences_for_comparison
+
+# A slot in a locus's structure: a break (index into locus.breaks) or a satellite (index into
+# locus.satellites). Consensus is built independently per slot - see create_consensus_calls.
+Slot = tuple[str, int]  # ("break" | "satellite", index)
 
 
 @dataclass
@@ -70,90 +76,172 @@ def contract_kmer_string(kmer_string: str) -> str:
     return contracted_kmer
 
 
-def build_consensus_for_locus(grouped_read_calls: list[ReadCall]) -> list[ConsensusCall]:
+def build_consensus_for_locus(grouped_read_calls: list[ReadCall], final_params: dict[Haplotype, HomozygousParameters]) -> list[ConsensusCall]:
     """Build final per-haplotype consensus calls for a locus.
 
     Two passes are required: a raw consensus is built first and used to re-group flanking read
     calls (a flanking read only ever moves positions its own alignment reaches, so grouping must
     be settled against a real consensus before the final one is built). `grouped_read_calls` is
-    relabeled in place by the re-grouping step.
+    relabeled in place by the re-grouping step. Both passes use the haplotype lengths estimated
+    before the relabel: only flanking reads move, and the length estimate is dominated by
+    spanning reads.
     """
     with timed("consensus"):
-        raw_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls)
+        target_lengths = consensus_lengths(grouped_read_calls, final_params)
+        raw_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls, target_lengths)
         update_flanking_labels_based_on_consensus(read_calls=grouped_read_calls, consensus_read_calls=raw_consensus_calls)
-        return consensus_calls_by_haplotype(grouped_read_calls)
+        final_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls, target_lengths)
+        for call in final_consensus_calls:
+            if call.spanning_reads == 0:
+                logger.warning(
+                    f"Locus {call.locus.id}, haplotype {call.haplotype}: consensus length has no spanning-read "
+                    f"support ({call.flanking_reads} flanking reads only).",
+                )
+        return final_consensus_calls
 
 
-def consensus_calls_by_haplotype(read_calls: list[ReadCall]) -> list[ConsensusCall]:
+def consensus_lengths(read_calls: list[ReadCall], final_params: dict[Haplotype, HomozygousParameters]) -> dict[Haplotype, list[int]]:
+    """Per-satellite kmer count of each haplotype's consensus, from the estimated per-satellite
+    means. A break isn't part of this - it always contributes exactly one kmer when the locus
+    defines one, independent of any estimate (see locus_slots). Haplotypes without reads have NaN
+    estimates and no consensus, so they're skipped.
+    """
+    return {h: [int(round(x)) for x in p.mean] for h, p in final_params.items() if p.mean.size and not np.isnan(p.mean).any()}
+
+
+def consensus_calls_by_haplotype(read_calls: list[ReadCall], target_lengths: dict[Haplotype, list[int]]) -> list[ConsensusCall]:
     consensus_calls: list[ConsensusCall] = []
     for haplotype in {r.haplotype for r in read_calls}:
         haplotyped_read_calls = [r for r in read_calls if r.haplotype == haplotype]
-        consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype))
+        consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype, target_lengths=target_lengths[haplotype]))
     return consensus_calls
 
 
-def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype) -> list[ConsensusCall]:
+def locus_slots(breaks: list[str], n_satellites: int) -> list[Slot]:
+    """The locus's structure as an ordered list of slots: a break slot before satellite i whenever
+    locus.breaks[i] is non-empty, then satellite i itself, plus a trailing break slot if the last
+    entry in locus.breaks is non-empty.
+    """
+    slots: list[Slot] = []
+    for i in range(n_satellites):
+        if breaks[i]:
+            slots.append(("break", i))
+        slots.append(("satellite", i))
+    if breaks[-1]:
+        slots.append(("break", n_satellites))
+    return slots
+
+
+def segment_read_kmers(read_call: ReadCall, breaks: list[str]) -> list[tuple[Slot, list[str]]]:
+    """Split a read's kmer string into the slots its own mapping reached, in locus order.
+
+    satellite_count already says how many kmers of each satellite this read's own alignment
+    covers (0 for one it never reached), and get_kmer_string lays a read's kmers out in locus
+    order - so a slot's kmers are simply "however many are left to take" at that point. A
+    left-flanking or spanning read's kmers are consumed from the front (its own alignment starts
+    at the true left edge); a right-flanking read's kmers are a suffix of the locus, so they're
+    consumed from the back and the result flipped back into locus order.
+    """
+    kmers = read_call.obs_kmer_string.split("|") if read_call.obs_kmer_string else []
+    slots = locus_slots(breaks, len(read_call.satellite_count))
+
+    is_right = read_call.alignment.type == AlignmentType.RIGHT_FLANKING
+    if is_right:
+        slots = slots[::-1]
+        kmers = kmers[::-1]
+
+    segments: list[tuple[Slot, list[str]]] = []
+    pos = 0
+    for slot in slots:
+        kind, idx = slot
+        if kind == "break":
+            # get_kmer_string can append a spurious empty kmer for a break this read's own
+            # alignment never actually reached (an out-of-range slice on its synced bases) - an
+            # empty string is never real break content, so treat it as absent.
+            if pos >= len(kmers) or kmers[pos] == "":
+                continue
+            segment = [kmers[pos]]
+            pos += 1
+        else:
+            n = read_call.satellite_count[idx]
+            segment = kmers[pos : pos + n]
+            pos += n
+        if segment:
+            segments.append((slot, segment))
+
+    if is_right:
+        segments = [(slot, segment[::-1]) for slot, segment in reversed(segments)]
+
+    return segments
+
+
+def segment_reads_for_slot(read_calls: list[ReadCall], segmented: list[list[tuple[Slot, list[str]]]], slot: Slot) -> list[KmerRead]:
+    """Reads covering one slot, with the "spanning"/"left"/"right" type hill_climb needs to weigh
+    an edge as a true anchor or as merely where the read's own alignment stops.
+
+    A spanning read is anchored at both true ends for every slot it covers. A flanking read is
+    only ever boundary-uncertain at the one edge its own alignment doesn't reach past - its first
+    slot for a right-flanking read, its last for a left-flanking one. Every other slot it covers
+    is fully bounded by its neighbours in the read, so it behaves like a spanning read there.
+    """
+    reads: list[KmerRead] = []
+    for read_call, segments in zip(read_calls, segmented, strict=True):
+        matching = [i for i, (s, _) in enumerate(segments) if s == slot]
+        if not matching:
+            continue
+        i = matching[0]
+        alignment_type = read_call.alignment.type
+        if alignment_type == AlignmentType.SPANNING:
+            rtype = "spanning"
+        elif alignment_type == AlignmentType.LEFT_FLANKING:
+            rtype = "left" if i == len(segments) - 1 else "spanning"
+        else:
+            rtype = "right" if i == 0 else "spanning"
+        reads.append((segments[i][1], rtype, read_call.alignment.strand))
+    return reads
+
+
+def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype, target_lengths: list[int]) -> list[ConsensusCall]:
+    """Build the haplotype's consensus by searching each satellite and break independently, then
+    concatenating - each read is aligned against the slot the mapping actually placed its kmers
+    in, not a flat position in the whole allele, so a satellite whose count differs between reads
+    can't shift where a later satellite or break appears to sit.
+
+    This also folds what used to be a separate flanking-only path into the same mechanism: with
+    no spanning reads at all, left- and right-flanking reads simply contribute to whichever slots
+    their own alignments reach, and one ordinary (SPANNING-shaped) consensus comes out as long as
+    the slots are jointly covered. The result's `spanning_reads` says whether any of that coverage
+    was a real spanning read, for callers that need to know the length estimate has no spanning
+    support.
+    """
     locus = read_calls[0].alignment.locus
+    breaks = locus.breaks
 
-    # Split read calls by alignment type
-    spanning_read_calls = [r for r in read_calls if r.alignment.type == AlignmentType.SPANNING]
-    left_flanking_read_calls = [r for r in read_calls if r.alignment.type == AlignmentType.LEFT_FLANKING]
-    right_flanking_read_calls = [r for r in read_calls if r.alignment.type == AlignmentType.RIGHT_FLANKING]
+    spanning_count = sum(1 for r in read_calls if r.alignment.type == AlignmentType.SPANNING)
+    flanking_count = len(read_calls) - spanning_count
 
-    # Group sequences by haplotype
-    spanning_sequences: list[list[str]] = [s.obs_kmer_string.split("|") for s in spanning_read_calls]
-    left_flanking_sequences: list[list[str]] = [s.obs_kmer_string.split("|") for s in left_flanking_read_calls]
-    right_flanking_sequences: list[list[str]] = [s.obs_kmer_string.split("|") for s in right_flanking_read_calls]
+    segmented = [segment_read_kmers(r, breaks) for r in read_calls]
 
-    spanning_count: int = len(spanning_sequences)
-    flanking_count: int = len(left_flanking_sequences) + len(right_flanking_sequences)
+    consensus_kmers: list[str] = []
+    for slot in locus_slots(breaks, len(target_lengths)):
+        kind, idx = slot
+        length = 1 if kind == "break" else target_lengths[idx]
+        reads_for_slot = segment_reads_for_slot(read_calls, segmented, slot)
+        consensus_kmers.extend(hill_climb(reads_for_slot, length, trim_boundaries=(kind == "satellite")))
 
-    # With spanning reads, search one consensus over all reads together - a flanking read only
-    # ever moves positions its own alignment reaches, so it can't corrupt the rest. With none,
-    # search left and right consensuses separately: there's no shared coordinate system to
-    # combine them in.
-    spanning_consensus_sequence = ""
-    left_flanking_consensus_sequence = ""
-    right_flanking_consensus_sequence = ""
-    if spanning_sequences:
-        reads = (
-            [(seq, "spanning", r.alignment.strand) for seq, r in zip(spanning_sequences, spanning_read_calls, strict=True)]
-            + [(seq, "left", r.alignment.strand) for seq, r in zip(left_flanking_sequences, left_flanking_read_calls, strict=True)]
-            + [(seq, "right", r.alignment.strand) for seq, r in zip(right_flanking_sequences, right_flanking_read_calls, strict=True)]
-        )
-        spanning_consensus_sequence = "".join(hill_climb(reads))
-    else:
-        if left_flanking_sequences:
-            left_reads = [(seq, "left", r.alignment.strand) for seq, r in zip(left_flanking_sequences, left_flanking_read_calls, strict=True)]
-            left_flanking_consensus_sequence = "".join(hill_climb(left_reads))
-        if right_flanking_sequences:
-            right_reads = [(seq, "right", r.alignment.strand) for seq, r in zip(right_flanking_sequences, right_flanking_read_calls, strict=True)]
-            right_flanking_consensus_sequence = "".join(hill_climb(right_reads))
+    consensus_sequence = "".join(consensus_kmers)
+    if not consensus_sequence:
+        return []
 
-    # Create reads for consensus sequences
-    consensus_read_calls: list[ReadCall] = []
-    if spanning_consensus_sequence:
-        spanning_consensus_read_calls = get_consensus_read_call(locus, spanning_consensus_sequence, AlignmentType.SPANNING, haplotype)
-        consensus_read_calls.append(spanning_consensus_read_calls)
-    if left_flanking_consensus_sequence:
-        left_flanking_consensus_read_calls = get_consensus_read_call(locus, left_flanking_consensus_sequence, AlignmentType.LEFT_FLANKING, haplotype)
-        consensus_read_calls.append(left_flanking_consensus_read_calls)
-    if right_flanking_consensus_sequence:
-        right_flanking_consensus_read_calls = get_consensus_read_call(locus, right_flanking_consensus_sequence, AlignmentType.RIGHT_FLANKING, haplotype)
-        consensus_read_calls.append(right_flanking_consensus_read_calls)
+    consensus_read_call = get_consensus_read_call(locus, consensus_sequence, AlignmentType.SPANNING, haplotype)
+    consensus_read_call.set_haplotype(haplotype)
 
-    # Add haplotype to read calls - use read name
-    for read_call in consensus_read_calls:
-        read_call.set_haplotype(haplotype)
-
-    # Create consensus calls
     return [
         ConsensusCall.from_read_call(
             read_call=consensus_read_call,
             spanning_reads=spanning_count,
             flanking_reads=flanking_count,
         )
-        for consensus_read_call in consensus_read_calls
     ]
 
 

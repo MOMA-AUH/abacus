@@ -374,7 +374,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
         # Add color palette
         scale_color_manual(
           values = kmer_color_palette,
-          name = "K-mer\n(ord. by freq.)"
+          name = "K-mer\n(ord. by ref., then freq.)"
         )
     } else {
       plot <- plot +
@@ -390,7 +390,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
         # Add color palette
         scale_fill_manual(
           values = kmer_color_palette,
-          name = "K-mer\n(ord. by freq.)"
+          name = "K-mer\n(ord. by ref., then freq.)"
         )
     }
 
@@ -492,20 +492,28 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
   return(plot)
 }
 
-# Flatten the kmers referenced across one or more "N(KMER)-N(KMER)-..." consensus
-# strings into a single vector (with repeats, so callers can rank by frequency).
-# Uses the same "N(KMER)" parsing as add_colors_to_consensus_strings below.
-extract_kmers_from_consensus_strings <- function(consensus_strings) {
-  parts <- unlist(str_split(consensus_strings, "-"))
-  kmers <- str_extract(parts, "[A-Z]+")
-  kmers[!is.na(kmers)]
+# Per-kmer occurrence count (n) and number of distinct reads it appears in (n_reads),
+# from a data frame with `kmer` and `read_id` columns
+kmer_stats <- function(kmer_read_df) {
+  kmer_read_df %>%
+    group_by(kmer) %>%
+    summarise(n = n(), n_reads = n_distinct(read_id), .groups = "drop")
 }
 
-# Rank distinct kmers by descending count
-rank_kmers_by_count <- function(kmers) {
-  tibble(kmer = kmers) %>%
-    count(kmer) %>%
-    arrange(dplyr::desc(n)) %>%
+# Rank distinct kmers: kmers occurring in >10% of reads (at least 2 reads) rank above
+# the rest ("high occurrence"); within each group, rank by descending occurrence count
+rank_kmers_by_count <- function(kmer_read_df) {
+  n_total_reads <- n_distinct(kmer_read_df$read_id)
+  kmer_stats(kmer_read_df) %>%
+    mutate(high_occurrence = n_reads > 0.1 * n_total_reads & n_reads >= 2) %>%
+    arrange(dplyr::desc(high_occurrence), dplyr::desc(n)) %>%
+    pull(kmer)
+}
+
+# Rank distinct kmers by descending number of reads, tie-broken by occurrence count
+rank_kmers_by_read_count <- function(kmer_read_df) {
+  kmer_stats(kmer_read_df) %>%
+    arrange(dplyr::desc(n_reads), dplyr::desc(n)) %>%
     pull(kmer)
 }
 
@@ -834,22 +842,15 @@ for (i in seq_len(nrow(regions))) {
   no_haplotype_reads <- nrow(kmer_haplotyped_df) == 0
   no_qc_filtered_reads <- nrow(kmer_qc_filtered_df) == 0
 
-  # Color priority: consensus kmers > reference motifs > other observed kmers, all
-  # ranked by the same occurrence count. Outlier reads are excluded
+  # Color priority: reference motifs > high-occurrence kmers (>10% of reads, at least
+  # 2) > other observed kmers, all ranked by occurrence count. Outlier reads excluded
   kmer_ranking_df <- kmer_haplotyped_df %>%
     filter(haplotype %in% c("h1", "h2", "hom"))
 
   kmer_occurrence_rank <- kmer_ranking_df %>%
     filter(!is.na(kmer), kmer != "") %>%
-    pull(kmer) %>%
+    select(kmer, read_id) %>%
     rank_kmers_by_count()
-
-  consensus_kmer_set <- if (nrow(consensus_region_df) > 0) {
-    unique(extract_kmers_from_consensus_strings(consensus_region_df$consensus_strings))
-  } else {
-    character(0)
-  }
-  consensus_kmers <- order_by_rank(consensus_kmer_set, kmer_occurrence_rank)
 
   # Also used unranked as a membership check for the QC-filtered palette below
   ref_kmers <- kmer_ranking_df %>%
@@ -859,7 +860,7 @@ for (i in seq_len(nrow(regions))) {
   ref_kmers_ranked <- order_by_rank(ref_kmers, kmer_occurrence_rank)
 
   n_colors <- 12
-  top_kmers <- c(consensus_kmers, ref_kmers_ranked, kmer_occurrence_rank) %>%
+  top_kmers <- c(ref_kmers_ranked, kmer_occurrence_rank) %>%
     unique() %>%
     head(n_colors)
 
@@ -921,29 +922,29 @@ for (i in seq_len(nrow(regions))) {
   if (no_qc_filtered_reads) {
     cat("There are no QC filtered reads for this locus.")
   } else {
-    # QC filtered color palette
-    top_qc_filtered_kmers <- kmer_qc_filtered_df %>%
+    # QC filtered color palette: any main-palette kmer present here keeps its color;
+    # colors freed up by main-palette kmers absent here go to QC-specific kmers,
+    # ranked by number of reads then by total occurrence count
+    qc_filtered_kmer_df <- kmer_qc_filtered_df %>%
       filter(!is.na(kmer)) %>%
       # Remove long non-reference kmers
-      filter(nchar(kmer) < 25 | kmer %in% ref_kmers) %>%
-      pull(kmer) %>%
-      rank_kmers_by_count() %>%
-      head(n_colors)
+      filter(nchar(kmer) < 25 | kmer %in% ref_kmers)
 
-    # Generate color palette
-    qc_filtered_color_palette <- generate_kmer_color_palette(top_qc_filtered_kmers)
-    new_qc_filtered_color_palette <- c()
+    qc_filtered_kmers <- unique(qc_filtered_kmer_df$kmer)
 
-    # Find overlapping and new kmers compared to kmer_color_palette
-    overlapping_kmers <- intersect(names(qc_filtered_color_palette), names(kmer_color_palette))
-    new_kmers <- setdiff(names(qc_filtered_color_palette), overlapping_kmers)
+    present_main_kmers <- intersect(names(kmer_color_palette), qc_filtered_kmers)
+    freed_colors <- kmer_color_palette[setdiff(names(kmer_color_palette), qc_filtered_kmers)]
 
-    # Re-use color palette from top_kmers
-    new_qc_filtered_color_palette[overlapping_kmers] <- kmer_color_palette[overlapping_kmers]
+    new_qc_kmers <- qc_filtered_kmer_df %>%
+      filter(!kmer %in% names(kmer_color_palette)) %>%
+      select(kmer, read_id) %>%
+      rank_kmers_by_read_count() %>%
+      head(length(freed_colors))
 
-    # Add unused colors to new kmers
-    unused_colors <- setdiff(qc_filtered_color_palette, new_qc_filtered_color_palette)
-    new_qc_filtered_color_palette[new_kmers] <- unused_colors
+    new_qc_filtered_color_palette <- c(
+      kmer_color_palette[present_main_kmers],
+      setNames(freed_colors[seq_along(new_qc_kmers)], new_qc_kmers)
+    )
 
     kmer_plot <- create_kmer_plot(wrangle_kmer_plot_df(kmer_qc_filtered_df), "kmer", new_qc_filtered_color_palette)
     print(kmer_plot)
@@ -1182,6 +1183,24 @@ for (i in seq_len(nrow(regions))) {
   cat("\n\n")
 
   cat("From each haplotype, a consensus sequence is generated as the median of the observed sequences. The consensus sequence is shown in the table below, together with an abacus plot showing the individual $k$-mers.")
+
+  # Warn when a haplotype's consensus length rests entirely on flanking reads, with no spanning
+  # read ever confirming it end to end.
+  unspanned_haplotypes <- consensus_region_df %>%
+    filter(spanning_reads == 0) %>%
+    pull(haplotype) %>%
+    unique()
+
+  if (length(unspanned_haplotypes) > 0) {
+    cat("\n\n")
+    cat(paste0(
+      '<div style="background:#fff3cd; border:1px solid #ffe08a; border-radius:6px; padding:10px 14px; margin:6px 0;">',
+        '<strong>Warning:</strong> no spanning read confirms the consensus length for haplotype(s) ',
+        paste(toupper(unspanned_haplotypes), collapse = ", "),
+        " - it is estimated from flanking reads only.",
+      '</div>'
+    ))
+  }
 
   # Create Abacus plots
 

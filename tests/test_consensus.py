@@ -233,7 +233,8 @@ def test_create_consensus_calls_respects_flanking_read_coverage(
     for read_call in read_calls:
         read_call.haplotype = Haplotype.H1
 
-    consensus_calls = create_consensus_calls(read_calls=read_calls, haplotype=Haplotype.H1)
+    # all units in these cases are 3-mers, so the target kmer count is the expected length / 3
+    consensus_calls = create_consensus_calls(read_calls=read_calls, haplotype=Haplotype.H1, target_lengths=[len(expected_consensus) // 3])
 
     assert len(consensus_calls) == 1
     assert consensus_calls[0].alignment.str_sequence == expected_consensus
@@ -306,7 +307,133 @@ def test_create_consensus_calls_resist_strand_biased_errors(satellite_seqs: list
     for read_call in read_calls:
         read_call.haplotype = Haplotype.H1
 
-    consensus_calls = create_consensus_calls(read_calls=read_calls, haplotype=Haplotype.H1)
+    # all units in these cases are 3-mers, so the target kmer count is the expected length / 3
+    consensus_calls = create_consensus_calls(read_calls=read_calls, haplotype=Haplotype.H1, target_lengths=[len(expected_consensus) // 3])
 
     assert len(consensus_calls) == 1
     assert consensus_calls[0].alignment.str_sequence == expected_consensus
+
+
+# --- Multi-satellite / multi-break segmentation (see docs on create_consensus_calls) ---
+
+# Each entry: (sequence, alignment type). Strand is always "+".
+SegmentReadSpec = tuple[str, str]
+
+
+def make_segment_reads(specs: list[SegmentReadSpec], locus: Locus) -> list[Read]:
+    full_sequence_for_type = {
+        "spanning": lambda seq: locus.left_anchor + seq + locus.right_anchor,
+        "left": lambda seq: locus.left_anchor + seq,
+        "right": lambda seq: seq + locus.right_anchor,
+    }
+    return [make_read(f"{read_type}_{i}", full_sequence_for_type[read_type](seq), locus) for i, (seq, read_type) in enumerate(specs)]
+
+
+@pytest.mark.parametrize(
+    ("satellite_seqs", "breaks", "read_specs", "target_lengths", "expected_consensus"),
+    [
+        pytest.param(
+            ["CCG", "CCG"],
+            ["", "AATAA", ""],
+            [
+                ("CCG" * 2 + "AAGAA" + "CCG" * 3, "spanning"),
+                ("CCG" * 2 + "AAGAA" + "CCG" * 3, "spanning"),
+                ("CCG" * 3 + "AAGAA" + "CCG" * 2, "spanning"),
+                ("CCG" * 4 + "AATAA" + "CCG" * 1, "spanning"),
+                ("CCG" * 4 + "AATAA" + "CCG" * 1, "spanning"),
+            ],
+            [3, 2],
+            "CCG" * 3 + "AAGAA" + "CCG" * 2,
+            id="A breaker that shifts position with satellite count must not be voted out by the flat majority",
+        ),
+        pytest.param(
+            ["CCG", "CCG"],
+            ["", "AATAA", ""],
+            [
+                ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
+                ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
+                ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
+                ("CCG" * 6, "left"),
+            ],
+            [6, 2],
+            "CCG" * 6 + "AATAA" + "CCG" * 2,
+            id="A long left-flanking read extends satellite 1's count past what spanning reads show, without disturbing satellite 2",
+        ),
+        pytest.param(
+            ["CCG", "CCG"],
+            ["", "AATAA", ""],
+            [
+                ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
+                ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
+                ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
+                ("CCG" * 5, "right"),
+            ],
+            [3, 5],
+            "CCG" * 3 + "AATAA" + "CCG" * 5,
+            id="A long right-flanking read extends satellite 2's count past what spanning reads show, without disturbing satellite 1",
+        ),
+        pytest.param(
+            ["CAG", "GGC", "TGA"],
+            ["", "AAAAA", "TTTTT", ""],
+            [
+                ("CAG" * 2 + "AAAAA" + "GGC" * 2 + "TTTTT" + "TGA" * 2, "spanning"),
+                ("CAG" * 2 + "AAAAA" + "GGC" * 2 + "TTTTT" + "TGA" * 2, "spanning"),
+                ("CAG" * 3 + "AAAAA" + "GGC" * 3 + "TTTTT" + "TGA" * 2, "spanning"),
+                ("CAG" * 4 + "AAAAA" + "GGC" * 4 + "TTTTT" + "TGA" * 2, "spanning"),
+                ("CAG" * 4 + "AAAAA" + "GGC" * 4 + "TTTTT" + "TGA" * 2, "spanning"),
+            ],
+            [3, 3, 2],
+            "CAG" * 3 + "AAAAA" + "GGC" * 3 + "TTTTT" + "TGA" * 2,
+            id="The fix generalizes past one break - three satellites and two independently-shifting breaks",
+        ),
+    ],
+)
+def test_create_consensus_calls_segments_by_satellite_and_break(
+    satellite_seqs: list[str],
+    breaks: list[str],
+    read_specs: list[SegmentReadSpec],
+    target_lengths: list[int],
+    expected_consensus: str,
+):
+    """The consensus search must align each read's copies against the satellite/break they were
+    mapped to, not against a flat position in the whole allele - two reads can genuinely agree on
+    every satellite's content while disagreeing on an earlier satellite's count, which shifts
+    where a later satellite (or a break) sits in the flat kmer string."""
+    random.seed(0)
+    locus = create_synthetic_locus(satellite_seqs, breaks)
+    reads = make_segment_reads(read_specs, locus)
+
+    read_calls, _ = get_read_calls(reads, locus)
+    for read_call in read_calls:
+        read_call.haplotype = Haplotype.H1
+
+    consensus_calls = create_consensus_calls(read_calls=read_calls, haplotype=Haplotype.H1, target_lengths=target_lengths)
+
+    assert len(consensus_calls) == 1
+    assert consensus_calls[0].alignment.str_sequence == expected_consensus
+
+
+def test_create_consensus_calls_folds_flanking_only_into_one_consensus():
+    """With no spanning reads at all, a left-flanking read covering satellite 1 and a right-flanking
+    read covering the break and satellite 2 jointly cover the whole locus - this must produce one
+    unified consensus call (not two disjoint left/right calls), and it must be identifiable as having
+    no spanning support."""
+    random.seed(0)
+    locus = create_synthetic_locus(["CCG", "CCG"], ["", "AATAA", ""])
+    reads = make_segment_reads(
+        [
+            ("CCG" * 3, "left"),
+            ("AATAA" + "CCG" * 2, "right"),
+        ],
+        locus,
+    )
+
+    read_calls, _ = get_read_calls(reads, locus)
+    for read_call in read_calls:
+        read_call.haplotype = Haplotype.H1
+
+    consensus_calls = create_consensus_calls(read_calls=read_calls, haplotype=Haplotype.H1, target_lengths=[3, 2])
+
+    assert len(consensus_calls) == 1
+    assert consensus_calls[0].alignment.str_sequence == "CCG" * 3 + "AATAA" + "CCG" * 2
+    assert consensus_calls[0].spanning_reads == 0
