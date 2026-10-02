@@ -173,7 +173,7 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         test_parameter_summary_df = summarize_test_parameter_estimates(het_params, hom_params)
 
         # Build per-haplotype consensus (relabels flanking reads in grouped_read_calls against a raw consensus first)
-        final_consensus_calls = build_consensus_for_locus(grouped_read_calls)
+        final_consensus_calls = build_consensus_for_locus(grouped_read_calls, final_params)
 
         grouped_read_calls.extend(all_removed_read_calls)
         haplotyping_df = calculate_final_group_summaries(grouped_read_calls)

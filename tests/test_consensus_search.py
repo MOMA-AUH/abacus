@@ -13,45 +13,6 @@ def units(s: str) -> list[str]:
     return [s[i : i + 3] for i in range(0, len(s), 3)]
 
 
-def test_slippage_growth_skips_lone_interruptions():
-    """Slippage lengthens a stretch of identical units; it does not duplicate a one-off
-    interruption into a false repeat. Shrinking has no such restriction.
-    """
-    seed = "AABA"  # runs: AA, B, A
-    assert set(consensus_search.slippage_candidates(seed, grow=True)) == {"AAABA"}
-    assert set(consensus_search.slippage_candidates(seed, grow=False)) == {"ABA", "AAA", "AAB"}
-
-
-def test_repair_length_extends_the_repeat_not_the_interruption():
-    """A seed one unit short must regain a repeat unit, never a second copy of the interruption."""
-    reads = [(units("CAG" * 4 + "AAA" + "CAG" * 5), "spanning", "+")] * 5
-    encoded, char_to_kmer = consensus_search.encode_reads(reads)
-    target = consensus_search.median_length(encoded, spanning_only=True)
-    short_seed = encoded[0][0][:-1]
-
-    repaired = consensus_search.repair_length(short_seed, encoded, target)
-
-    assert len(repaired) == target
-    assert [char_to_kmer[c] for c in repaired].count("AAA") == 1
-
-
-def test_starting_seed_prefers_spanning_reads_over_more_numerous_flanking_reads():
-    """A single spanning read sees the whole locus; two flanking reads of a different allele only
-    ever see their own side. The flanking reads' raw kmer count (6) outnumbers the spanning read's
-    (4), but the search must still start from what the spanning read actually shows.
-    """
-    reads = [
-        (["CAG", "CAG", "CAG", "CAG"], "spanning", "+"),
-        (["AAA", "AAA", "AAA"], "right", "+"),
-        (["AAA", "AAA", "AAA"], "right", "+"),
-    ]
-    encoded, char_to_kmer = consensus_search.encode_reads(reads)
-
-    seed = consensus_search.starting_seed(encoded)
-
-    assert [char_to_kmer[c] for c in seed] == ["CAG"] * 4
-
-
 @pytest.mark.parametrize(
     ("reads", "expected"),
     [
@@ -72,7 +33,7 @@ def test_hill_climb_does_not_let_flanking_reads_corrupt_a_lone_spanning_read(rea
     flanking reads' motif outright, corrupting the whole consensus rather than just the tail/head
     the flanking reads actually cover.
     """
-    assert consensus_search.hill_climb(reads) == expected
+    assert consensus_search.hill_climb(reads, len(expected)) == expected
 
 
 def test_trim_partial_boundary_kmers_drops_uncorroborated_boundary():
@@ -144,7 +105,7 @@ def test_trim_partial_boundary_kmers_drops_a_flanking_read_left_with_nothing():
 )
 def test_hill_climb_does_not_let_a_partial_boundary_kmer_outvote_a_full_unit(reads, expected):
     """Regression test for the two mid-unit-boundary cases in test_consensus.py."""
-    assert consensus_search.hill_climb(reads) == expected
+    assert consensus_search.hill_climb(reads, len(expected)) == expected
 
 
 @pytest.mark.parametrize(
@@ -171,7 +132,7 @@ def test_hill_climb_requires_cross_strand_support_before_trusting_the_majority_t
     only motif seen on both strands. Zero support on one strand must lose to both-strand support,
     regardless of vote count.
     """
-    assert consensus_search.hill_climb(reads) == expected
+    assert consensus_search.hill_climb(reads, len(expected)) == expected
 
 
 def test_hill_climb_disqualifies_a_kmer_by_position_not_just_globally():
@@ -183,7 +144,7 @@ def test_hill_climb_disqualifies_a_kmer_by_position_not_just_globally():
     correct_read_minus: consensus_search.KmerRead = (["CAG", "CAG", "CAG", "AAA", "CAG"], "spanning", "-")
     reads = [error_read for _ in range(10)] + [correct_read_plus] + [correct_read_minus for _ in range(3)]
 
-    assert consensus_search.hill_climb(reads) == ["CAG", "CAG", "CAG", "AAA", "CAG"]
+    assert consensus_search.hill_climb(reads, 5) == ["CAG", "CAG", "CAG", "AAA", "CAG"]
 
 
 @pytest.mark.parametrize(
@@ -213,7 +174,7 @@ def test_hill_climb_tolerates_a_one_column_registration_offset_between_strands(r
     same interruption without bridging genuinely distinct positions (contrast the disqualification
     test above, two units apart).
     """
-    assert consensus_search.hill_climb(reads) == expected
+    assert consensus_search.hill_climb(reads, len(expected)) == expected
 
 
 @pytest.mark.parametrize(
@@ -245,4 +206,51 @@ def test_hill_climb_resolves_out_of_phase_interruptions_to_the_shared_middle_pos
     strand-eligibility logic. The cross-strand variant checks that eligibility doesn't interfere:
     the lone minus-strand read at the middle shouldn't need a second minus-strand read to count.
     """
-    assert consensus_search.hill_climb(reads) == expected
+    assert consensus_search.hill_climb(reads, len(expected)) == expected
+
+
+@pytest.mark.parametrize("depth", [1, 2, 5])
+def test_hill_climb_keeps_an_interruption_the_reads_place_two_columns_apart(depth):
+    """Half the reads put the interruption first, half put it last. Flattening it (CGG-CGG-CGG)
+    and centring it (CGG-AAA-CGG) are both one edit from every read - a substitution and a
+    transposition cost the same - so distance alone can't choose. Composition must: every read
+    carries exactly one AAA, so the consensus should too. Parametrised over depth because the
+    substitution only becomes a candidate once enough reads vote for it.
+    """
+    reads = [(["AAA", "CGG", "CGG"], "spanning", "+")] * depth + [(["CGG", "CGG", "AAA"], "spanning", "+")] * depth
+
+    assert consensus_search.hill_climb(reads, 3) == ["CGG", "AAA", "CGG"]
+
+
+def test_seed_by_vote_slides_a_long_reads_vote_from_its_left_end_to_its_right_end():
+    """A read one unit longer than the target has its extra unit somewhere; at seed position 0
+    none of it can have gone by (vote read[0]), at the last position all of it has (vote
+    read[n-1]). So a lone long read seeds its own first and last kmers at the ends, not a
+    smeared mixture.
+    """
+    read = ["AAA", "CGG", "CGG", "CGG", "TTT", "TTT"]  # target 5: extra unit somewhere inside
+    encoded, char_to_kmer = consensus_search.encode_reads([(read, "spanning", "+")])
+
+    seed = [char_to_kmer[c] for c in consensus_search.seed_by_vote(encoded, 5)]
+
+    assert seed[0] == "AAA"
+    assert seed[-1] == "TTT"
+
+
+def test_seed_by_vote_does_not_let_a_strand_specific_majority_into_the_seed():
+    """GGG outvotes CGG 10:4, but only plus-strand reads show it. The proposal filter already
+    rejects strand-specific kmers; the seed must apply the same rule, or the error enters by
+    majority and survives because the objective genuinely prefers it.
+    """
+    reads = [(["GGG"], "spanning", "+")] * 10 + [(["CGG"], "spanning", "+")] + [(["CGG"], "spanning", "-")] * 3
+    encoded, char_to_kmer = consensus_search.encode_reads(reads)
+
+    assert [char_to_kmer[c] for c in consensus_search.seed_by_vote(encoded, 1)] == ["CGG"]
+
+
+def test_hill_climb_returns_exactly_the_requested_length():
+    """The search never inserts or deletes: the consensus is the target length whatever the reads are."""
+    reads = [(["CAG"] * n, "spanning", "+") for n in (5, 6, 7, 7, 8)]
+
+    assert len(consensus_search.hill_climb(reads, 7)) == 7
+    assert len(consensus_search.hill_climb(reads, 4)) == 4
