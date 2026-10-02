@@ -84,6 +84,12 @@ def rescue_boundary(synced: list, trim_start: int) -> list:
     return [residue + kept[0], *kept[1:]] if kept else [residue]
 
 
+ANCHOR_NODES = frozenset({"left_anchor", "left_anchor_overlap", "right_anchor_overlap", "right_anchor"})
+
+# Only simple (single-node, unambiguous) satellite copies can be split.
+SATELLITE_COPY_NODE = re.compile(r"^satellite_(\d+)(?:_alt(\d+))?$")
+
+
 def get_reference_sequence_from_path(path: list[str], locus: Locus, graph: nx.DiGraph) -> str:
     """Reconstruct the reference sequence for an alignment path through the graph.
 
@@ -91,9 +97,53 @@ def get_reference_sequence_from_path(path: list[str], locus: Locus, graph: nx.Di
     Each node already stores its resolved sequence (ambiguous bases are individual nodes),
     so no post-hoc patching is needed.
     """
-    anchor_nodes = {"left_anchor", "left_anchor_overlap", "right_anchor_overlap", "right_anchor"}
-    str_region = "".join(graph.nodes[node]["sequence"] for node in path if node not in anchor_nodes)
+    str_region = "".join(graph.nodes[node]["sequence"] for node in path if node not in ANCHOR_NODES)
     return locus.left_anchor + str_region + locus.right_anchor
+
+
+def split_into_copies(observed: str, motif: str) -> list[str] | None:
+    """Split an over-long kmer into repeats of one piece: the motif, or the motif minus one base.
+
+    E.g. motif "CGG", observed "CGCG" -> ["CG", "CG"]. None if no such split exists.
+    """
+    if len(motif) < 3:
+        # Below 3 bases, the one-base-short piece is a single base - too ambiguous to split on.
+        return None
+
+    # Full motif first, then each single-base deletion (dedup'd, order arbitrary among these).
+    pieces = (motif, *dict.fromkeys(motif[:i] + motif[i + 1 :] for i in range(len(motif))))
+    for piece in pieces:
+        # Full motif tried first so a tie (e.g. AAAAA: 4 whole copies or 5 one-short) picks fewer copies.
+        n, remainder = divmod(len(observed), len(piece))
+        if n >= 2 and remainder == 0 and observed == piece * n:
+            return [piece] * n
+    return None
+
+
+def respread_over_copies(synced: list, start: int, end: int, pieces: list[str], copy_length: int) -> list:
+    """Replace one copy's slots in a synced list with one copy per piece.
+
+    A synced list has one slot per graph base; `get_kmer_string` cuts it into copies of
+    `copy_length` slots and joins each. Each new copy gets one base per slot, padded with empty
+    slots for the bases its piece is short. Works for any synced list (sequence, mod 5mC: str
+    slots; qualities: list slots), since `pieces` only sets how many bases go to each copy.
+
+    E.g. motif "CGG" (copy_length 3) observed as "CGCG" -> pieces ["CG", "CG"]:
+        sequence: ["C", "G", "CG"]          ->  ["C", "G", "", "C", "G", ""]
+        quals:    [[30], [31], [32, 33]]    ->  [[30], [31], [], [32], [33], []]
+    """
+    # One slot per observed base. Slicing (not indexing) keeps the slot type:
+    # "CG" -> "C", "G" and [32, 33] -> [32], [33].
+    base_slots = [entry[i : i + 1] for entry in synced[start:end] for i in range(len(entry))]
+    empty_slot = base_slots[0][:0]  # "" or []
+
+    new_copies = []
+    for piece in pieces:
+        new_copies += base_slots[: len(piece)]
+        new_copies += [empty_slot] * (copy_length - len(piece))
+        base_slots = base_slots[len(piece) :]
+
+    return synced[:start] + new_copies + synced[end:]
 
 
 @dataclass
@@ -237,6 +287,8 @@ class GraphAlignment(Read):
             self.str_cigar_synced = self.str_cigar_synced[:-trim_end]
             self.str_mod_5mc_synced = self.str_mod_5mc_synced[:-trim_end]
 
+        self.split_slipped_copies()
+
         # Get sequence and qualities of the STR region
         self.str_sequence = "".join(self.str_sequence_synced)
         self.str_qualities = [q for sublist in self.str_qualities_synced for q in sublist]
@@ -261,6 +313,62 @@ class GraphAlignment(Read):
         str_cigar = re.sub(rf"^[ID]{{1,{longest_satellite}}}|[ID]{{1,{longest_satellite}}}$", "", str_cigar)
 
         self.str_ref_divergence = compute_ref_divergence(str_cigar)
+
+    def split_slipped_copies(self) -> None:
+        """Split over-long satellite copies that are really several copies, so they count right.
+
+        A slipped stretch of short copies (e.g. "CG CG" in a CGG repeat) is cheaper for the aligner
+        to pack into one copy with an insertion than to spell out with one deletion per copy - so
+        the repeat gets undercounted.
+
+        Each satellite copy in the path is checked: if its observed bases are the motif, or the
+        motif minus one base, repeated (`split_into_copies`), it is split into that many copies.
+        The synced lists are respread over the new copies and the path node is duplicated, so the
+        kmer strings show the extra copies. Anything else - e.g. a genuine insertion, or an
+        observed sequence that is itself one of the satellite's alternatives - is left alone.
+
+        Only runs when the synced lists cover the path from the STR start (spanning reads), since
+        copy offsets are counted from there.
+
+        E.g. motif "CGG", path [CGG, CGG, CGG] observed as "CGG|CGCG|CGG"
+        -> path [CGG, CGG, CGG, CGG] observed as "CGG|CG|CG|CGG".
+        """
+        # Copy offsets below assume the synced lists cover the whole path, from STR start to end.
+        str_positions = sum(len(self.graph.nodes[node]["sequence"]) for node in self.path if node not in ANCHOR_NODES)
+        if "left_anchor_overlap" not in self.path or str_positions != len(self.str_sequence_synced):
+            return
+
+        copies = []
+        position = 0
+        for path_index, node in enumerate(self.path):
+            if node in ANCHOR_NODES:
+                continue
+            match = SATELLITE_COPY_NODE.match(node)
+            if match:
+                copies.append((path_index, int(match[1]), position))
+            position += len(self.graph.nodes[node]["sequence"])
+
+        # Right to left, so a split never shifts a copy still to be visited.
+        for path_index, satellite_index, start in reversed(copies):
+            self.split_copy(path_index, satellite_index, start)
+
+    def split_copy(self, path_index: int, satellite_index: int, start: int) -> None:
+        node = self.path[path_index]
+        motif = self.graph.nodes[node]["sequence"]
+        end = start + len(motif)
+
+        observed = "".join(self.str_sequence_synced[start:end])
+        if len(observed) <= len(motif) or observed in self.locus.satellites[satellite_index].sequences:
+            return
+
+        pieces = split_into_copies(observed, motif)
+        if pieces is None:
+            return
+
+        self.str_sequence_synced = respread_over_copies(self.str_sequence_synced, start, end, pieces, len(motif))
+        self.str_qualities_synced = respread_over_copies(self.str_qualities_synced, start, end, pieces, len(motif))
+        self.str_mod_5mc_synced = respread_over_copies(self.str_mod_5mc_synced, start, end, pieces, len(motif))
+        self.path[path_index : path_index + 1] = [node] * len(pieces)
 
     def to_dict(self) -> dict:
         return {
@@ -846,7 +954,7 @@ def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], lis
         )
         qual_kmer_string = get_kmer_string(
             locus=locus,
-            synced_list=[qual_to_char(qual) for sublist in aln.str_qualities_synced for qual in sublist],
+            synced_list=["".join(qual_to_char(qual) for qual in quals) for quals in aln.str_qualities_synced],
             satellite_copy_lengths=satellite_copy_lengths,
         )
 

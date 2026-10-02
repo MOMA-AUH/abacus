@@ -837,6 +837,26 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             {"hom": "CAG" * 17 + "CTG" * 12},
             id="Consensus-Entirely unreached middle satellite (no spanning reads at all)",
         ),
+        # Slipped reads: a stretch of short CG copies is cheaper for the aligner to pack into fewer
+        # CGG copies with insertions, undercounting the read. Most reads below are slipped, each at
+        # a different position with the same copy count as its allele - so every copy is still CGG
+        # in most reads, and neither the means nor the consensus may shift.
+        pytest.param(
+            ["CGG"],
+            ["", ""],
+            [
+                *["CGG" * 30] * 3,
+                *["CGG" * start + "CG" * 4 + "CGG" * (26 - start) for start in (4, 8, 12, 16, 20)],
+                *["CGG" * 40] * 3,
+                *["CGG" * start + "CG" * 4 + "CGG" * (36 - start) for start in (6, 12, 18, 24, 30)],
+            ],
+            [],
+            [],
+            {"h1": 8, "h2": 8},
+            {"h1": [30.0], "h2": [40.0]},
+            {"h1": "CGG" * 30, "h2": "CGG" * 40},
+            id="Slipped CG copies in some reads are counted, not packed into fewer CGG copies",
+        ),
     ],
 )
 def test_haplotyping_integration(
