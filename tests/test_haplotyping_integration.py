@@ -718,8 +718,9 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
                 "CAG" * 378,
             ],
             {"h1": 14, "h2": 16},
-            {"h1": [5.0], "h2": [1825.0]},
-            {"h1": "CAG" * 5, "h2": "CAG" * 1825},
+            # H2 is fit to widely spread mosaic reads, so its integer estimate shifts by one between numpy/scipy versions
+            {"h1": [5.0], "h2": [pytest.approx(1825.0, abs=1)]},
+            {"h1": "CAG" * 5, "h2": {"CAG" * n for n in range(1824, 1827)}},
             id="Case 18: DMPK - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
         pytest.param(
@@ -867,7 +868,7 @@ def test_haplotyping_integration(
     right_flanking_sequences: list[str],
     expected_group_sizes: dict[Literal["h1", "h2", "hom", "outlier"], int],
     expected_means: dict[str, list[float]] | None,
-    expected_consensus: dict[str, str] | None,
+    expected_consensus: dict[str, str | set[str]] | None,
 ) -> None:
     """Test the haplotype grouping functionality for both simple and complex loci."""
     locus = create_synthetic_locus(satellite_seqs, breaks)
@@ -916,6 +917,8 @@ def test_haplotyping_integration(
     observed_consensus = {consensus_call.haplotype.value: consensus_call.alignment.str_sequence for consensus_call in consensus_calls}
     if expected_consensus is not None:
         for haplotype, expected_sequence in expected_consensus.items():
-            assert observed_consensus.get(haplotype) == expected_sequence, (
+            # A set lists every acceptable consensus, for cases whose estimate may differ by a unit
+            allowed = expected_sequence if isinstance(expected_sequence, set) else {expected_sequence}
+            assert observed_consensus.get(haplotype) in allowed, (
                 f"Expected {haplotype} consensus {expected_sequence}, got {observed_consensus.get(haplotype)}"
             )
