@@ -1,6 +1,8 @@
 # Abacus
 
+[![CI](https://github.com/MOMA-AUH/abacus/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/MOMA-AUH/abacus/actions/workflows/ci.yml)
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/abacus-str.svg)](https://anaconda.org/bioconda/abacus-str)
+[![Bioconda downloads](https://img.shields.io/conda/dn/bioconda/abacus-str.svg?label=downloads)](https://anaconda.org/bioconda/abacus-str)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 <img src="./img/logo.png" width="150">

@@ -30,6 +30,7 @@ requirements:
     - pyfaidx
     - levenshtein >=0.26.1
     - pysam >=0.22.1
+    - rapidfuzz >=3.12.1
     - rich >=13.7.1
     - scikit-learn >=1.2.2
     - scipy >=1.15.2

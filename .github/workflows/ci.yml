@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: env.yml
+          environment-name: abacus
+          cache-environment: true
+
+      - name: Install abacus
+        run: pip install . --no-deps
+
+      - name: Run tests
+        run: pytest -q
+
+  recipe:
+    name: Build conda recipe
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-name: build
+          create-args: conda-build
+          condarc: |
+            channels: [conda-forge, bioconda]
+            channel_priority: strict
+
+      # The recipe points at the release tarball; build from this checkout instead
+      - name: Point recipe at local source
+        run: |
+          sed -i -e 's|^  url: .*|  path: ..|' -e '/^  sha256:/d' recipe/meta.yaml
+          sed -n '/^source:/,/^$/p' recipe/meta.yaml
+
+      # Builds the package and runs the recipe's test section (import + CLI smoke tests)
+      - name: Build and test
+        run: conda build recipe
