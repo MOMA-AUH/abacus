@@ -38,6 +38,7 @@ def generate_vcf_header(reference: Path, sample_name: str, unique_alts: list[int
         ##INFO=<ID=LOCUSID,Number=1,Type=String,Description="Variant identifier">
         ##INFO=<ID=REPID,Number=1,Type=String,Description="Repeat identifier">
         ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##FORMAT=<ID=PS,Number=1,Type=Integer,Description="Phase set identifier; alleles sharing this ID are phased consistently (same H1/H2 order) across all satellite records of a locus">
         ##FORMAT=<ID=LC,Number=1,Type=Integer,Description="Locus coverage">
         ##FORMAT=<ID=REPCN,Number=A,Type=Float,Description="Number of repeat units spanned by the consensus allele">
         ##FORMAT=<ID=REPCI,Number=A,Type=String,Description="Confidence interval for REPCN">
@@ -128,12 +129,18 @@ def create_vcf_records(
         format_field_values: list[str] = []
 
         # GT field
-        gt_indices = [str(i + 1) for i in range(len(alt_alleles))]
-        gt_format = "/".join(gt_indices)
+        # H1/H2 order is consistent across all satellite records of a locus (see PS below),
+        # so a heterozygous genotype is phased; a homozygous locus has one diploid allele.
+        gt_format = "1|2" if locus_is_het else "1/1"
 
         # Add to format field
         format_field_headers.append("GT")
         format_field_values.append(gt_format)
+
+        # PS field (only meaningful when phased, i.e. heterozygous)
+        if locus_is_het:
+            format_field_headers.append("PS")
+            format_field_values.append(str(locus.location.start))
 
         # Calculate counts for LC AD fields
         alt_depths = [call.spanning_reads + call.flanking_reads for call in consensus_calls]

@@ -11,8 +11,10 @@ from abacus.graph import (
     create_repeat_graph,
     get_graph_alignments,
     get_kmer_string,
+    get_read_calls,
     get_reference_sequence_from_path,
     get_satellite_copy_lengths_from_path,
+    split_into_copies,
 )
 from abacus.locus import Location, Satellite, create_satellites, process_str_pattern
 
@@ -382,6 +384,28 @@ def test_get_satellite_copy_lengths_from_path(structure, read, expected_satellit
             "|".join(["GAA"] * 3 + ["GA"] * 2),
             id="OR operator: mixed alt lengths, GAA x3 then GA x2",
         ),
+        pytest.param(
+            "(CGG)+",
+            "C" + "CGG" * 3,  # a base inserted right at the repeat's edge, not a chopping artifact
+            "|".join(["CGG"] * 3),
+            "CCGG|CGG|CGG",
+            id="Insertion at the repeat's leading edge must not vanish into the trimmed anchor",
+        ),
+        pytest.param(
+            "(CGG)+",
+            "CGG" * 2 + "CG" * 4 + "CGG",
+            "|".join(["CGG"] * 7),
+            "|".join(["CGG"] * 2 + ["CG"] * 4 + ["CGG"]),
+            id="A slipped CGG stretch is four short copies, not two copies with bases inserted",
+        ),
+        pytest.param(
+            "(ACAAG|AAGAC|AACGG|ACGGA|AAAAG|AAGGC)+",
+            "ACAAG" * 5 + "AC" + "ACAAG" * 5,
+            "|".join(["ACAAG"] * 10),
+            # Which neighbour absorbs the insertion is incidental; it must stay one over-long copy.
+            "|".join(["ACAAG"] * 4 + ["ACAAGAC"] + ["ACAAG"] * 5),
+            id="A genuine insertion stays one over-long copy, not split into fake short ones",
+        ),
     ],
 )
 def test_get_satellite_strings(structure, read, expected_expected_kmer_string, expected_observed_kmer_string):
@@ -429,7 +453,7 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
             sequence=read_str,
             qualities=[30] * len(read_str),
             strand="+",
-            mod_5mc_probs="",
+            mod_5mc_probs="0" * len(read_str),
             n_soft_clipped_left=0,
             n_soft_clipped_right=0,
             locus=locus,
@@ -491,6 +515,62 @@ def test_get_kmer_string_mixed_alternative_lengths():
     )
 
     assert kmer_string == "|".join(["GAA"] * 3 + ["GA"] * 2)
+
+
+@pytest.mark.parametrize(
+    ("observed", "motif", "expected"),
+    [
+        pytest.param("CGCG", "CGG", ["CG", "CG"], id="One base short per copy"),
+        pytest.param("GAAGAA", "GAA", ["GAA", "GAA"], id="Two whole copies packed into one slot"),
+        pytest.param(
+            "GAAAGAA",
+            "GAA",
+            None,
+            id="No homogeneous tiling exists - mix of different pieces is rejected, not guessed",
+        ),
+        pytest.param(
+            "A" * 20,
+            "AAAAA",
+            ["AAAAA"] * 4,
+            id="Tie between 4 whole copies and 5 one-base-short copies favors fewer copies",
+        ),
+        pytest.param("GGGGGG", "CG", None, id="Motifs under 3 bases are never split - too ambiguous"),
+        pytest.param("GAA", "GAA", None, id="Not over-long - nothing to split"),
+    ],
+)
+def test_split_into_copies(observed: str, motif: str, expected: list[str] | None):
+    assert split_into_copies(observed, motif) == expected
+
+
+@pytest.mark.parametrize("flank", ["left", "right"])
+def test_slipped_flanking_read_is_split(flank: str):
+    random.seed(42)
+    location = Location("chr1", 100, 200)
+    locus = Locus(
+        id="test",
+        location=location,
+        left_anchor="".join(random.choices("ATCG", k=config.anchor_len)),
+        right_anchor="".join(random.choices("ATCG", k=config.anchor_len)),
+        structure="(CGG)+",
+        satellites=[Satellite(id="test", sequences=["CGG"], location=location, skippable=False)],
+        breaks=["", ""],
+    )
+    slipped = "CGG" * 6 + "CG" * 4 + "CGG" * 5
+    sequence = locus.left_anchor + slipped if flank == "left" else slipped + locus.right_anchor
+    read = Read(
+        name="read",
+        sequence=sequence,
+        qualities=[30] * len(sequence),
+        strand="+",
+        mod_5mc_probs="0" * len(sequence),
+        n_soft_clipped_left=0,
+        n_soft_clipped_right=0,
+        locus=locus,
+    )
+
+    read_calls, _ = get_read_calls([read], locus)
+
+    assert read_calls[0].obs_kmer_string == "|".join(["CGG"] * 6 + ["CG"] * 4 + ["CGG"] * 5)
 
 
 @pytest.mark.parametrize(

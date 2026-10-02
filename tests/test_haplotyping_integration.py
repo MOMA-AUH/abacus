@@ -6,6 +6,7 @@ from typing import Literal
 import pytest
 
 from abacus import config
+from abacus.consensus import build_consensus_for_locus
 from abacus.graph import (
     Read,
     get_read_calls,
@@ -78,6 +79,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         "right_flanking_sequences",
         "expected_group_sizes",
         "expected_means",
+        "expected_consensus",
     ),
     [
         # Simple test cases (single satellite)
@@ -89,6 +91,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {},
             None,
+            None,
             id="Simple-Empty",
         ),
         pytest.param(
@@ -99,6 +102,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"hom": 1},
             None,
+            {"hom": "CAG"},
             id="Simple-Single spanning",
         ),
         pytest.param(
@@ -109,6 +113,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ["CAG"],
             {"hom": 4},
             None,
+            {"hom": "CAG" * 2},
             id="Simple-Homozygous - Small",
         ),
         pytest.param(
@@ -124,6 +129,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 3, "h2": 4},
             {"h1": [1.0], "h2": [3.0]},
+            {"h1": "CAG", "h2": "CAG" * 3},
             id="Simple-Heterozygous - Small",
         ),
         pytest.param(
@@ -139,6 +145,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 20, "h2": 2},
             {"h1": [27.0], "h2": [30.0]},
+            {"h1": "CTG" * 27, "h2": "CTG" * 30},
             id="Simple-Skewed split. Should be called heterozygous",
         ),
         # Complex test cases (multiple satellites)
@@ -155,6 +162,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 2, "h2": 3},
             {"h1": [2.0, 3.0], "h2": [4.0, 2.0]},
+            {"h1": "CAG" * 2 + "CTG" * 3, "h2": "CAG" * 4 + "CTG" * 2},
             id="Complex-Two satellites - only spanning",
         ),
         pytest.param(
@@ -170,6 +178,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ["CTG" * 2],
             {"h1": 3, "h2": 4},
             {"h1": [2.0, 3.0], "h2": [4.0, 2.0]},
+            {"h1": "CAG" * 2 + "CTG" * 3, "h2": "CAG" * 4 + "CTG" * 2},
             id="Complex-Two satellites - with flanking",
         ),
         # Cases with 2 satellites and a break sequence (HTT is a good example)
@@ -186,6 +195,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 3, "h2": 4},
             {"h1": [2.0, 3.0], "h2": [5.0, 2.0]},
+            {"h1": "CAG" * 2 + "CAACAG" + "CCG" * 3, "h2": "CAG" * 5 + "CAACAG" + "CCG" * 2},
             id="Complex-Two satellites with break - only spanning",
         ),
         pytest.param(
@@ -201,6 +211,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ["CAACAG" + "CCG" * 2],
             {"h1": 3, "h2": 4},
             {"h1": [2.0, 3.0], "h2": [4.0, 2.0]},
+            {"h1": "CAG" * 2 + "CAACAG" + "CCG" * 3, "h2": "CAG" * 4 + "CAACAG" + "CCG" * 2},
             id="Complex-Two satellites with break - with flanking",
         ),
         # Cases with 3 satellites
@@ -215,6 +226,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ["CCG" + "CTG"],  # Right flanking matching H2
             {"h1": 3, "h2": 3},
             {"h1": [3.0, 2.0, 1.0], "h2": [2.0, 1.0, 3.0]},
+            {"h1": "CAG" * 3 + "CCG" * 2 + "CTG", "h2": "CAG" * 2 + "CCG" + "CTG" * 3},
             id="Complex-Three satellites - heterozygous",
         ),
         # OR operator test cases (satellite with multiple alternative sequences)
@@ -229,6 +241,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 5, "h2": 7},
             {"h1": [10.0], "h2": [15.0]},
+            {"h1": "CAG" * 10, "h2": "CAA" * 15},
             id="OR-Heterozygous by repeat count",
         ),
         pytest.param(
@@ -242,6 +255,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 7, "h2": 5},
             {"h1": [10.0], "h2": [10.0]},
+            {"h1": "CAG" * 10, "h2": "CAA" * 10},
             id="OR-Heterozygous by motif, but same length.",
         ),
         pytest.param(
@@ -255,6 +269,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 8, "h2": 8},
             {"h1": [12.0], "h2": [20.0]},
+            {"h1": "GGCCCC" * 12, "h2": "GGCCCCC" * 20},
             id="OR-Heterozygous, different-length alternatives",
         ),
         # Haplotyping based on motif differences
@@ -266,6 +281,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"hom": 8},
             {"hom": [10.0]},
+            {"hom": "CAG" * 10},
             id="Sequence split-8 reads below min_haplotyping_depth-should not create singleton",
         ),
         pytest.param(
@@ -276,6 +292,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"hom": 12},
             {"hom": [10.0]},
+            {"hom": "CAG" * 10},
             id="Sequence split-No differences should remain homozygous",
         ),
         pytest.param(
@@ -291,6 +308,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 7, "h2": 5},
             {"h1": [2.0], "h2": [2.0]},
+            {"h1": "CAGCAG", "h2": "CAGCGG"},
             id="Sequence split-Short and simple",
         ),
         pytest.param(
@@ -306,6 +324,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 11, "h2": 9},
             {"h1": [31.0], "h2": [31.0]},
+            {"h1": "CAG" * 31, "h2": "CAG" * 20 + "CGG" + "CAG" * 10},
             id="Sequence split-Long and simple",
         ),
         pytest.param(
@@ -321,6 +340,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 9, "h2": 7},
             {"h1": [7.0, 3.0], "h2": [7.0, 3.0]},
+            {"h1": "CAG" * 7 + "CAACAG" + "CCGCCGCCG", "h2": "CAG" * 7 + "CAACAG" + "CCGCAGCCG"},
             id="Sequence split-HTT-like case with interruption",
         ),
         # Outlier test cases
@@ -343,6 +363,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 9, "h2": 11, "outlier": 1},
             {"h1": [28.0], "h2": [31.0]},
+            {"h1": "CTG" * 28, "h2": "CTG" * 31},
             id="Outlier-Long outlier that should be separated from H2",
         ),
         # Test cases from data - simple loci
@@ -363,6 +384,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 3, "h2": 2},
             {"h1": [771.0], "h2": [864.0]},
+            {"h1": "AAAAG" * 771, "h2": "AAAAG" * 864},
             id="Case 1: Long RCF1. Only one flanking read for H2",
         ),
         pytest.param(
@@ -387,6 +409,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 11, "h2": 6},
             {"h1": [12.0], "h2": [938.0]},
+            {"h1": "AAAAG" * 12, "h2": "AAAAG" * 938},
             id="Case 2: RFC1. Short H1, Long H2",
         ),
         pytest.param(
@@ -403,6 +426,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 5, "h2": 6},
             {"h1": [9.0], "h2": [11.0]},
+            {"h1": "GAA" * 9, "h2": "GAA" * 11},
             id="Case 3: FGF14. Close haplotypes, 1 apart",
         ),
         pytest.param(
@@ -418,6 +442,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 7, "h2": 5},
             {"h1": [8.0], "h2": [9.0]},
+            {"h1": "GAA" * 8, "h2": "GAA" * 9},
             id="Case 4: FGF14. Close haplotypes 2, 0 apart",
         ),
         pytest.param(
@@ -438,6 +463,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 10, "h2": 8},
             {"h1": [5.0], "h2": [13.0]},
+            {"h1": "GAA" * 5, "h2": "GAA" * 13},
             id="Case 5: DMPK",
         ),
         pytest.param(
@@ -463,6 +489,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 9, "h2": 18},
             {"h1": [8.0], "h2": [109.0]},
+            {"h1": "GAA" * 8, "h2": "GAA" * 109},
             id="Case 6: RFC1",
         ),
         pytest.param(
@@ -479,6 +506,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ["CTG" * 28],
             {"h1": 9, "h2": 6},
             {"h1": [28.0], "h2": [30.0]},
+            {"h1": "CTG" * 28, "h2": "CTG" * 30},
             id="Case 7: ATXN1",
         ),
         pytest.param(
@@ -497,6 +525,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ],
             {"h1": 17, "h2": 3},
             {"h1": [12.0], "h2": [958.0]},
+            {"h1": "GGCCCC" * 12, "h2": "GGCCCC" * 958},
             id="Case 9: C9ORF72",
         ),
         pytest.param(
@@ -512,6 +541,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 17, "h2": 21},
             {"h1": [12.0], "h2": [15.0]},
+            {"h1": "AGC" * 12, "h2": "AGC" * 15},
             id="Case 10: ARX_EIEE",
         ),
         pytest.param(
@@ -522,6 +552,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"hom": 1},
             {"hom": [7.0]},
+            {"hom": "GCC" * 7},
             id="Case 11: XYLT1 - Low coverage, no spanning reads",
         ),
         pytest.param(
@@ -538,6 +569,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 3, "h2": 10},
             {"h1": [19.0], "h2": [27.0]},
+            {"h1": "GGC" * 19, "h2": "GGC" * 27},
             id="Case 12: NOTCH2NLC",
         ),
         pytest.param(
@@ -561,6 +593,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 8, "h2": 12},
             {"h1": [15.0, 9.0, 18.0], "h2": [16.0, 9.0, 21.0]},
+            {"h1": "CAG" * 15 + "CCG" * 9 + "CTG" * 18, "h2": "CAG" * 16 + "CCG" * 9 + "CTG" * 21},
             id="Case 13: CNBP",
         ),
         pytest.param(
@@ -579,6 +612,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 24, "h2": 38, "outlier": 1},
             {"h1": [10.0], "h2": [14.0]},
+            {"h1": "GCC" * 10, "h2": "GCC" * 14},
             id="Case 14: PABPN1 - Outlier should not affect haplotype grouping (issue #18).",
         ),
         pytest.param(
@@ -598,6 +632,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             ],
             {"h1": 12, "h2": 13, "outlier": 1},
             {"h1": [19.0], "h2": [67.0]},
+            {"h1": "CTG" * 19, "h2": "CTG" * 67},
             id="Case 15: ATXN3 - Flanking outlier should be separated from H2",
         ),
         pytest.param(
@@ -626,6 +661,9 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 18, "h2": 17},
             {"h1": [279.0], "h2": [278.0]},
+            # H2's own motif is GAAGGA - a genuine, both-strand-agreeing rotation of GAA, not an error, so it
+            # survives into the consensus as 139 clean GAAGGA units (278 3bp kmers), not 278 GAA units.
+            {"h1": "GAA" * 279, "h2": "GAAGGA" * 139},
             id="Case 16: FGF14 - Same varying length, differing motif",
         ),
         pytest.param(
@@ -647,6 +685,8 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 16, "h2": 5},
             {"h1": [12.0], "h2": None},
+            # H2's mean is None (too mosaic to estimate) - no target length, so no consensus to check either.
+            {"h1": "GGCCCC" * 12},
             id="Case 17: C9ORF72 - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
         pytest.param(
@@ -678,7 +718,9 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
                 "CAG" * 378,
             ],
             {"h1": 14, "h2": 16},
-            {"h1": [5.0], "h2": [1825.0]},
+            # H2 is fit to widely spread mosaic reads, so its integer estimate shifts by one between numpy/scipy versions
+            {"h1": [5.0], "h2": [pytest.approx(1825.0, abs=1)]},
+            {"h1": "CAG" * 5, "h2": {"CAG" * n for n in range(1824, 1827)}},
             id="Case 18: DMPK - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
         pytest.param(
@@ -704,6 +746,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 14, "h2": 5, "outlier": 2},
             {"h1": [32.0], "h2": [950.0]},
+            {"h1": "CGG" * 32, "h2": "CGG" * 950},
             id="Case 19: FMR1 - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
         pytest.param(
@@ -731,6 +774,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"hom": 13, "outlier": 1},
             {"hom": [177.0]},
+            {"hom": "CGG" * 177},
             id="Case 20: FMR1 - Single premutation allele should not be split into two haplotypes.",
         ),
         pytest.param(
@@ -747,6 +791,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 14, "h2": 13},
             {"h1": [31.0], "h2": [31.0]},
+            {"h1": "CTG" * 13 + "ATG" + "CTG" + "ATG" + "CTG" * 15, "h2": "CTG" * 14 + "ATG" + "CTG" + "ATG" + "CTG" * 14},
             id="Case 21: CTG - same length, ATG interruptions - sequence split should be detected",
         ),
         pytest.param(
@@ -775,7 +820,43 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             [],
             {"h1": 16, "h2": 2, "outlier": 1},
             {"h1": [432.0], "h2": [763.0]},
+            {"h1": "AAAAG" * 432, "h2": "AAAAG" * 763},
             id="Case 22: RFC1_complex - long allele with few spanning reads undetected due to biased initial split (regression test)",
+        ),
+        # Consensus segmentation: a middle satellite entirely unreached by any read (left-flanking
+        # reads only ever reach satellite 1, right-flanking only ever reach satellite 3) - its
+        # estimated count must come out as 0 (not confused with "unobserved"), and the consensus
+        # must contain zero copies of it, not a fabricated or flat-position-voted value.
+        pytest.param(
+            ["CAG", "CCG", "CTG"],
+            ["", "", "", ""],
+            [],
+            ["CAG" * 17] * 3,
+            ["CTG" * 12] * 3,
+            {"hom": 6},
+            {"hom": [17.0, 0.0, 12.0]},
+            {"hom": "CAG" * 17 + "CTG" * 12},
+            id="Consensus-Entirely unreached middle satellite (no spanning reads at all)",
+        ),
+        # Slipped reads: a stretch of short CG copies is cheaper for the aligner to pack into fewer
+        # CGG copies with insertions, undercounting the read. Most reads below are slipped, each at
+        # a different position with the same copy count as its allele - so every copy is still CGG
+        # in most reads, and neither the means nor the consensus may shift.
+        pytest.param(
+            ["CGG"],
+            ["", ""],
+            [
+                *["CGG" * 30] * 3,
+                *["CGG" * start + "CG" * 4 + "CGG" * (26 - start) for start in (4, 8, 12, 16, 20)],
+                *["CGG" * 40] * 3,
+                *["CGG" * start + "CG" * 4 + "CGG" * (36 - start) for start in (6, 12, 18, 24, 30)],
+            ],
+            [],
+            [],
+            {"h1": 8, "h2": 8},
+            {"h1": [30.0], "h2": [40.0]},
+            {"h1": "CGG" * 30, "h2": "CGG" * 40},
+            id="Slipped CG copies in some reads are counted, not packed into fewer CGG copies",
         ),
     ],
 )
@@ -787,6 +868,7 @@ def test_haplotyping_integration(
     right_flanking_sequences: list[str],
     expected_group_sizes: dict[Literal["h1", "h2", "hom", "outlier"], int],
     expected_means: dict[str, list[float]] | None,
+    expected_consensus: dict[str, str | set[str]] | None,
 ) -> None:
     """Test the haplotype grouping functionality for both simple and complex loci."""
     locus = create_synthetic_locus(satellite_seqs, breaks)
@@ -826,4 +908,17 @@ def test_haplotyping_integration(
         if "hom" in expected_means and expected_means["hom"] is not None:
             assert final_params[Haplotype.HOM].mean.tolist() == expected_means["hom"], (
                 f"Expected homozygous mean {expected_means['hom']}, got {final_params[Haplotype.HOM].mean[0]}"
+            )
+
+    # Build the real, final per-haplotype consensus the same way main.py does, and check it against
+    # every haplotype expected_consensus names - always run so a case with no expectations still
+    # acts as a smoke test that this doesn't crash.
+    consensus_calls = build_consensus_for_locus(grouped_reads, final_params)
+    observed_consensus = {consensus_call.haplotype.value: consensus_call.alignment.str_sequence for consensus_call in consensus_calls}
+    if expected_consensus is not None:
+        for haplotype, expected_sequence in expected_consensus.items():
+            # A set lists every acceptable consensus, for cases whose estimate may differ by a unit
+            allowed = expected_sequence if isinstance(expected_sequence, set) else {expected_sequence}
+            assert observed_consensus.get(haplotype) in allowed, (
+                f"Expected {haplotype} consensus {expected_sequence}, got {observed_consensus.get(haplotype)}"
             )
