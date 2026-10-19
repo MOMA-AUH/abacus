@@ -39,7 +39,7 @@ Controlled by `--equal-length-alpha`.
 
 ### Reporting results
 
-Results are saved as an HTML report (STR loci, called alleles, and visualizations) and a VCF file with the genotyping calls. `--add-consensus-to-vcf` and `--add-contracted-consensus-to-vcf` add consensus calls to the VCF output. For large catalogs, report generation can be skipped by omitting the `--report` argument.
+Results are saved as an HTML report (STR loci, called alleles, and visualizations) and a VCF file with the genotyping calls (see [VCF output](#vcf-output)). `--add-consensus-to-vcf` adds the consensus sequences to the VCF output. For large catalogs, report generation can be skipped by omitting the `--report` argument.
 
 ## Installation
 
@@ -152,8 +152,34 @@ Fine-tuning knobs for the analysis:
 #### Output Options
 - `--log-file`: path to the log file. Default: `abacus.log`.
 - `--keep-temp-files`: keep temporary analysis files. Default: `False`.
-- `--add-consensus-to-vcf`: add consensus calls to the VCF output. Default: `False`.
-- `--add-contracted-consensus-to-vcf`: add contracted consensus calls to the VCF output. Default: `False`.
+- `--add-consensus-to-vcf`: add the consensus sequence of each allele (`CONS`) to the VCF output. Default: `False`.
+
+## VCF output
+
+The VCF follows [VCFv4.5](https://samtools.github.io/hts-specs/VCFv4.5.pdf) and uses its `<CNV:TR>` tandem repeat representation. There is one record per satellite (repeat) of a locus, and one `<CNV:TR>` ALT allele per haplotype: `H1,H2` for a heterozygous locus, a single allele for a homozygous one. Every allele is reported as ALT, also when it matches the reference, so the repeat count estimate is always present.
+
+Example: the HTT CAG satellite, where H1 is `(CAG)9CAA(CAG)8` and H2 is `(CAG)42`:
+
+```
+chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;RUS=CAG,CAA,CAG,CAG;RUC=9,1,8,42;TRUC=18.1,41.7;CITRUC=-0.9,1.1,-2.4,3;LOCUSID=HTT;REPID=HTT_CAG  GT:PS:DP:AD:ADSP:ADFL  1|2:3074876:30:0,18,12:15,9:3,3
+```
+
+| Column / field | Description |
+|---|---|
+| `POS`, `REF` | The padding base immediately preceding the repeat. |
+| `ID` | `Abacus.<LocusId>.<satellite index>`. |
+| `INFO/SVLEN` | Reference length of the repeat (`1` for a repeat absent from the reference). |
+| `INFO/RN` | Number of repeat sequences in each allele. `0` for an allele without a consensus. |
+| `INFO/RUS`, `INFO/RUC` | Repeat unit sequence and count of each repeat sequence, flattened in allele order. The consensus is split into runs of identical repeat units, so interruptions (e.g. `CAA`) and motif changes (e.g. RFC1 `AAAAG` to `AAGGG`) get their own entry. |
+| `INFO/TRUC` | Estimated total number of repeat units in each allele. |
+| `INFO/CITRUC` | Confidence interval around `TRUC`, as lower and upper offsets from it for each allele. |
+| `INFO/CONS` | Consensus sequence of each allele. Only with `--add-consensus-to-vcf`. |
+| `INFO/LOCUSID`, `INFO/REPID` | The catalog `LocusId` and `VariantId`. |
+| `FORMAT/GT` | `1\|2` (phased) for a heterozygous locus, `1/1` for a homozygous one. |
+| `FORMAT/PS` | Phase set, shared by all satellite records of a heterozygous locus, so H1/H2 are consistent across them. |
+| `FORMAT/DP` | Number of reads assigned to the alleles. |
+| `FORMAT/AD` | Reads per allele, starting with the reference allele, which is always `0`. |
+| `FORMAT/ADSP`, `FORMAT/ADFL` | Spanning and flanking reads per allele. |
 
 ## The STR catalog
 
