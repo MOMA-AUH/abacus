@@ -143,9 +143,13 @@ def create_vcf_records(
             format_field_values.append(str(locus.location.start))
 
         # Calculate counts for LC AD fields
-        alt_depths = [call.spanning_reads + call.flanking_reads for call in consensus_calls]
-        alt_spanning_depths = [call.spanning_reads for call in consensus_calls]
-        alt_flanking_depths = [call.flanking_reads for call in consensus_calls]
+        # Depths follow ALT order (H1, H2 or HOM), not the order the calls arrive in
+        # # A haplotype without a consensus call has depth 0
+        alt_haplotypes = [Haplotype.H1, Haplotype.H2] if locus_is_het else [Haplotype.HOM]
+        calls_by_haplotype = {call.haplotype: call for call in consensus_calls}
+        alt_spanning_depths = [calls_by_haplotype[h].spanning_reads if h in calls_by_haplotype else 0 for h in alt_haplotypes]
+        alt_flanking_depths = [calls_by_haplotype[h].flanking_reads if h in calls_by_haplotype else 0 for h in alt_haplotypes]
+        alt_depths = [sp + fl for sp, fl in zip(alt_spanning_depths, alt_flanking_depths, strict=True)]
 
         lc_field = str(sum(alt_depths))
         ad_field = ",".join(str(depth) for depth in alt_depths)
@@ -158,11 +162,19 @@ def create_vcf_records(
 
         # Repeat counts and confidence intervals
         # Get repeat confidence intervals
-        repcn_est_low = [final_params[Haplotype.H1].mean_ci_low[i], final_params[Haplotype.H2].mean_ci_low[i]] if locus_is_het else [final_params[Haplotype.HOM].mean_ci_low[i]]
-        repcn_est_high = [final_params[Haplotype.H1].mean_ci_high[i], final_params[Haplotype.H2].mean_ci_high[i]] if locus_is_het else [final_params[Haplotype.HOM].mean_ci_high[i]]
+        repcn_est_low = (
+            [final_params[Haplotype.H1].mean_ci_low[i], final_params[Haplotype.H2].mean_ci_low[i]]
+            if locus_is_het
+            else [final_params[Haplotype.HOM].mean_ci_low[i]]
+        )
+        repcn_est_high = (
+            [final_params[Haplotype.H1].mean_ci_high[i], final_params[Haplotype.H2].mean_ci_high[i]]
+            if locus_is_het
+            else [final_params[Haplotype.HOM].mean_ci_high[i]]
+        )
 
         repcn_field = ",".join(str(round(count, 3)) for count in repcn_est)
-        repci_format = ",".join(f"{round(low, 3)}-{round(high, 3)}" for low, high in zip(repcn_est_low, repcn_est_high))
+        repci_format = ",".join(f"{round(low, 3)}-{round(high, 3)}" for low, high in zip(repcn_est_low, repcn_est_high, strict=True))
 
         # Add to format field
         format_field_headers.extend(["REPCN", "REPCI"])
@@ -170,25 +182,16 @@ def create_vcf_records(
 
         if config.add_consensus_to_vcf or config.add_contracted_consensus_to_vcf:
             # Consensus call fields
-            subset_kmer_lists: list[list[str]] = []
-
-            # Filter and organize the consensus calls
-            if locus_is_het:
-                filtered_consensus_calls = [call for call in consensus_calls if call.haplotype in [Haplotype.H1, Haplotype.H2]]
-                filtered_consensus_calls.sort(key=lambda call: call.haplotype)
-            else:
-                filtered_consensus_calls = [call for call in consensus_calls if call.haplotype == Haplotype.HOM]
-
-            # If more than one consensus call for a haplotype, use the longest one
-            for haplotype in [Haplotype.H1, Haplotype.H2, Haplotype.HOM]:
-                filtered_calls = [call for call in filtered_consensus_calls if call.haplotype == haplotype]
-                if len(filtered_calls) > 1:
-                    # Sort by length and take the longest one
-                    filtered_calls.sort(key=lambda call: len(call.obs_kmer_string), reverse=True)
-                    filtered_consensus_calls = [filtered_calls[0]]
+            # One entry per ALT allele; None for a haplotype without a consensus call
+            subset_kmer_lists: list[list[str] | None] = []
 
             # Extract the kmer strings for each consensus call
-            for consensus_call in filtered_consensus_calls:
+            for haplotype in alt_haplotypes:
+                consensus_call = calls_by_haplotype.get(haplotype)
+                if consensus_call is None:
+                    subset_kmer_lists.append(None)
+                    continue
+
                 # Extract the path and extract the relevant nodes
                 path = consensus_call.alignment.path
                 path = [node for node in path if "sub_" in node or "satellite_" in node or "break" in node]
@@ -205,7 +208,7 @@ def create_vcf_records(
 
             # Consensus string
             if config.add_consensus_to_vcf:
-                satellite_consensus_list = ["".join(x) for x in subset_kmer_lists]
+                satellite_consensus_list = ["." if x is None else "".join(x) for x in subset_kmer_lists]
                 consensus_field = ",".join(satellite_consensus_list)
 
                 # Add to format field
@@ -214,7 +217,7 @@ def create_vcf_records(
 
             if config.add_contracted_consensus_to_vcf:
                 # Contracted consensus call fields
-                contracted_consensus_fields = [contract_kmer_string("|".join(kmer_list)) for kmer_list in subset_kmer_lists]
+                contracted_consensus_fields = ["." if kmer_list is None else contract_kmer_string("|".join(kmer_list)) for kmer_list in subset_kmer_lists]
                 contracted_consensus_field = ",".join(contracted_consensus_fields)
 
                 # Add to format field
