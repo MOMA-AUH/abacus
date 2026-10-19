@@ -10,6 +10,11 @@
         "ReferenceRegion": "chrX:148500631-148500691"
     },
     {
+        "LocusId": "AFF3",
+        "LocusStructure": "(GCC)*",
+        "ReferenceRegion": "chr2:100104798-100104822"
+    },
+    {
         "LocusId": "AR",
         "LocusStructure": "(GCA)*",
         "ReferenceRegion": "chrX:67545316-67545385"
@@ -291,7 +296,7 @@
     },
     {
         "LocusId": "RFC1_complex",
-        "LocusStructure": "(AARRS|AGAGG|AGGGC|GGACA|GGAAAG)*",
+        "LocusStructure": "(AAAAG|AAAGG|AAGGG|AGGGC|ACAGG|AAAGGG)*",
         "ReferenceRegion": "chr4:39348424-39348485"
     },
     {
