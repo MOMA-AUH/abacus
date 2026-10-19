@@ -3,7 +3,6 @@ from __future__ import annotations
 import faulthandler
 import functools
 import logging as _logging
-import math
 import subprocess
 
 faulthandler.enable()
@@ -194,7 +193,6 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         # Generate VCF records here while final_consensus_calls, final_params, and locus_is_het are in scope,
         # so the main process never needs to accumulate the full ConsensusCall/params objects.
         vcf_records = create_vcf_records(final_consensus_calls, ref, final_params, locus_is_het)
-        vcf_unique_alts = {int(v) for params in final_params.values() for v in params.mean if not math.isnan(v)}
     _locus_context["id"] = ""
 
     return {
@@ -207,7 +205,6 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         "final_parameter_summary_df": final_parameter_summary_df,
         "test_parameter_summary_df": test_parameter_summary_df,
         "vcf_records": vcf_records,
-        "vcf_unique_alts": vcf_unique_alts,
     }
 
 
@@ -356,14 +353,6 @@ def abacus(
             rich_help_panel=OPTIONS,
         ),
     ] = config.add_consensus_to_vcf,
-    add_contracted_consensus_to_vcf: Annotated[
-        bool,
-        typer.Option(
-            "--add-contracted-consensus-to-vcf",
-            help="Include contracted consensus sequence in VCF output",
-            rich_help_panel=OPTIONS,
-        ),
-    ] = config.add_contracted_consensus_to_vcf,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -613,7 +602,6 @@ def abacus(
 
     # VCF options
     config.add_consensus_to_vcf = add_consensus_to_vcf
-    config.add_contracted_consensus_to_vcf = add_contracted_consensus_to_vcf
 
     # Welcome message
     logger.info(ascii_art)
@@ -659,8 +647,6 @@ def abacus(
     for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv, vcf_records_tmp]:
         _f.unlink(missing_ok=True)
 
-    unique_alts: set[int] = set()
-
     def _handle_result(result: dict) -> None:
         append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
         append_to_csv(pd.DataFrame([r.to_dict() for r in result["unmapped_reads"]]), filtered_reads_csv)
@@ -673,7 +659,6 @@ def abacus(
             for line in result["vcf_records"]:
                 if line:
                     f.write(line + "\n")
-        unique_alts.update(result["vcf_unique_alts"])
 
     # Process each locus (in parallel if --threads > 1), writing results incrementally
     logger.info("Processing loci...")
@@ -707,7 +692,6 @@ def abacus(
             vcf_records_tmp=vcf_records_tmp,
             reference=ref,
             sample_id=sample_id,
-            unique_alts=unique_alts,
         )
 
     # Render report (only if --report was provided)

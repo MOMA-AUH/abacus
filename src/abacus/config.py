@@ -36,7 +36,6 @@ class Config:
 
     # Output parameters
     add_consensus_to_vcf: bool = False
-    add_contracted_consensus_to_vcf: bool = False
 
     # Haplotype parameters
     min_haplotyping_depth: int = 10
