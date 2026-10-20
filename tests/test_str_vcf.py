@@ -50,7 +50,7 @@ def test_header_follows_vcf_4_5(ref_path: Path):
     assert header.startswith("##fileformat=VCFv4.5\n")
     assert f"##reference=file://{ref_path}\n" in header
     assert '##ALT=<ID=CNV:TR,Description="Tandem repeat">' in header
-    for key in ["SVLEN", "RN", "RUS", "RUC", "TRUC", "CITRUC", "LOCUSID", "REPID", "CONS"]:
+    for key in ["SVLEN", "RN", "RUS", "RUC", "LPSRUS", "LPSRUC", "TRUC", "CITRUC", "LOCUSID", "REPID", "CONS"]:
         assert f"##INFO=<ID={key}," in header
     assert '##FORMAT=<ID=AD,Number=R,Type=Integer,' in header
     assert '##FORMAT=<ID=ADSP,Number=R,Type=Integer,' in header
@@ -109,6 +109,8 @@ def test_interrupted_allele_is_split_into_runs(ref_path: Path):
     assert info["RN"] == "3,1"
     assert info["RUS"] == "CAG,CAA,CAG,CAG"
     assert info["RUC"] == "9,1,8,12"
+    assert info["LPSRUS"] == "CAG,CAG"
+    assert info["LPSRUC"] == "9,12"
 
 
 def test_multi_motif_satellite_reports_motif_runs(ref_path: Path):
@@ -123,6 +125,21 @@ def test_multi_motif_satellite_reports_motif_runs(ref_path: Path):
     assert info["RUS"] == "AAAAG,AAGGG"
     assert info["RUC"] == "3,4"
     assert info["TRUC"] == "7.0"
+    # Any motif can be the longest pure segment, not just the first catalog unit
+    assert info["LPSRUS"] == "AAGGG"
+    assert info["LPSRUC"] == "4"
+
+
+def test_longest_pure_segment_tie_keeps_first_run(ref_path: Path):
+    locus = create_synthetic_locus(["CAG|CAA"])
+    final_params = {Haplotype.HOM: params(10)}
+    calls = [make_consensus_call(locus, "CAA" * 5 + "CAG" * 5, Haplotype.HOM)]
+
+    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=False)
+
+    info = info_values(record)
+    assert info["LPSRUS"] == "CAA"
+    assert info["LPSRUC"] == "5"
 
 
 def test_homozygous_record_has_one_alt_and_no_phase_set(ref_path: Path):
@@ -167,6 +184,8 @@ def test_haplotype_without_consensus_has_no_repeat_sequences(ref_path: Path):
     assert info["RUS"] == "CAG"
     assert info["RUC"] == "5"
     assert info["TRUC"] == "5.0,0.0"
+    assert info["LPSRUS"] == "CAG,."
+    assert info["LPSRUC"] == "5,."
     values = format_values(record)
     assert values["AD"] == "0,13,0"
     assert values["ADSP"] == "0,11,0"

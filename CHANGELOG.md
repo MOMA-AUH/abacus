@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PS` FORMAT field; heterozygous genotypes are now phased
 - CI workflow
 - Optional `BenignMax`/`PathogenicMin` catalog thresholds: count estimates are highlighted in the report summary table and classified in the new VCF fields `STRSTATUS`, `BENIGNMAX` and `PATHOGENICMIN` ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
+- `LPSRUS`/`LPSRUC` INFO fields with the longest pure segment (LPS) of each allele, after [Danzi et al. (2025)](https://doi.org/10.1101/2025.01.06.631535)
 - Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 ### Changed
 - **Breaking:** VCF output now follows VCFv4.5 and uses the `<CNV:TR>` tandem repeat representation (see the README for all fields):

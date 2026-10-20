@@ -161,7 +161,7 @@ The VCF follows [VCFv4.5](https://samtools.github.io/hts-specs/VCFv4.5.pdf) and 
 Example: the HTT CAG satellite, where H1 is `(CAG)9CAA(CAG)8` and H2 is `(CAG)42`:
 
 ```
-chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;RUS=CAG,CAA,CAG,CAG;RUC=9,1,8,42;TRUC=18.1,41.7;CITRUC=-0.9,1.1,-2.4,3;LOCUSID=HTT;REPID=HTT_CAG  GT:PS:DP:AD:ADSP:ADFL  1|2:3074876:30:0,18,12:0,15,9:0,3,3
+chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;RUS=CAG,CAA,CAG,CAG;RUC=9,1,8,42;LPSRUS=CAG,CAG;LPSRUC=9,42;TRUC=18.1,41.7;CITRUC=-0.9,1.1,-2.4,3;LOCUSID=HTT;REPID=HTT_CAG  GT:PS:DP:AD:ADSP:ADFL  1|2:3074876:30:0,18,12:0,15,9:0,3,3
 ```
 
 | Column / field | Description |
@@ -171,6 +171,7 @@ chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;R
 | `INFO/SVLEN` | Reference length of the repeat (`1` for a repeat absent from the reference). |
 | `INFO/RN` | Number of repeat sequences in each allele. `0` for an allele without a consensus. |
 | `INFO/RUS`, `INFO/RUC` | Repeat unit sequence and count of each repeat sequence, flattened in allele order. The consensus is split into runs of identical repeat units, so interruptions (e.g. `CAA`) and motif changes (e.g. RFC1 `AAAAG` to `AAGGG`) get their own entry. |
+| `INFO/LPSRUS`, `INFO/LPSRUC` | Repeat unit sequence and count of the longest pure segment of each allele (see [Longest pure segment](#longest-pure-segment)). `.` for an allele without a consensus. |
 | `INFO/TRUC` | Estimated total number of repeat units in each allele. |
 | `INFO/CITRUC` | Confidence interval around `TRUC`, as lower and upper offsets from it for each allele. |
 | `INFO/CONS` | Consensus sequence of each allele. Only with `--add-consensus-to-vcf`. |
@@ -182,6 +183,10 @@ chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;R
 | `FORMAT/DP` | Number of reads assigned to the alleles. |
 | `FORMAT/AD` | Reads per allele, starting with the reference allele, which is always `0`. |
 | `FORMAT/ADSP`, `FORMAT/ADFL` | Spanning and flanking reads per allele, starting with the reference allele like `AD`. |
+
+### Longest pure segment
+
+`LPSRUS`/`LPSRUC` give the longest pure segment (LPS) of each allele, i.e. the longest entry in `RUS`/`RUC`. The idea is from [Danzi et al. (2025)](https://doi.org/10.1101/2025.01.06.631535), who found the LPS to be the best genome-wide predictor of pathogenicity. As in the paper, the LPS can be used to rank loci by their variability in a population (PLVI), and to prioritise alleles with an LPS that is long compared to the population. Population LPS data per locus can be found in [TRExplorer](https://trexplorer.broadinstitute.org).
 
 ## The STR catalog
 

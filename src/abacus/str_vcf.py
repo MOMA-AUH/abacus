@@ -37,6 +37,8 @@ def generate_vcf_header(reference: Path, sample_name: str) -> str:
         ##INFO=<ID=RN,Number=A,Type=Integer,Description="Total number of repeat sequences in this allele">
         ##INFO=<ID=RUS,Number=.,Type=String,Description="Repeat unit sequence of the corresponding repeat sequence">
         ##INFO=<ID=RUC,Number=.,Type=Float,Description="Repeat unit count of corresponding repeat sequence">
+        ##INFO=<ID=LPSRUS,Number=A,Type=String,Description="Repeat unit sequence of the longest pure segment in the allele">
+        ##INFO=<ID=LPSRUC,Number=A,Type=Integer,Description="Repeat unit count of the longest pure segment in the allele">
         ##INFO=<ID=TRUC,Number=A,Type=Float,Description="Estimated total number of repeat units in the allele">
         ##INFO=<ID=CITRUC,Number=.,Type=Float,Description="Confidence interval around TRUC">
         ##INFO=<ID=CONS,Number=A,Type=String,Description="Consensus sequence of the allele">
@@ -133,6 +135,10 @@ def create_vcf_records(
         if any(runs_per_allele):
             info["RUS"] = _join(kmer for runs in runs_per_allele for kmer, _ in runs)
             info["RUC"] = _join(count for runs in runs_per_allele for _, count in runs)
+        # Longest pure segment: the longest run of any repeat unit, the first one on ties (max keeps the first)
+        lps_per_allele = [max(runs, key=lambda run: run[1]) if runs else (".", ".") for runs in runs_per_allele]
+        info["LPSRUS"] = _join(kmer for kmer, _ in lps_per_allele)
+        info["LPSRUC"] = _join(count for _, count in lps_per_allele)
         info["TRUC"] = _join(round(est, 3) for est in truc)
         info["CITRUC"] = _join(round(bound, 3) for bound in citruc)
         if config.add_consensus_to_vcf:
