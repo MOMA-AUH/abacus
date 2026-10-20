@@ -188,6 +188,10 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         satellite_df = pd.concat(satellite_df_list)
         haplotyping_df = haplotyping_df.merge(satellite_df, on="idx", how="left")
         final_parameter_summary_df = final_parameter_summary_df.merge(satellite_df, on="idx", how="left")
+        # Catalog thresholds and the status of each estimate, for the report
+        final_parameter_summary_df["benign_max"] = pd.array([locus.satellites[i].benign_max for i in final_parameter_summary_df["idx"]], dtype="Int64")
+        final_parameter_summary_df["pathogenic_min"] = pd.array([locus.satellites[i].pathogenic_min for i in final_parameter_summary_df["idx"]], dtype="Int64")
+        final_parameter_summary_df["status"] = [locus.satellites[i].status(m) for i, m in zip(final_parameter_summary_df["idx"], final_parameter_summary_df["mean"])]
         test_parameter_summary_df = test_parameter_summary_df.merge(satellite_df, on="idx", how="left")
 
         # Generate VCF records here while final_consensus_calls, final_params, and locus_is_het are in scope,

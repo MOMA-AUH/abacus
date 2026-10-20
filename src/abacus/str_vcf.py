@@ -42,12 +42,15 @@ def generate_vcf_header(reference: Path, sample_name: str) -> str:
         ##INFO=<ID=CONS,Number=A,Type=String,Description="Consensus sequence of the allele">
         ##INFO=<ID=LOCUSID,Number=1,Type=String,Description="Locus identifier">
         ##INFO=<ID=REPID,Number=1,Type=String,Description="Repeat identifier">
+        ##INFO=<ID=STRSTATUS,Number=A,Type=String,Description="Status of TRUC against the catalog thresholds: normal (<= BENIGNMAX), intermediate or pathogenic (>= PATHOGENICMIN)">
+        ##INFO=<ID=BENIGNMAX,Number=1,Type=Integer,Description="Largest benign repeat unit count, from the catalog">
+        ##INFO=<ID=PATHOGENICMIN,Number=1,Type=Integer,Description="Smallest pathogenic repeat unit count, from the catalog">
         ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
         ##FORMAT=<ID=PS,Number=1,Type=Integer,Description="Phase set identifier; alleles sharing this ID are phased consistently (same H1/H2 order) across all satellite records of a locus">
         ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">
         ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depth">
-        ##FORMAT=<ID=ADSP,Number=A,Type=Integer,Description="Number of spanning reads consistent with the allele">
-        ##FORMAT=<ID=ADFL,Number=A,Type=Integer,Description="Number of flanking reads consistent with the allele">\n""",
+        ##FORMAT=<ID=ADSP,Number=R,Type=Integer,Description="Number of spanning reads consistent with the allele">
+        ##FORMAT=<ID=ADFL,Number=R,Type=Integer,Description="Number of flanking reads consistent with the allele">\n""",
     )
 
     # Add column headers to the header
@@ -103,10 +106,10 @@ def create_vcf_records(
     if locus_is_het:
         sample["PS"] = str(locus.location.start)
     sample["DP"] = str(sum(depths))
-    # AD includes the REF allele, which no read is assigned to
+    # AD, ADSP and ADFL include the REF allele, which no read is assigned to
     sample["AD"] = _join([0, *depths])
-    sample["ADSP"] = _join(spanning_depths)
-    sample["ADFL"] = _join(flanking_depths)
+    sample["ADSP"] = _join([0, *spanning_depths])
+    sample["ADFL"] = _join([0, *flanking_depths])
 
     records = []
     for i, satellite in enumerate(locus.satellites):
@@ -136,6 +139,13 @@ def create_vcf_records(
             info["CONS"] = _join("".join(kmers) if kmers else "." for kmers in kmers_per_allele)
         info["LOCUSID"] = locus.id
         info["REPID"] = satellite.id
+        # Threshold fields are only written for satellites with thresholds in the catalog
+        if satellite.benign_max is not None or satellite.pathogenic_min is not None:
+            info["STRSTATUS"] = _join(satellite.status(est) for est in truc)
+        if satellite.benign_max is not None:
+            info["BENIGNMAX"] = str(satellite.benign_max)
+        if satellite.pathogenic_min is not None:
+            info["PATHOGENICMIN"] = str(satellite.pathogenic_min)
 
         fields = [
             # CHROM: the chromosome of the locus

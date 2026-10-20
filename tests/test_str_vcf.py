@@ -53,8 +53,10 @@ def test_header_follows_vcf_4_5(ref_path: Path):
     for key in ["SVLEN", "RN", "RUS", "RUC", "TRUC", "CITRUC", "LOCUSID", "REPID", "CONS"]:
         assert f"##INFO=<ID={key}," in header
     assert '##FORMAT=<ID=AD,Number=R,Type=Integer,' in header
+    assert '##FORMAT=<ID=ADSP,Number=R,Type=Integer,' in header
+    assert '##FORMAT=<ID=ADFL,Number=R,Type=Integer,' in header
     assert "##FORMAT=<ID=DP,Number=1,Type=Integer," in header
-    for removed in ["ID=END,", "ID=RU,", "ID=REF,", "ID=LowQual,", "ID=LC,", "ID=REPCN,", "ID=REPCI,", "ID=CONTRCONS,", "<ID=STR"]:
+    for removed in ["ID=END,", "ID=RU,", "ID=REF,", "ID=LowQual,", "ID=LC,", "ID=REPCN,", "ID=REPCI,", "ID=CONTRCONS,", "##ALT=<ID=STR"]:
         assert removed not in header
     assert header.endswith("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample")
 
@@ -84,7 +86,7 @@ def test_het_record_uses_cnv_tr_with_padding_base(ref_path: Path):
     assert not {"END", "RU", "CONS"} & info.keys()
 
     fmt = format_values(cag)
-    assert fmt == {"GT": "1|2", "PS": "1000", "DP": "21", "AD": "0,13,8", "ADSP": "11,5", "ADFL": "2,3"}
+    assert fmt == {"GT": "1|2", "PS": "1000", "DP": "21", "AD": "0,13,8", "ADSP": "0,11,5", "ADFL": "0,2,3"}
 
     assert ccg.split("\t")[2] == "Abacus.test.2"
     ccg_info = info_values(ccg)
@@ -132,7 +134,7 @@ def test_homozygous_record_has_one_alt_and_no_phase_set(ref_path: Path):
 
     assert record.split("\t")[4] == "<CNV:TR>"
     assert info_values(record)["SVLEN"] == "3"
-    assert format_values(record) == {"GT": "1/1", "DP": "8", "AD": "0,8", "ADSP": "7", "ADFL": "1"}
+    assert format_values(record) == {"GT": "1/1", "DP": "8", "AD": "0,8", "ADSP": "0,7", "ADFL": "0,1"}
 
 
 def test_allele_depths_follow_alt_order_regardless_of_call_order(ref_path: Path):
@@ -148,8 +150,8 @@ def test_allele_depths_follow_alt_order_regardless_of_call_order(ref_path: Path)
     assert info_values(record)["RUC"] == "5,10"
     values = format_values(record)
     assert values["AD"] == "0,11,8"
-    assert values["ADSP"] == "11,5"
-    assert values["ADFL"] == "0,3"
+    assert values["ADSP"] == "0,11,5"
+    assert values["ADFL"] == "0,0,3"
 
 
 def test_haplotype_without_consensus_has_no_repeat_sequences(ref_path: Path):
@@ -167,8 +169,8 @@ def test_haplotype_without_consensus_has_no_repeat_sequences(ref_path: Path):
     assert info["TRUC"] == "5.0,0.0"
     values = format_values(record)
     assert values["AD"] == "0,13,0"
-    assert values["ADSP"] == "11,0"
-    assert values["ADFL"] == "2,0"
+    assert values["ADSP"] == "0,11,0"
+    assert values["ADFL"] == "0,2,0"
 
 
 def test_consensus_is_opt_in_info_field(ref_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -210,3 +212,41 @@ def test_repeat_absent_from_reference_has_svlen_one(ref_path: Path):
     fields = record.split("\t")
     assert (fields[1], fields[3]) == ("1000", "T")
     assert info_values(record)["SVLEN"] == "1"
+
+
+def test_header_declares_threshold_fields(ref_path: Path):
+    header = generate_vcf_header(ref_path, "sample")
+
+    assert "##INFO=<ID=STRSTATUS,Number=A,Type=String," in header
+    assert "##INFO=<ID=BENIGNMAX,Number=1,Type=Integer," in header
+    assert "##INFO=<ID=PATHOGENICMIN,Number=1,Type=Integer," in header
+
+
+def test_thresholds_add_status_per_allele(ref_path: Path):
+    locus = create_synthetic_locus(["CAG", "CCG"], breaks=["", "CAACAG", ""])
+    locus.satellites[0].benign_max = 26
+    locus.satellites[0].pathogenic_min = 36
+    final_params = {Haplotype.H1: params(19, 7), Haplotype.H2: params(45, 10)}
+    calls = [
+        make_consensus_call(locus, "CAG" * 19 + "CAACAG" + "CCG" * 7, Haplotype.H1),
+        make_consensus_call(locus, "CAG" * 45 + "CAACAG" + "CCG" * 10, Haplotype.H2),
+    ]
+
+    cag, ccg = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+
+    info = info_values(cag)
+    assert (info["STRSTATUS"], info["BENIGNMAX"], info["PATHOGENICMIN"]) == ("normal,pathogenic", "26", "36")
+    assert not {"STRSTATUS", "BENIGNMAX", "PATHOGENICMIN"} & info_values(ccg).keys()
+
+
+def test_single_threshold_omits_the_other(ref_path: Path):
+    locus = create_synthetic_locus(["CAG"])
+    locus.satellites[0].pathogenic_min = 36
+    final_params = {Haplotype.HOM: params(30)}
+    calls = [make_consensus_call(locus, "CAG" * 30, Haplotype.HOM)]
+
+    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=False)
+
+    info = info_values(record)
+    assert (info["STRSTATUS"], info["PATHOGENICMIN"]) == ("normal", "36")
+    assert "BENIGNMAX" not in info

@@ -161,7 +161,7 @@ The VCF follows [VCFv4.5](https://samtools.github.io/hts-specs/VCFv4.5.pdf) and 
 Example: the HTT CAG satellite, where H1 is `(CAG)9CAA(CAG)8` and H2 is `(CAG)42`:
 
 ```
-chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;RUS=CAG,CAA,CAG,CAG;RUC=9,1,8,42;TRUC=18.1,41.7;CITRUC=-0.9,1.1,-2.4,3;LOCUSID=HTT;REPID=HTT_CAG  GT:PS:DP:AD:ADSP:ADFL  1|2:3074876:30:0,18,12:15,9:3,3
+chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;RUS=CAG,CAA,CAG,CAG;RUC=9,1,8,42;TRUC=18.1,41.7;CITRUC=-0.9,1.1,-2.4,3;LOCUSID=HTT;REPID=HTT_CAG  GT:PS:DP:AD:ADSP:ADFL  1|2:3074876:30:0,18,12:0,15,9:0,3,3
 ```
 
 | Column / field | Description |
@@ -175,11 +175,13 @@ chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;R
 | `INFO/CITRUC` | Confidence interval around `TRUC`, as lower and upper offsets from it for each allele. |
 | `INFO/CONS` | Consensus sequence of each allele. Only with `--add-consensus-to-vcf`. |
 | `INFO/LOCUSID`, `INFO/REPID` | The catalog `LocusId` and `VariantId`. |
+| `INFO/STRSTATUS` | `normal`, `intermediate` or `pathogenic` for each allele, from `TRUC` and the catalog thresholds (see [Thresholds](#thresholds)). Only for satellites with thresholds. |
+| `INFO/BENIGNMAX`, `INFO/PATHOGENICMIN` | The catalog `BenignMax` and `PathogenicMin`. Only when set for the satellite. |
 | `FORMAT/GT` | `1\|2` (phased) for a heterozygous locus, `1/1` for a homozygous one. |
 | `FORMAT/PS` | Phase set, shared by all satellite records of a heterozygous locus, so H1/H2 are consistent across them. |
 | `FORMAT/DP` | Number of reads assigned to the alleles. |
 | `FORMAT/AD` | Reads per allele, starting with the reference allele, which is always `0`. |
-| `FORMAT/ADSP`, `FORMAT/ADFL` | Spanning and flanking reads per allele. |
+| `FORMAT/ADSP`, `FORMAT/ADFL` | Spanning and flanking reads per allele, starting with the reference allele like `AD`. |
 
 ## The STR catalog
 
@@ -208,6 +210,40 @@ A built-in catalog ships with the package and is used by default. Run `abacus --
     }
 ]
 ```
+
+### Thresholds
+
+Optionally, a locus can have repeat-count thresholds:
+
+- `BenignMax`: largest benign repeat unit count.
+- `PathogenicMin`: smallest pathogenic repeat unit count.
+
+Each count estimate is then classified as `normal` (≤ `BenignMax`), `intermediate` (between the two) or `pathogenic` (≥ `PathogenicMin`). Either field can be left out: without `BenignMax` there is no intermediate range, and without `PathogenicMin` nothing is classified as pathogenic. In the report summary table, intermediate count estimates are highlighted in orange and pathogenic ones in red, and the VCF gets the `STRSTATUS`, `BENIGNMAX` and `PATHOGENICMIN` fields (see [VCF output](#vcf-output)).
+
+For a single-satellite locus, give each threshold as a number. For a locus with several satellites, give a list with one value per satellite, in `LocusStructure` order, using `null` for satellites without a threshold. E.g. HTT, with thresholds on the CAG repeat only (values from [STRchive](https://strchive.org/loci/HD_HTT)):
+
+```json
+[
+    {
+        "LocusId": "HTT",
+        "LocusStructure": "(CAG)*CAACAG(CCG)*",
+        "ReferenceRegion": [
+            "chr4:3074876-3074933",
+            "chr4:3074939-3074966"
+        ],
+        "BenignMax": [26, null],
+        "PathogenicMin": [36, null]
+    }
+]
+```
+
+The built-in catalog has no thresholds; you need to add your own. Sources for published thresholds include [STRchive](https://strchive.org) (benign, intermediate and pathogenic ranges per locus), [STRipy](https://stripy.org/database) and [GeneReviews](https://www.ncbi.nlm.nih.gov/books/NBK1116/).
+
+Thresholds are compared with the repeat unit count that Abacus reports for that satellite, so they must fit how the satellite is defined in the catalog. Published thresholds are based on how the repeat was counted in the original studies, e.g. whether interruptions or adjacent/partial repeats are included. Where the catalog region or structure differs from that, the published values may need adjusting.
+
+Not supported:
+- Thresholds on the combined count of several satellites.
+- Pathogenicity determined by repeat motif rather than size (e.g. RFC1, or the `TTTCA` insertions at FAME loci).
 
 ## Other Resources
 

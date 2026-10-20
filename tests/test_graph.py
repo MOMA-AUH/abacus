@@ -16,7 +16,7 @@ from abacus.graph import (
     get_satellite_copy_lengths_from_path,
     split_into_copies,
 )
-from abacus.locus import Location, Satellite, create_satellites, process_str_pattern
+from abacus.locus import Location, Satellite, create_satellites, parse_str_pattern
 
 
 @pytest.mark.parametrize(
@@ -301,7 +301,7 @@ def test_get_satellite_copy_lengths_from_path(structure, read, expected_satellit
     right_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
 
     # Process STR pattern
-    satellite_seqs, satellites_skippable, breaks = process_str_pattern(structure)
+    satellite_seqs, satellites_skippable, breaks = parse_str_pattern(structure)
 
     location = Location(
         chrom="chr1",
@@ -419,7 +419,7 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
     right_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
 
     # Process STR pattern
-    satellite_seqs, satellites_skippable, breaks = process_str_pattern(structure)
+    satellite_seqs, satellites_skippable, breaks = parse_str_pattern(structure)
 
     location = Location(
         chrom="chr1",
@@ -486,7 +486,7 @@ def test_get_kmer_string_mixed_alternative_lengths():
     # No minigraph involved here - isolates get_kmer_string's own chopping logic
     # from what path the aligner picks (that's covered separately in test_get_satellite_strings).
     structure = "(GAA|GA)+"
-    satellite_seqs, satellites_skippable, breaks = process_str_pattern(structure)
+    satellite_seqs, satellites_skippable, breaks = parse_str_pattern(structure)
 
     location = Location(chrom="chr1", start=100, end=200)
     satellite_locations = [location] * len(satellite_seqs)
@@ -779,7 +779,7 @@ def test_methylation_from_alignment(
 # def test_cases(id: str, structure: str, chr: str, start: int, end: int, bam_path_str: str):
 #     ref = Fasta("/faststorage/project/MomaReference/BACKUP/hg38/reference_genome/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna")
 
-#     satellites, breaks = process_str_pattern(structure)
+#     satellites, breaks = parse_str_pattern(structure)
 
 #     left_anchor = str(ref[chr][(start - config.ANCHOR_LEN) : start])
 #     right_anchor = str(ref[chr][end : (end + config.ANCHOR_LEN)])

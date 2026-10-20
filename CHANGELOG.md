@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AFF3` catalog entry
 - `PS` FORMAT field; heterozygous genotypes are now phased
 - CI workflow
+- Optional `BenignMax`/`PathogenicMin` catalog thresholds: count estimates are highlighted in the report summary table and classified in the new VCF fields `STRSTATUS`, `BENIGNMAX` and `PATHOGENICMIN` ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
+- Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 ### Changed
 - **Breaking:** VCF output now follows VCFv4.5 and uses the `<CNV:TR>` tandem repeat representation (see the README for all fields):
   - `POS`/`REF` is the padding base before the repeat; `POS` was previously reported with a reference base it did not match
@@ -17,10 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Repeat composition is reported with the reserved `SVLEN`, `RN`, `RUS` and `RUC` INFO fields, splitting the consensus into runs of identical repeat units
   - `REPCN`/`REPCI` are replaced by INFO `TRUC`/`CITRUC`, with the confidence interval given as offsets from the estimate
   - `CONS` moved from FORMAT to INFO
-  - `LC` is replaced by the reserved `DP`, and `AD` now includes the reference allele (always `0`)
+  - `LC` is replaced by the reserved `DP`, and `AD`, `ADSP` and `ADFL` now include the reference allele (always `0`)
   - Fixed the `##reference` header line
 - Consensus built by hill-climbing search instead of spoa (new dependency: `rapidfuzz`); consensus length now matches the estimated repeat count ([#25](https://github.com/MOMA-AUH/abacus/issues/25))
 - Faster parameter estimation and report
+- A catalog entry whose `LocusStructure` has no repeat unit now raises an error instead of being skipped with a log message
 ### Fixed
 - VCF genotype and per-allele field ordering
 - Kmer chopping for mixed-length alternatives, e.g. `(GAA|GA)*`

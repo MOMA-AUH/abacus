@@ -128,6 +128,8 @@ ABACUS_PLOT_MAX_POINT_KMERS <- 50
 # Colors
 HEADER_BACKGROUND <- "grey87"
 STRIPED_BACKGROUND <- "grey97"
+INTERMEDIATE_BACKGROUND <- "#FFD8A8"
+PATHOGENIC_BACKGROUND <- "#FFA8A8"
 ATTENTION_COLOR <- "#FF5733"
 
 HAPLOTYPE_COLORS <- c("#308EFF", "#30CDFF", "#30FF60", "#C030FF", ATTENTION_COLOR)
@@ -698,12 +700,15 @@ summary_table_df <- signif_par_summary_df %>%
   left_join(removed_counts_df, by = join_by(locus_id)) %>%
   mutate(removed_count = if_else(is.na(removed_count), 0L, as.integer(removed_count))) %>%
   arrange(locus_id, idx, haplotype) %>%
-  select(locus_id, removed_count, satellite, haplotype, n, mean, mean_lower, mean_upper)
+  select(locus_id, removed_count, satellite, haplotype, n, mean, mean_lower, mean_upper, benign_max, pathogenic_min, status)
+
+# Thresholds are optional catalog fields (BenignMax/PathogenicMin), so the summary only shows them if any locus has them
+has_thresholds <- any(!is.na(summary_table_df$benign_max) | !is.na(summary_table_df$pathogenic_min))
 ```
 
 ## Summary
 
-Count estimates and 95% confidence intervals for all analysed loci. The column "Removed count" shows the number of reads that were removed during QC filtering and length outlier detection. Click a Locus ID to jump to the corresponding section in the report. 
+Count estimates and 95% confidence intervals for all analysed loci. The column "Removed count" shows the number of reads that were removed during QC filtering and length outlier detection. Click a Locus ID to jump to the corresponding section in the report. `r if (has_thresholds) sprintf('Count estimates above the benign threshold are highlighted in <span style="background-color: %s; font-weight: bold;">orange</span>, and those at or above the pathogenic threshold in <span style="background-color: %s; font-weight: bold;">red</span>. The thresholds come from the BenignMax and PathogenicMin fields of the STR catalog.', INTERMEDIATE_BACKGROUND, PATHOGENIC_BACKGROUND) else ""`
 
 ```{r Summary section, results = TRUE}
 # Row indices for even-numbered loci (zebra stripe at locus level)
@@ -715,11 +720,39 @@ summary_stripe_rows <- summary_table_df %>%
   filter(locus_rank %% 2 == 0) %>%
   pull(row_num)
 
+# Count estimate background: status color, otherwise the row's own (striped) background
+count_estimate_background <- case_when(
+  summary_table_df$status %in% "pathogenic" ~ PATHOGENIC_BACKGROUND,
+  summary_table_df$status %in% "intermediate" ~ INTERMEDIATE_BACKGROUND,
+  seq_len(nrow(summary_table_df)) %in% summary_stripe_rows ~ STRIPED_BACKGROUND,
+  TRUE ~ "white"
+)
+
+# Long satellite structures make the table hard to read, so they are shortened in the middle
+truncate_middle <- function(x, max_chars = 20) {
+  keep <- max_chars - 3
+  if_else(
+    nchar(x) > max_chars,
+    paste0(substr(x, 1, ceiling(keep / 2)), "...", substr(x, nchar(x) - floor(keep / 2) + 1, nchar(x))),
+    x
+  )
+}
+
 summary_table_df %>%
   mutate(
+    satellite = truncate_middle(satellite),
     locus_link = paste0(
       '<a href="#', tolower(gsub("[^a-zA-Z0-9_]+", "-", locus_id)), '">',
       locus_id, '</a>'
+    ),
+    thresholds = if_else(
+      is.na(benign_max) & is.na(pathogenic_min),
+      "",
+      paste0(
+        if_else(is.na(benign_max), "&ndash;", as.character(benign_max)),
+        " / ",
+        if_else(is.na(pathogenic_min), "&ndash;", as.character(pathogenic_min))
+      )
     ),
     across(where(is.numeric), ~ round(., 2))
   ) %>%
@@ -731,12 +764,15 @@ summary_table_df %>%
     "Coverage"       = n,
     "Count estimate" = mean,
     "CI lower"       = mean_lower,
-    "CI upper"       = mean_upper
+    "CI upper"       = mean_upper,
+    "Thresholds (benign / pathogenic)" = thresholds
   ) %>%
+  select(if (has_thresholds) everything() else -"Thresholds (benign / pathogenic)") %>%
   kbl(align = "c", escape = FALSE) %>%
-  kable_styling("bordered", full_width = TRUE) %>%
+  kable_styling("bordered", full_width = TRUE, fixed_thead = TRUE) %>%
   row_spec(0, background = HEADER_BACKGROUND) %>%
   row_spec(summary_stripe_rows, background = STRIPED_BACKGROUND) %>%
+  column_spec(6, background = count_estimate_background) %>%
   collapse_rows(columns = c(1, 2, 3), valign = "middle", target = 1)
 ```
 
