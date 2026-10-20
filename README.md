@@ -189,7 +189,7 @@ The STR catalog is a JSON file describing the STR loci to analyze. Each entry co
 
 - `LocusId`: unique identifier for the locus, used to refer to it in the analysis results.
 - `LocusStructure`: the locus structure, with each repeat unit in parentheses followed by `*`. E.g. ATXN1: `(CTG)*`. Repeat units can be any length and use [IUPAC](https://en.wikipedia.org/wiki/International_Union_of_Pure_and_Applied_Chemistry) base symbols (e.g. `N`, `Y`), and the structure can include non-repeating flanking/interrupting sequence — e.g. HTT: `(CAG)*CAACAG(CCG)*`, where `CAACAG` interrupts the two repeat units. The `|` operator specifies alternative repeat sequences within a unit, e.g. `(CAG|CAA)*` counts both `CAG` and `CAA` toward the repeat count.
-- `ReferenceRegion`: the locus's genomic region(s) in the reference genome, as `chr:start-end`. A list of regions can be given to cover the full structure.
+- `ReferenceRegion`: the locus's region(s) in the reference genome, as `chr:start-end` (0-based, half-open, like BED). A list of regions can be given to cover the full structure.
 
 A built-in catalog ships with the package and is used by default. Run `abacus --show-catalog > my_catalog.json` to export it as a starting point, or write your own from scratch following the format above. Example:
 
@@ -210,6 +210,10 @@ A built-in catalog ships with the package and is used by default. Run `abacus --
     }
 ]
 ```
+
+Entries with a `_complex` suffix (e.g. `FGF14_complex`, `RFC1_complex`) are more detailed versions of the plain entry with the same name, declaring known alternative motifs, interruptions and flanking sequences. See [Notes on FGF14](#notes-on-fgf14) and [Notes on RFC1](#notes-on-rfc1).
+
+When declaring alternative motifs with `|`, avoid including a motif together with one of its rotations (e.g. `ACAGG` and `GGACA`, the same repeat read from a different starting base). The aligner then picks between them arbitrarily, so the same allele can be reported as different motifs.
 
 ### Thresholds
 
@@ -275,16 +279,27 @@ The interruptions `GCA` and `GGA`, the alternative flanking region `TAGTCATAGTAC
 https://www.nature.com/articles/s41467-024-52148-1
 
 ## Notes on RFC1
-RFC1 has one pentanucleotide repeat, but a wide range of observed motifs: a benign reference motif, several pathogenic motifs, and further benign motifs of uncertain significance reported in [gnomAD v4](https://gnomad.broadinstitute.org/short-tandem-repeat/RFC1?dataset=gnomad_r4). `RFC1_complex` tries to capture this diversity:
+RFC1 has one pentanucleotide repeat (`chr4:39348424-39348485`) but a wide range of observed motifs. `RFC1_complex` only includes motifs whose pathogenicity has been classified - benign, likely benign, likely pathogenic or pathogenic. Motifs of unknown pathogenicity are deliberately left out.
 
 ```json
 [
     {
         "LocusId": "RFC1_complex",
-        "LocusStructure": "(AARRS|AGAGG|AGGGC|GGACA|GGAAAG)*",
+        "LocusStructure": "(AAAAG|AAAGG|AAGGG|AGGGC|ACAGG|AAAGGG)*",
         "ReferenceRegion": "chr4:39348424-39348485"
     }
 ]
 ```
 
-This covers the benign reference motif `AAAAG`, the benign `AAGAG`, the pathogenic motifs `AAGGC`, `AAGGG`, `AGAGG`, `AGGGC`, `GGACA`, and the benign 6bp motif `GGAAAG`, using `AARRS` (`R` = A/G, `S` = C/G) to fold `AAAAG`, `AAGAG`, `AAGGC` and `AAGGG` into one alternative. This also incidentally matches two further gnomAD motifs, `AAAAC` and `AAGAC`, and two sequences not reported in gnomAD, `AAAGC` and `AAAGG`.
+| Motif | Classification | Original source |
+|---|---|---|
+| `AAAAG` | Benign (reference motif) | Cortese et al. 2019 |
+| `AAAGG` | Benign below 500 repeat units, likely pathogenic above | Cortese et al. 2019, Dominik et al. 2023 |
+| `AAAGGG` | Likely benign | Abramzon et al. 2021 |
+| `AGGGC` | Likely pathogenic | Scriba et al. 2023, Dominik et al. 2023 |
+| `AAGGG` | Pathogenic | Cortese et al. 2019 |
+| `ACAGG` | Pathogenic | Scriba et al. 2020 |
+
+Classifications are taken from the review by [Delforge et al. 2024](https://doi.org/10.1016/j.neurol.2024.03.006) (Fig. 1), which compiles the original sources above. Note:
+- The `AAAGG` 500-unit threshold isn't part of the locus structure; apply it to the reported count.
+- The Māori pathogenic configuration `(AAAGG)10-25(AAGGG)exp(AAAGG)4-6` (Beecroft et al. 2020) is covered by the included motifs.

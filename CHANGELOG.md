@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - `AFF3` catalog entry
+- `RFC1_complex` catalog entry, covering the RFC1 motifs with a published pathogenicity classification
 - `PS` FORMAT field; heterozygous genotypes are now phased
 - CI workflow
 - Optional `BenignMax`/`PathogenicMin` catalog thresholds: count estimates are highlighted in the report summary table and classified in the new VCF fields `STRSTATUS`, `BENIGNMAX` and `PATHOGENICMIN` ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
