@@ -146,7 +146,7 @@
     },
     {
         "LocusId": "FGF14_complex",
-        "LocusStructure": "(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA|GA)*",
+        "LocusStructure": "(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*",
         "ReferenceRegion": [
             "chr13:102161565-102161565",
             "chr13:102161565-102161726"
