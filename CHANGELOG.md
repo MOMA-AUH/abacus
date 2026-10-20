@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Insertions at anchor boundaries
 - Initial estimates when one allele is under-represented
 - Report crashing when no reads are filtered/unmapped ([#26](https://github.com/MOMA-AUH/abacus/issues/26))
+- Segfault at loci with many distinct kmers, e.g. long RFC1 expansions ([#29](https://github.com/MOMA-AUH/abacus/issues/29))
 ### Removed
 - `--add-contracted-consensus-to-vcf` and the `CONTRCONS` VCF field; `RUS`/`RUC` carry the same information
 - VCF fields `END`, `RU`, the unused `INFO/REF` and `FILTER/LowQual`, and the `<STRn>` ALT header lines
