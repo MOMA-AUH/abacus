@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel runs of the same sample sharing a temporary directory; it is now named after the VCF instead of the sample ID
 - Crash on chrY loci in XX samples (ploidy 0); chrY loci are now skipped when `--sex XX`
 - Crash on an empty catalog; a header-only VCF is now written and the report is skipped
+- Loci without usable reads were silently missing from the VCF; they now get a `NoReads`/`NoCall` record and a log warning
 ### Removed
 - `--add-contracted-consensus-to-vcf` and the `CONTRCONS` VCF field; `RUS`/`RUC` carry the same information
 - VCF fields `END`, `RU`, the unused `INFO/REF` and `FILTER/LowQual`, and the `<STRn>` ALT header lines

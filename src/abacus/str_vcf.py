@@ -6,6 +6,7 @@ from pyfaidx import Fasta
 
 from abacus.config import config
 from abacus.consensus import ConsensusCall
+from abacus.locus import Locus
 from abacus.parameter_estimation import HomozygousParameters
 from abacus.utils import Haplotype
 
@@ -32,6 +33,8 @@ def generate_vcf_header(reference: Path, sample_name: str) -> str:
     header += dedent(
         """\
         ##FILTER=<ID=PASS,Description="All filters passed">
+        ##FILTER=<ID=NoReads,Description="No call: no reads at the locus">
+        ##FILTER=<ID=NoCall,Description="No call: all reads were filtered out">
         ##ALT=<ID=CNV:TR,Description="Tandem repeat">
         ##INFO=<ID=SVLEN,Number=A,Type=Integer,Description="Length of structural variant">
         ##INFO=<ID=RN,Number=A,Type=Integer,Description="Total number of repeat sequences in this allele">
@@ -174,6 +177,35 @@ def create_vcf_records(
             ":".join(sample),
             # Sample values for FORMAT fields
             ":".join(sample.values()),
+        ]
+        records.append("\t".join(fields))
+
+    return records
+
+
+def create_no_call_records(locus: Locus, ref_path: Path, depth: int) -> list[str]:
+    """Create a no-call VCF record for each satellite of a locus without a call."""
+    ref = Fasta(ref_path)
+    records = []
+    for i, satellite in enumerate(locus.satellites):
+        info = {"LOCUSID": locus.id, "REPID": satellite.id}
+        if satellite.benign_max is not None:
+            info["BENIGNMAX"] = str(satellite.benign_max)
+        if satellite.pathogenic_min is not None:
+            info["PATHOGENICMIN"] = str(satellite.pathogenic_min)
+
+        fields = [
+            locus.location.chrom,
+            str(satellite.location.start),
+            f"Abacus.{locus.id}.{i + 1}",
+            str(ref[locus.location.chrom][satellite.location.start - 1]),
+            # No ALT allele, so the per-allele INFO fields are left out
+            ".",
+            ".",
+            "NoReads" if depth == 0 else "NoCall",
+            ";".join(f"{key}={value}" for key, value in info.items()),
+            "GT:DP",
+            f"./.:{depth}",
         ]
         records.append("\t".join(fields))
 

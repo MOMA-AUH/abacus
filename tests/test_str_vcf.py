@@ -11,7 +11,7 @@ from abacus.consensus import ConsensusCall, get_consensus_read_call
 from abacus.graph import AlignmentType
 from abacus.locus import Location
 from abacus.parameter_estimation import HomozygousParameters
-from abacus.str_vcf import create_vcf_records, generate_vcf_header
+from abacus.str_vcf import create_no_call_records, create_vcf_records, generate_vcf_header
 from abacus.utils import Haplotype
 from tests.test_consensus import create_synthetic_locus
 
@@ -269,3 +269,16 @@ def test_single_threshold_omits_the_other(ref_path: Path):
     info = info_values(record)
     assert (info["STRSTATUS"], info["PATHOGENICMIN"]) == ("normal", "36")
     assert "BENIGNMAX" not in info
+
+
+@pytest.mark.parametrize(("depth", "filter_id"), [(0, "NoReads"), (54, "NoCall")])
+def test_no_call_record(ref_path: Path, depth: int, filter_id: str):
+    locus = create_synthetic_locus(["CAG"])
+    locus.satellites[0].benign_max = 26
+
+    (record,) = create_no_call_records(locus, ref_path, depth)
+
+    assert record.split("\t")[4:7] == [".", ".", filter_id]
+    assert info_values(record) == {"LOCUSID": "test", "REPID": locus.satellites[0].id, "BENIGNMAX": "26"}
+    assert format_values(record) == {"GT": "./.", "DP": str(depth)}
+    assert f"##FILTER=<ID={filter_id}," in generate_vcf_header(ref_path, "sample")

@@ -184,6 +184,10 @@ chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;R
 | `FORMAT/AD` | Reads per allele, starting with the reference allele, which is always `0`. |
 | `FORMAT/ADSP`, `FORMAT/ADFL` | Spanning and flanking reads per allele, starting with the reference allele like `AD`. |
 
+### No-calls
+
+A locus with no reads, or with all reads filtered out, gets a `./.` record with `FILTER` `NoReads` or `NoCall`. `DP` is the number of reads at the locus; the log lists why they were removed.
+
 ### Longest pure segment
 
 `LPSRUS`/`LPSRUC` give the longest pure segment (LPS) of each allele, i.e. the longest entry in `RUS`/`RUC`. The idea is from [Danzi et al. (2025)](https://doi.org/10.1101/2025.01.06.631535), who found the LPS to be the best genome-wide predictor of pathogenicity. As in the paper, the LPS can be used to rank loci by their variability in a population (PLVI), and to prioritise alleles with an LPS that is long compared to the population. Population LPS data per locus can be found in [TRExplorer](https://trexplorer.broadinstitute.org).

@@ -6,6 +6,7 @@ import logging as _logging
 import subprocess
 
 faulthandler.enable()
+from collections import Counter
 from importlib.resources import files
 from logging.handlers import QueueHandler, QueueListener
 from multiprocessing import Pool
@@ -29,7 +30,7 @@ from abacus.haplotyping import run_haplotyping, summarize_final_parameter_estima
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 from abacus.preprocess import get_reads_in_locus
-from abacus.str_vcf import create_vcf_records, write_vcf
+from abacus.str_vcf import create_no_call_records, create_vcf_records, write_vcf
 from abacus.timing import timed
 from abacus.utils import Haplotype, Sex, append_to_csv
 
@@ -196,7 +197,13 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
 
         # Generate VCF records here while final_consensus_calls, final_params, and locus_is_het are in scope,
         # so the main process never needs to accumulate the full ConsensusCall/params objects.
-        vcf_records = create_vcf_records(final_consensus_calls, ref, final_params, locus_is_het)
+        if final_consensus_calls:
+            vcf_records = create_vcf_records(final_consensus_calls, ref, final_params, locus_is_het)
+        else:
+            # Every read was lost: write a no-call, so the locus isn't silently missing from the VCF
+            removal_reasons = [reason for rc in all_removed_read_calls for reason in rc.outlier_reasons] + [read.error_flags for read in unmapped_reads]
+            logger.warning("No call, %d reads; removal reasons: %s", len(reads), dict(Counter(removal_reasons)))
+            vcf_records = create_no_call_records(locus, ref, len(reads))
     _locus_context["id"] = ""
 
     return {
