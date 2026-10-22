@@ -11,13 +11,14 @@ from statistics import mean
 
 import networkx as nx
 import numpy as np
+from Levenshtein import distance as levenshtein_distance
 
 from abacus.config import config
 from abacus.locus import Locus
 from abacus.logging import logger
 from abacus.read import FilteredRead, Read
 from abacus.timing import timed
-from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType, Haplotype, compute_levenshtein_rate, compute_ref_divergence
+from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType, Haplotype, compute_ref_divergence
 
 
 def sync_cigar(cigar: str) -> list[str]:
@@ -745,43 +746,32 @@ def graph_align_reads_to_locus(
 
 
 def pad_with_right_anchor(seq: str, right_anchor: str) -> tuple[str, int]:
-    # Check if seq needs trimmin (small over lap with anchor)
-    max_overlap = min(len(seq), len(right_anchor), 50)
-    min_overlap = 6
-    best_error_rate = 1.0
+    # The read may end partway into the anchor; find that overlap so the anchor isn't added twice,
+    # which would align the read's part of it as extra satellite copies. Overlaps go up to
+    # min_anchor_overlap bases (a longer one makes the read spanning) and are scored as length
+    # minus 4x edits, so a long, noisy (ONT) overlap beats a short exact one.
+    best_score = 0
     best_overlap = 0
-    for i in range(max_overlap, min_overlap, -1):
-        seq_overlap = seq[-i:]
-        anchor_overlap = right_anchor[:i]
-        error_rate = compute_levenshtein_rate(anchor_overlap, seq_overlap, indel_cost=0.25)
-        if error_rate < best_error_rate:
-            best_error_rate = error_rate
+    for i in range(7, min(len(seq), len(right_anchor), config.min_anchor_overlap) + 1):
+        score = i - 4 * levenshtein_distance(seq[-i:], right_anchor[:i])
+        if score > best_score:
+            best_score = score
             best_overlap = i
 
-    if best_error_rate < 0.05 and best_overlap > 0:
-        return seq + right_anchor[best_overlap:], best_overlap
-
-    return seq + right_anchor, 0
+    return seq + right_anchor[best_overlap:], best_overlap
 
 
 def pad_with_left_anchor(seq: str, left_anchor: str) -> tuple[str, int]:
-    # Check if seq needs trimming (small overlap with anchor)
-    max_overlap = min(len(seq), len(left_anchor), 50)
-    min_overlap = 6
-    best_error_rate = 1.0
+    # Mirror of pad_with_right_anchor
+    best_score = 0
     best_overlap = 0
-    for i in range(max_overlap, min_overlap, -1):
-        seq_overlap = seq[:i]
-        anchor_overlap = left_anchor[-i:]
-        error_rate = compute_levenshtein_rate(anchor_overlap, seq_overlap)
-        if error_rate < best_error_rate:
-            best_error_rate = error_rate
+    for i in range(7, min(len(seq), len(left_anchor), config.min_anchor_overlap) + 1):
+        score = i - 4 * levenshtein_distance(seq[:i], left_anchor[-i:])
+        if score > best_score:
+            best_score = score
             best_overlap = i
 
-    if best_error_rate < 0.05 and best_overlap > 0:
-        return left_anchor[:-best_overlap] + seq, best_overlap
-
-    return left_anchor + seq, 0
+    return left_anchor[: len(left_anchor) - best_overlap] + seq, best_overlap
 
 
 def remap_flanking_alignments_to_locus(
