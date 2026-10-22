@@ -634,6 +634,13 @@ def abacus(
         # Filter loci
         loci = [locus for locus in loci if locus.id in selected_loci]
 
+    # chrY loci have ploidy 0 in XX samples; any reads there are mismapped
+    if sex == Sex.XX:
+        n_chry_loci = sum(locus.location.chrom == "chrY" for locus in loci)
+        if n_chry_loci:
+            logger.info("Skipping %d chrY loci (sex XX)", n_chry_loci)
+            loci = [locus for locus in loci if locus.location.chrom != "chrY"]
+
     # Create tmp directory before processing so partial results are written on failure
     # Named after the VCF, not the sample ID, so parallel runs of one sample (e.g. catalog chunks) don't share it
     tmp_dir = vcf.parent / f"tmp_abacus_{vcf.name.removesuffix('.gz').removesuffix('.vcf')}"
