@@ -437,3 +437,20 @@ def test_create_consensus_calls_folds_flanking_only_into_one_consensus():
     assert len(consensus_calls) == 1
     assert consensus_calls[0].alignment.str_sequence == "CCG" * 3 + "AATAA" + "CCG" * 2
     assert consensus_calls[0].spanning_reads == 0
+
+
+def test_create_consensus_calls_zero_copy_allele():
+    """Reads that skip the repeat entirely (0 copies) give an empty consensus, which is still a call."""
+    random.seed(0)
+    locus = create_synthetic_locus(["CAG"])
+    reads = [make_read(f"read_{i}", locus.left_anchor + locus.right_anchor, locus) for i in range(5)]
+
+    read_calls, _ = get_read_calls(reads, locus)
+    for read_call in read_calls:
+        read_call.haplotype = Haplotype.HOM
+
+    consensus_calls = create_consensus_calls(read_calls=read_calls, haplotype=Haplotype.HOM, target_lengths=[0])
+
+    assert len(consensus_calls) == 1
+    assert consensus_calls[0].alignment.str_sequence == ""
+    assert consensus_calls[0].spanning_reads == 5

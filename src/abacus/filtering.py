@@ -27,12 +27,13 @@ def filter_low_qual_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCal
 
 
 def qc_check(rc: ReadCall) -> None:
-    # Check STR quality
-    if rc.alignment.mean_str_quality < config.min_mean_str_quality:
-        rc.add_qc_filter_reason("filtered_low_mean_str_quality")
+    # Check STR quality; an empty STR (0-copy allele) has no bases to check
+    if rc.alignment.str_sequence:
+        if rc.alignment.mean_str_quality < config.min_mean_str_quality:
+            rc.add_qc_filter_reason("filtered_low_mean_str_quality")
 
-    if rc.alignment.q10_str_quality < config.min_q10_str_quality:
-        rc.add_qc_filter_reason("filtered_low_q10_str_quality")
+        if rc.alignment.q10_str_quality < config.min_q10_str_quality:
+            rc.add_qc_filter_reason("filtered_low_q10_str_quality")
 
     # Check STR error rates
     if rc.str_error_rate > config.max_error_rate:

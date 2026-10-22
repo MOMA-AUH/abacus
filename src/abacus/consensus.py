@@ -230,7 +230,8 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype, tar
         consensus_kmers.extend(hill_climb(reads_for_slot, length, trim_boundaries=(kind == "satellite")))
 
     consensus_sequence = "".join(consensus_kmers)
-    if not consensus_sequence:
+    # Empty is only a call for a 0-copy allele; otherwise no read covered the locus
+    if not consensus_sequence and any(target_lengths):
         return []
 
     consensus_read_call = get_consensus_read_call(locus, consensus_sequence, AlignmentType.SPANNING, haplotype)
