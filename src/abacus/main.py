@@ -641,6 +641,9 @@ def abacus(
             logger.info("Skipping %d chrY loci (sex XX)", n_chry_loci)
             loci = [locus for locus in loci if locus.location.chrom != "chrY"]
 
+    if not loci:
+        logger.warning("No loci to process; writing a header-only VCF and no report")
+
     # Create tmp directory before processing so partial results are written on failure
     # Named after the VCF, not the sample ID, so parallel runs of one sample (e.g. catalog chunks) don't share it
     tmp_dir = vcf.parent / f"tmp_abacus_{vcf.name.removesuffix('.gz').removesuffix('.vcf')}"
@@ -658,6 +661,8 @@ def abacus(
     # Remove any existing temp files from previous runs with the same VCF to avoid appending to old results
     for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv, vcf_records_tmp]:
         _f.unlink(missing_ok=True)
+    # Created up front so write_vcf finds it even when no locus writes a record
+    vcf_records_tmp.touch()
 
     def _handle_result(result: dict) -> None:
         append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
@@ -706,8 +711,8 @@ def abacus(
             sample_id=sample_id,
         )
 
-    # Render report (only if --report was provided)
-    if report is not None:
+    # Render report (only if --report was provided, and there are loci to report on)
+    if report is not None and loci:
         logger.info("Rendering report...")
         report_template = Path(__file__).parent / "scripts" / "report_template.Rmd"
         logo_path = Path(__file__).parent.parent.parent / "img" / "logo.png"
