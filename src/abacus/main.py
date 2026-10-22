@@ -635,7 +635,8 @@ def abacus(
         loci = [locus for locus in loci if locus.id in selected_loci]
 
     # Create tmp directory before processing so partial results are written on failure
-    tmp_dir = vcf.parent / f"tmp_abacus_{sample_id}"
+    # Named after the VCF, not the sample ID, so parallel runs of one sample (e.g. catalog chunks) don't share it
+    tmp_dir = vcf.parent / f"tmp_abacus_{vcf.name.removesuffix('.gz').removesuffix('.vcf')}"
     tmp_dir.mkdir(exist_ok=True)
 
     reads_csv = tmp_dir / "reads.csv"
@@ -647,7 +648,7 @@ def abacus(
     test_params_summary_csv = tmp_dir / "test_parameter_summary.csv"
     vcf_records_tmp = tmp_dir / "vcf_records.tmp"
 
-    # Remove any existing temp files from previous runs with the same sample ID to avoid appending to old results
+    # Remove any existing temp files from previous runs with the same VCF to avoid appending to old results
     for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv, vcf_records_tmp]:
         _f.unlink(missing_ok=True)
 

@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report crashing when no reads are filtered/unmapped ([#26](https://github.com/MOMA-AUH/abacus/issues/26))
 - Segfault at loci with many distinct kmers, e.g. long RFC1 expansions ([#29](https://github.com/MOMA-AUH/abacus/issues/29))
 - Crash when the equal-length sequence split is cancelled for a singleton cluster; unclassified reads now return to HOM
+- Parallel runs of the same sample sharing a temporary directory; it is now named after the VCF instead of the sample ID
 ### Removed
 - `--add-contracted-consensus-to-vcf` and the `CONTRCONS` VCF field; `RUS`/`RUC` carry the same information
 - VCF fields `END`, `RU`, the unused `INFO/REF` and `FILTER/LowQual`, and the `<STRn>` ALT header lines
