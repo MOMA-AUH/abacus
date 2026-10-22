@@ -7,6 +7,8 @@ import subprocess
 
 faulthandler.enable()
 from collections import Counter
+from collections.abc import Generator
+from contextlib import contextmanager
 from importlib.resources import files
 from logging.handlers import QueueHandler, QueueListener
 from multiprocessing import Pool
@@ -106,10 +108,20 @@ def _worker_init(config_dict: dict, log_queue: MPQueue, log_level: int) -> None:
         setattr(_config, k, v)
 
 
+@contextmanager
+def _log_locus_failure() -> Generator[None, None, None]:
+    """With --threads > 1 the re-raised exception doesn't say which locus failed."""
+    try:
+        yield
+    except Exception:
+        logger.exception("Locus failed")
+        raise
+
+
 def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
     """Process a single locus and return all results as a dict."""
     _locus_context["id"] = locus.id
-    with timed("locus TOTAL"):
+    with timed("locus TOTAL"), _log_locus_failure():
         logger.info("Locus: %s  |  %s  |  %s:%d-%d", locus.id, locus.structure, locus.location.chrom, locus.location.start, locus.location.end)
 
         # Initialize list to keep track of removed read calls for final summary
