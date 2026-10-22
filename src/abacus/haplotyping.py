@@ -366,6 +366,11 @@ def _estimate_final_parameters(grouped_read_calls: list[ReadCall]) -> dict[Haplo
     called at the end of run_haplotyping() regardless of the path taken
     (length-based split, sequence-based split, or homozygous call).
     """
+    # Grouped reads go on to consensus, which only handles H1, H2 and HOM
+    invalid_labels = {r.haplotype for r in grouped_read_calls} - {Haplotype.H1, Haplotype.H2, Haplotype.HOM}
+    if invalid_labels:
+        raise ValueError(f"Locus {grouped_read_calls[0].locus.id}: grouped reads have invalid haplotype labels {sorted(h.value for h in invalid_labels)}")
+
     res = {}
 
     # For each haplotype, estimate a homozygous model independently

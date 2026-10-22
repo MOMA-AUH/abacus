@@ -3,8 +3,10 @@ import random
 import pytest
 
 from abacus import config
+from abacus.consensus import build_consensus_for_locus
 from abacus.equal_length_split import run_equal_length_backup_test
 from abacus.graph import Read, get_read_calls
+from abacus.haplotyping import _estimate_final_parameters
 from abacus.locus import Location, Locus, Satellite
 from abacus.utils import Haplotype
 
@@ -93,3 +95,23 @@ def test_run_equal_length_backup_test_skips_below_min_haplotyping_depth():
     assert not bool(summary["backup_test_run"].iloc[0]), (
         "Backup test should not run with 8 reads when min_haplotyping_depth=10"
     )
+
+
+def test_run_equal_length_backup_test_singleton_cancel_returns_all_reads_as_hom():
+    """A split cancelled for a singleton cluster must return every read as HOM, including
+    reads the split could not classify, so consensus building doesn't see QC_FILTERED reads.
+    """
+    locus = _make_locus("CAG")
+    # Best column is an insertion carried by one read each (CTG vs CCG); the other 10 reads have a gap there
+    sequences = ["CAG" * 10] * 10 + ["CAG" * 5 + "CTG" + "CAG" * 5, "CAG" * 5 + "CCG" + "CAG" * 5]
+    read_calls = _spanning_read_calls(sequences, locus)
+
+    grouped, new_outliers, summary = run_equal_length_backup_test(read_calls, alpha=0.05)
+
+    assert summary["backup_test_n_h1"].iloc[0] == 1
+    assert summary["backup_test_n_h2"].iloc[0] == 1
+    assert new_outliers == []
+    assert len(grouped) == len(sequences)
+    assert all(r.haplotype == Haplotype.HOM for r in grouped)
+    assert all("not_split_base" not in r.outlier_reasons for r in grouped)
+    build_consensus_for_locus(grouped, _estimate_final_parameters(grouped))

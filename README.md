@@ -32,7 +32,7 @@ A log-likelihood ratio test (LRT) compares a homozygous model (single Gaussian) 
 
 When Stage 2 is not significant — haplotypes have the same repeat count — Abacus attempts a sequence-level split. A partial-order alignment (POA) MSA is built from all reads, the most variable kmer position is identified, and a binomial test (H₀: p = 0.5) is applied to the two most common kmers at that position:
 
-- **Not significant (p ≥ alpha)**: the observed split is consistent with a 50/50 split — two alleles of equal length but distinct sequence. Reads are tagged H1/H2 by which kmer they carry; reads carrying neither are filtered (`not_split_base`).
+- **Not significant (p ≥ alpha)**: the observed split is consistent with a 50/50 split — two alleles of equal length but distinct sequence. Reads are tagged H1/H2 by which kmer they carry; reads carrying neither are filtered (`not_split_base`). If either group would hold a single read, the split is cancelled: the locus is called homozygous and all reads, including unclassified ones, are kept as HOM.
 - **Significant (p < alpha)**: ratio deviates from 50/50, no split is made, locus is called homozygous.
 
 Controlled by `--equal-length-alpha`.

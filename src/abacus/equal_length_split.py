@@ -319,10 +319,13 @@ def run_equal_length_backup_test(
     # sequence split indicates noise rather than a real second allele.
     haplotype_counts = {h: sum(1 for r in updated_reads if r.haplotype == h) for h in (Haplotype.H1, Haplotype.H2)}
     if any(count == 1 for count in haplotype_counts.values()):
-        for read_call in updated_reads:
-            read_call.set_haplotype(Haplotype.HOM)
-        # Move all updated reads to new_outliers since the split is not valid
+        # Split is not valid: the locus is homozygous and every read, including those the
+        # split couldn't classify, goes back into the HOM group
+        for read_call in new_outliers:
+            read_call.outlier_reasons.remove("not_split_base")
         updated_reads.extend(new_outliers)
         new_outliers = []
+        for read_call in updated_reads:
+            read_call.set_haplotype(Haplotype.HOM)
 
     return updated_reads, new_outliers, summary_df
