@@ -738,7 +738,7 @@ truncate_middle <- function(x, max_chars = 20) {
   )
 }
 
-summary_table_df %>%
+summary_table <- summary_table_df %>%
   mutate(
     satellite = truncate_middle(satellite),
     locus_link = paste0(
@@ -766,8 +766,14 @@ summary_table_df %>%
     "CI lower"       = mean_lower,
     "CI upper"       = mean_upper,
     "Thresholds (benign / pathogenic)" = thresholds
-  ) %>%
-  select(if (has_thresholds) everything() else -"Thresholds (benign / pathogenic)") %>%
+  )
+
+# Drop the empty thresholds column when the catalog has no thresholds
+if (!has_thresholds) {
+  summary_table <- select(summary_table, -"Thresholds (benign / pathogenic)")
+}
+
+summary_table %>%
   kbl(align = "c", escape = FALSE) %>%
   kable_styling("bordered", full_width = TRUE, fixed_thead = TRUE) %>%
   row_spec(0, background = HEADER_BACKGROUND) %>%
