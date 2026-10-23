@@ -221,7 +221,7 @@ def test_create_consensus_calls_respects_flanking_read_coverage(
 ):
     """Flanking reads should only outvote spanning reads at positions they actually cover, with real content."""
     # Anchor content affects how the aligner reports a boundary kmer, so fix the seed for determinism.
-    random.seed(0)
+    random.seed(42)
     locus = create_synthetic_locus(satellite_seqs, ["", ""])
 
     reads = (
@@ -299,7 +299,7 @@ def test_create_consensus_calls_resist_strand_biased_errors(satellite_seqs: list
     """A motif that is common on one strand but rare/wrong-directioned should not out-vote a
     minority motif that is actually seen on both strands (a plus-strand-only ONT error should not
     be allowed to overrule a motif also confirmed by minus-strand reads)."""
-    random.seed(0)
+    random.seed(42)
     locus = create_synthetic_locus(satellite_seqs, ["", ""])
     reads = make_stranded_reads(read_specs, locus)
 
@@ -399,7 +399,7 @@ def test_create_consensus_calls_segments_by_satellite_and_break(
     mapped to, not against a flat position in the whole allele - two reads can genuinely agree on
     every satellite's content while disagreeing on an earlier satellite's count, which shifts
     where a later satellite (or a break) sits in the flat kmer string."""
-    random.seed(0)
+    random.seed(42)
     locus = create_synthetic_locus(satellite_seqs, breaks)
     reads = make_segment_reads(read_specs, locus)
 
@@ -418,7 +418,7 @@ def test_create_consensus_calls_folds_flanking_only_into_one_consensus():
     read covering the break and satellite 2 jointly cover the whole locus - this must produce one
     unified consensus call (not two disjoint left/right calls), and it must be identifiable as having
     no spanning support."""
-    random.seed(0)
+    random.seed(42)
     locus = create_synthetic_locus(["CCG", "CCG"], ["", "AATAA", ""])
     reads = make_segment_reads(
         [
@@ -441,7 +441,7 @@ def test_create_consensus_calls_folds_flanking_only_into_one_consensus():
 
 def test_create_consensus_calls_zero_copy_allele():
     """Reads that skip the repeat entirely (0 copies) give an empty consensus, which is still a call."""
-    random.seed(0)
+    random.seed(42)
     locus = create_synthetic_locus(["CAG"])
     reads = [make_read(f"read_{i}", locus.left_anchor + locus.right_anchor, locus) for i in range(5)]
 

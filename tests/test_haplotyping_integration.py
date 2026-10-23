@@ -859,6 +859,57 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             {"h1": "CGG" * 30, "h2": "CGG" * 40},
             id="Slipped CG copies in some reads are counted, not packed into fewer CGG copies",
         ),
+        # Two reads far shorter than both alleles must not become a haplotype, leaving the 10-read
+        # 51-copy allele as outlier
+        pytest.param(
+            ["TAGTCATAGTACCCCAA|TAGTCATAGTACCA", "GVA"],
+            ["", "", ""],
+            [
+                # Haplotype 1
+                *["GAA" * 37] * 2,
+                *["GAA" * 38] * 10,
+                *["GAA" * 39] * 3,
+                "GAA" * 40,
+                # Haplotype 2
+                "GAA" * 49,
+                *["GAA" * 50] * 2,
+                *["GAA" * 51] * 5,
+                *["GAA" * 52] * 2,
+                # Outliers
+                "GAA" * 8,
+                "GAA" * 11,
+            ],
+            [],
+            [],
+            {"h1": 16, "h2": 10, "outlier": 2},
+            {"h1": [0.0, 38.0], "h2": [0.0, 51.0]},
+            {"h1": "GAA" * 38, "h2": "GAA" * 51},
+            id="Case 24: FGF14_complex - Two short reads should not displace the 10-read long allele",
+        ),
+        # Scattered short reads must not be split off as a haplotype in place of a tight minor allele of the same
+        # size. Removing the minor allele leaves no more outliers than the scattered reads, so only the initial
+        # split (median-based, not mean-based) gets this right.
+        pytest.param(
+            ["GAA"],
+            ["", ""],
+            [
+                # Haplotype 1
+                *["GAA" * 20] * 10,
+                *["GAA" * 21] * 4,
+                # Haplotype 2
+                *["GAA" * 32] * 4,
+                # Outliers
+                "GAA" * 3,
+                *["GAA" * 7] * 2,
+                "GAA" * 10,
+            ],
+            [],
+            [],
+            {"h1": 14, "h2": 4, "outlier": 4},
+            {"h1": [20.0], "h2": [32.0]},
+            {"h1": "GAA" * 20, "h2": "GAA" * 32},
+            id="Case 26: Scattered short reads should not be split off in place of a tight minor allele",
+        ),
     ],
 )
 def test_haplotyping_integration(
@@ -872,6 +923,8 @@ def test_haplotyping_integration(
     expected_consensus: dict[str, str | set[str]] | None,
 ) -> None:
     """Test the haplotype grouping functionality for both simple and complex loci."""
+    # Anchors are random and can affect alignment, so fix the seed for determinism
+    random.seed(42)
     locus = create_synthetic_locus(satellite_seqs, breaks)
 
     reads: list[Read] = (
@@ -920,9 +973,7 @@ def test_haplotyping_integration(
         for haplotype, expected_sequence in expected_consensus.items():
             # A set lists every acceptable consensus, for cases whose estimate may differ by a unit
             allowed = expected_sequence if isinstance(expected_sequence, set) else {expected_sequence}
-            assert observed_consensus.get(haplotype) in allowed, (
-                f"Expected {haplotype} consensus {expected_sequence}, got {observed_consensus.get(haplotype)}"
-            )
+            assert observed_consensus.get(haplotype) in allowed, f"Expected {haplotype} consensus {expected_sequence}, got {observed_consensus.get(haplotype)}"
 
 
 # Real GIPC1 flanks, around a (CCG)* repeat

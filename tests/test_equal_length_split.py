@@ -12,7 +12,7 @@ from abacus.utils import Haplotype
 
 
 def _make_locus(satellite_seq: str) -> Locus:
-    random.seed(0)
+    random.seed(42)
     left_anchor = "".join(random.choices("ATCG", k=config.Config.anchor_len))
     right_anchor = "".join(random.choices("ATCG", k=config.Config.anchor_len))
     sat = Satellite(

@@ -138,21 +138,22 @@ def flanking_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray, is_le
     return np.sum(logpdf, axis=1)
 
 
-def split_by_min_wss(sorted_counts: np.ndarray, split_dim: int, min_group_size: int = 2) -> tuple[np.ndarray, np.ndarray]:
-    # Split at the point (along split_dim) minimizing within-group variance. min_group_size
-    # guards against a single outlier being carved off as its own "group".
+def split_by_min_sad(sorted_counts: np.ndarray, split_dim: int, min_group_size: int = 2) -> tuple[np.ndarray, np.ndarray]:
+    # Split at the point (along split_dim) minimizing the within-group sum of absolute deviations
+    # from the median, so a few far-off reads can't outweigh splitting two real clusters.
+    # min_group_size guards against a single outlier being carved off as its own "group".
     n = len(sorted_counts)
     if n < 2 * min_group_size:
         half = (n + 1) // 2
         return sorted_counts[:half, :], sorted_counts[-half:, :]
 
     values = sorted_counts[:, split_dim]
-    best_index, best_wss = None, None
+    best_index, best_sad = None, None
     for i in range(min_group_size, n - min_group_size + 1):
         left, right = values[:i], values[i:]
-        wss = np.sum((left - left.mean()) ** 2) + np.sum((right - right.mean()) ** 2)
-        if best_wss is None or wss < best_wss:
-            best_index, best_wss = i, wss
+        sad = np.sum(np.abs(left - np.median(left))) + np.sum(np.abs(right - np.median(right)))
+        if best_sad is None or sad < best_sad:
+            best_index, best_sad = i, sad
 
     return sorted_counts[:best_index, :], sorted_counts[best_index:, :]
 
@@ -204,7 +205,7 @@ def calculate_initial_estimates(read_calls: list[ReadCall]) -> HeterozygousParam
     idx = np.argsort(counts[:, split_dim])
     sorted_counts = counts[idx, :]
 
-    counts_h1, counts_h2 = split_by_min_wss(sorted_counts, split_dim)
+    counts_h1, counts_h2 = split_by_min_sad(sorted_counts, split_dim)
 
     # Mean
     # Calculate robust mean for each group
