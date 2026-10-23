@@ -5,7 +5,7 @@ import re
 import subprocess
 import tempfile
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from statistics import mean
 
@@ -900,6 +900,9 @@ class ReadCall:
         self.outlier_reasons.extend(reasons)
 
         return self
+
+    def copy(self) -> ReadCall:
+        return replace(self, outlier_reasons=list(self.outlier_reasons))
 
     def set_haplotype(self, haplotype: Haplotype) -> ReadCall:
         self.haplotype = haplotype

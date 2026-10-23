@@ -886,6 +886,33 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             {"h1": "GAA" * 38, "h2": "GAA" * 51},
             id="Case 24: FGF14_complex - Two short reads should not displace the 10-read long allele",
         ),
+        # As Case 24, but the two short reads also carry the 17-mer. From a sample that looks ~3-5%
+        # contaminated: these reads match neither phased haplotype and are most likely another person's DNA
+        pytest.param(
+            ["TAGTCATAGTACCCCAA|TAGTCATAGTACCA", "GVA"],
+            ["", "", ""],
+            [
+                # Haplotype 1
+                *["GAA" * 37] * 2,
+                *["GAA" * 38] * 10,
+                *["GAA" * 39] * 3,
+                "GAA" * 40,
+                # Haplotype 2
+                "GAA" * 49,
+                *["GAA" * 50] * 2,
+                *["GAA" * 51] * 5,
+                *["GAA" * 52] * 2,
+                # Outliers: contamination
+                "TAGTCATAGTACCCCAA" + "GAA" * 8,
+                "TAGTCATAGTACCCCAA" + "GAA" * 11,
+            ],
+            [],
+            [],
+            {"h1": 16, "h2": 10, "outlier": 2},
+            {"h1": [0.0, 38.0], "h2": [0.0, 51.0]},
+            {"h1": "GAA" * 38, "h2": "GAA" * 51},
+            id="Case 25: FGF14_complex - Two contaminating reads with the 17-mer should not displace the 10-read long allele",
+        ),
         # Scattered short reads must not be split off as a haplotype in place of a tight minor allele of the same
         # size. Removing the minor allele leaves no more outliers than the scattered reads, so only the initial
         # split (median-based, not mean-based) gets this right.

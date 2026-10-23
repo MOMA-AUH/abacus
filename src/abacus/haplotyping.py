@@ -36,53 +36,24 @@ def run_haplotyping(
         error_msg = f"Unsupported ploidy: {ploidy}. Only 1 and 2 are supported."
         raise ValueError(error_msg)
 
-    # Initialize
-    all_outlier_read_calls: list[ReadCall] = []
+    # PHASE 1 + 2: Initial grouping, then iterative outlier detection and re-grouping
+    grouped_read_calls, outlier_read_calls, het_params_test = group_and_remove_outliers(read_calls, ploidy)
 
-    # PHASE 1: Initial grouping
+    # PHASE 2b: If more reads were removed than the smaller haplotype holds (e.g. it is a few contaminating reads),
+    # regroup without it
+    smaller_haplotype_read_calls = get_smaller_haplotype(grouped_read_calls) if ploidy == 2 else []
+    if smaller_haplotype_read_calls and len(outlier_read_calls) > len(smaller_haplotype_read_calls):
+        smaller_haplotype_names = {rc.alignment.name for rc in smaller_haplotype_read_calls}
+        remaining_read_calls = [rc for rc in read_calls if rc.alignment.name not in smaller_haplotype_names]
+        regrouped_read_calls, regrouped_outlier_read_calls, regrouped_het_params = group_and_remove_outliers(remaining_read_calls, ploidy)
 
-    with timed("haplotyping estimate_heterozygous_parameters (initial)"):
-        het_params_test = estimate_heterozygous_parameters(read_calls)
-
-    # Initialize grouping
-    with timed("haplotyping group_read_calls (initial)"):
-        grouped_read_calls = group_read_calls(read_calls, het_params_test, ploidy)
-
-    # PHASE 2: Iterative outlier detection and re-grouping
-
-    # Initialize parameters
-    _outlier_iter = 0
-    new_outliers_found = True
-    while new_outliers_found and len(grouped_read_calls) > config.min_n_qc_filtering:
-        _outlier_iter += 1
-
-        # Detect outliers
-        singleton_read_calls = detect_singleton_clusters(grouped_read_calls)
-        length_outlier_read_calls = detect_length_outliers(grouped_read_calls)
-
-        # De-duplicate outliers
-        outliers = list({rc.alignment.name: rc for rc in singleton_read_calls + length_outlier_read_calls}.values())
-
-        # If no new outliers found, break loop
-        new_outliers_found = bool(outliers)
-        if not new_outliers_found:
-            break
-
-        # Update outlier and good read call lists
-        for outlier in outliers:
-            all_outlier_read_calls.append(outlier)
-            grouped_read_calls.remove(outlier)
-
-        # Re-estimate heterozygous parameters
-        with timed(f"haplotyping re-estimate het parameters (outlier iter {_outlier_iter})"):
-            het_params_test = estimate_heterozygous_parameters(grouped_read_calls)
-
-        # Re-group reads based on new estimates
-        with timed(f"haplotyping group_read_calls (outlier iter {_outlier_iter})"):
-            grouped_read_calls = group_read_calls(grouped_read_calls, het_params_test, ploidy)
-
-    if _outlier_iter > 0:
-        logger.debug(f"[TIMING] haplotyping outlier detection: {_outlier_iter} iteration(s), {len(all_outlier_read_calls)} outliers removed")
+        # Keep the regrouping if it, with the smaller haplotype's reads as outliers, leaves fewer reads unexplained
+        if len(regrouped_outlier_read_calls) + len(smaller_haplotype_read_calls) < len(outlier_read_calls):
+            for rc in smaller_haplotype_read_calls:
+                rc.add_outlier_reason("caused_unexplained_reads_in_haplotyping")
+            grouped_read_calls = regrouped_read_calls
+            outlier_read_calls = regrouped_outlier_read_calls + smaller_haplotype_read_calls
+            het_params_test = regrouped_het_params
 
     # PHASE 3: Test for heterozygosity
 
@@ -109,7 +80,7 @@ def run_haplotyping(
         het_params_test = _make_empty_het_par_estimate(dim=len(hom_params_test.mean))
         # Ensure all haplotypes are included in final_params
         final_params = _estimate_final_parameters(grouped_read_calls)
-        return grouped_read_calls, all_outlier_read_calls, het_params_test, hom_params_test, final_params, test_summary_df
+        return grouped_read_calls, outlier_read_calls, het_params_test, hom_params_test, final_params, test_summary_df
 
     # Test for heterozygosity
     with timed("haplotyping test_heterozygosity"):
@@ -132,7 +103,7 @@ def run_haplotyping(
         grouped_read_calls, sequence_split_outliers, backup_summary_df = _run_sequence_split_test_and_update_params(
             grouped_read_calls,
         )
-        all_outlier_read_calls.extend(sequence_split_outliers)
+        outlier_read_calls.extend(sequence_split_outliers)
     else:
         backup_summary_df = _make_empty_backup_summary(run=False)
 
@@ -155,7 +126,7 @@ def run_haplotyping(
     # Combine with sequence split backup test summary
     test_summary_df = pd.concat([test_summary_df.reset_index(drop=True), backup_summary_df.reset_index(drop=True)], axis=1)
 
-    return grouped_read_calls, all_outlier_read_calls, het_params_test, hom_params_test, final_params, test_summary_df
+    return grouped_read_calls, outlier_read_calls, het_params_test, hom_params_test, final_params, test_summary_df
 
 
 def _make_empty_het_par_estimate(dim: int) -> HeterozygousParameters:
@@ -210,6 +181,75 @@ def create_empty_results() -> tuple[
     final_params = {Haplotype.HOM: hom_params}
 
     return [], [], het_params, hom_params, final_params, summary_res_df
+
+
+def group_and_remove_outliers(
+    read_calls: list[ReadCall],
+    ploidy: int,
+) -> tuple[list[ReadCall], list[ReadCall], HeterozygousParameters]:
+    # Work on copies, so the input read calls can be grouped again
+    read_calls = [rc.copy() for rc in read_calls]
+
+    # Initialize
+    outlier_read_calls: list[ReadCall] = []
+
+    # PHASE 1: Initial grouping
+
+    with timed("haplotyping estimate_heterozygous_parameters (initial)"):
+        het_params_test = estimate_heterozygous_parameters(read_calls)
+
+    # Initialize grouping
+    with timed("haplotyping group_read_calls (initial)"):
+        grouped_read_calls = group_read_calls(read_calls, het_params_test, ploidy)
+
+    # PHASE 2: Iterative outlier detection and re-grouping
+
+    # Initialize parameters
+    _outlier_iter = 0
+    new_outliers_found = True
+    while new_outliers_found and len(grouped_read_calls) > config.min_n_qc_filtering:
+        _outlier_iter += 1
+
+        # Detect outliers
+        singleton_read_calls = detect_singleton_clusters(grouped_read_calls)
+        length_outlier_read_calls = detect_length_outliers(grouped_read_calls)
+
+        # De-duplicate outliers
+        outliers = list({rc.alignment.name: rc for rc in singleton_read_calls + length_outlier_read_calls}.values())
+
+        # If no new outliers found, break loop
+        new_outliers_found = bool(outliers)
+        if not new_outliers_found:
+            break
+
+        # Update outlier and good read call lists
+        for outlier in outliers:
+            outlier_read_calls.append(outlier)
+            grouped_read_calls.remove(outlier)
+
+        # Re-estimate heterozygous parameters
+        with timed(f"haplotyping re-estimate het parameters (outlier iter {_outlier_iter})"):
+            het_params_test = estimate_heterozygous_parameters(grouped_read_calls)
+
+        # Re-group reads based on new estimates
+        with timed(f"haplotyping group_read_calls (outlier iter {_outlier_iter})"):
+            grouped_read_calls = group_read_calls(grouped_read_calls, het_params_test, ploidy)
+
+    if _outlier_iter > 0:
+        logger.debug(f"[TIMING] haplotyping outlier detection: {_outlier_iter} iteration(s), {len(outlier_read_calls)} outliers removed")
+
+    return grouped_read_calls, outlier_read_calls, het_params_test
+
+
+def get_smaller_haplotype(grouped_read_calls: list[ReadCall]) -> list[ReadCall]:
+    h1_read_calls = [rc for rc in grouped_read_calls if rc.haplotype == Haplotype.H1]
+    h2_read_calls = [rc for rc in grouped_read_calls if rc.haplotype == Haplotype.H2]
+
+    # Equal-sized haplotypes have no smaller one
+    if len(h1_read_calls) == len(h2_read_calls):
+        return []
+
+    return min(h1_read_calls, h2_read_calls, key=len)
 
 
 def get_is_left_flanking_bool(flanking_reads: list[ReadCall]) -> list[bool]:
