@@ -254,3 +254,12 @@ def test_hill_climb_returns_exactly_the_requested_length():
 
     assert len(consensus_search.hill_climb(reads, 7)) == 7
     assert len(consensus_search.hill_climb(reads, 4)) == 4
+
+
+def test_proposing_reads_drops_a_read_far_from_the_seed():
+    """A read far from a seed the others agree with doesn't propose; reads within the floor always do."""
+    reads = [("a" * 20, "spanning", "+")] * 5 + [("b" * 20, "spanning", "-")]
+    dists = [0, 1, 0, 2, 1, 12]  # seed error rates 0-0.1 for the agreeing reads, 0.6 for the last
+
+    assert consensus_search.proposing_reads(reads, dists) == reads[:5]
+    assert consensus_search.proposing_reads(reads, [0, 0, 0, 0, 0, 3]) == reads  # 0.15: at the floor

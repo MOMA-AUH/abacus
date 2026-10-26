@@ -26,6 +26,7 @@
 from collections import Counter, defaultdict
 from itertools import accumulate
 from math import exp, lgamma, log
+from statistics import median
 
 from rapidfuzz.distance import OSA, Opcodes
 from rapidfuzz.distance import Levenshtein as RFLevenshtein
@@ -33,6 +34,8 @@ from rapidfuzz.distance import Levenshtein as RFLevenshtein
 MARGIN = 1
 MIN_READ_SUPPORT = 2
 DISAGREE_FRAC = 0.05
+# A read's seed error rate (fraction of its kmers that differ from the seed) must also exceed this for it to be an outlier
+MIN_OUTLIER_SEED_ERROR_RATE = 0.15
 
 # One-char-per-kmer sequence, paired with "spanning" | "left" | "right", and strand "+" | "-"
 EncodedRead = tuple[str, str, str]
@@ -279,6 +282,15 @@ def find_improving_moves(
     return [(op[1], sc, op) for op in candidates if (sc := score(apply_op(seed, op), reads, target, baseline, suffix)) < baseline]
 
 
+def proposing_reads(reads: list[EncodedRead], dists: list[int]) -> list[EncodedRead]:
+    """The reads that aren't outliers (median + 3.5 MAD) in seed error rate."""
+    seed_error_rates = [dist / max(len(kmers), 1) for dist, (kmers, _, _) in zip(dists, reads, strict=True)]
+    med = median(seed_error_rates)
+    mad = median(abs(rate - med) for rate in seed_error_rates)
+    max_seed_error_rate = max(med + 3.5 * mad, MIN_OUTLIER_SEED_ERROR_RATE)
+    return [read for read, rate in zip(reads, seed_error_rates, strict=True) if rate <= max_seed_error_rate]
+
+
 def hill_climb_encoded(reads: list[EncodedRead], length: int, max_iters: int = 100) -> str:
     """Runs in single-char-per-kmer space; see hill_climb for the public, kmer-list API."""
     if length <= 0 or not reads:
@@ -292,7 +304,9 @@ def hill_climb_encoded(reads: list[EncodedRead], length: int, max_iters: int = 1
         dists = [OSA.distance(trim_seed_for(seed, len(k), t)[0], k) for k, t, _ in reads]
         suffix = list(accumulate(reversed(dists), initial=0))[::-1]
         baseline = (suffix[0], composition_penalty(seed, target), sum(d * d for d in dists))
-        active, proposed = collect_disagreement(seed, align_reads(seed, reads), vocab_set)
+        # Bad reads (outliers in seed error rate) don't propose moves, but are still scored
+        proposers = proposing_reads(reads, dists)
+        active, proposed = collect_disagreement(seed, align_reads(seed, proposers), vocab_set)
         moves = find_improving_moves(seed, reads, target, suffix, baseline, active, proposed)
         if not moves:
             break
