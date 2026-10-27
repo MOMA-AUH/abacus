@@ -8,11 +8,13 @@ import subprocess
 faulthandler.enable()
 from collections import Counter
 from collections.abc import Generator
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from contextlib import contextmanager
 from importlib.resources import files
 from logging.handlers import QueueHandler, QueueListener
-from multiprocessing import Pool
 from multiprocessing import Queue as MPQueue
+from multiprocessing import get_context
 from pathlib import Path
 from typing import Annotated
 
@@ -104,6 +106,7 @@ def _worker_init(config_dict: dict, log_queue: MPQueue, log_level: int) -> None:
     root.handlers.clear()
     root.addHandler(QueueHandler(log_queue))
     root.setLevel(log_level)
+    logger.addFilter(_LocusFilter())
     for k, v in config_dict.items():
         setattr(_config, k, v)
 
@@ -216,6 +219,7 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
             removal_reasons = [reason for rc in all_removed_read_calls for reason in rc.outlier_reasons] + [read.error_flags for read in unmapped_reads]
             logger.warning("No call, %d reads; removal reasons: %s", len(reads), dict(Counter(removal_reasons)))
             vcf_records = create_no_call_records(locus, ref, len(reads))
+        logger.info("Locus done")
     _locus_context["id"] = ""
 
     return {
@@ -705,18 +709,25 @@ def abacus(
             for locus in loci:
                 _handle_result(process_fn(locus))
         else:
-            log_queue: MPQueue = MPQueue()
+            # Required by max_tasks_per_child
+            mp_context = get_context("spawn")
+            log_queue: MPQueue = mp_context.Queue()
             queue_listener = QueueListener(log_queue, *logger.handlers, respect_handler_level=True)
             queue_listener.start()
             try:
-                with Pool(
-                    processes=threads,
+                with ProcessPoolExecutor(
+                    max_workers=threads,
+                    mp_context=mp_context,
                     initializer=_worker_init,
                     initargs=(config.to_dict(), log_queue, logger.level),
-                    maxtasksperchild=100,  # recycle workers to release fragmented heap
+                    max_tasks_per_child=100,  # recycle workers to release fragmented heap
                 ) as pool:
-                    for result in pool.imap_unordered(process_fn, loci, chunksize=1):
-                        _handle_result(result)
+                    # A killed worker (e.g. out of memory) breaks the pool, so future.result() raises BrokenProcessPool
+                    for future in as_completed([pool.submit(process_fn, locus) for locus in loci]):
+                        _handle_result(future.result())
+            except BrokenProcessPool:
+                logger.error("Worker died during a locus without 'Locus done'")
+                raise
             finally:
                 queue_listener.stop()
         t.info = f"{len(loci)} loci, {threads} threads"
