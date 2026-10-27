@@ -1,74 +1,19 @@
 from __future__ import annotations
 
-import random
-
 import pytest
 
-from abacus import config
 from abacus.consensus import create_consensus_calls
 from abacus.graph import Read, get_read_calls
-from abacus.locus import Location, Locus, Satellite
+from abacus.locus import Locus
 from abacus.utils import Haplotype
-
-
-def create_random_anchor() -> str:
-    """Create a random anchor sequence."""
-    return "".join(random.choices("ATCG", k=config.Config.anchor_len))
-
-
-def create_synthetic_locus(satellite_seqs: list[str], breaks: list[str] | None = None) -> Locus:
-    """Create a synthetic locus with one or multiple satellites."""
-    left_anchor = create_random_anchor()
-    right_anchor = create_random_anchor()
-
-    if breaks is None:
-        breaks = [""] * (len(satellite_seqs) + 1)
-
-    satellites = []
-    start_pos = 1000
-    for i, seq in enumerate(satellite_seqs):
-        seqs = seq.split("|")
-        end_pos = start_pos + len(seqs[0])
-        satellites.append(
-            Satellite(
-                id=f"test_{i}",
-                sequences=seqs,
-                location=Location("chr1", start_pos, end_pos),
-                skippable=(len(satellite_seqs) > 1),
-            ),
-        )
-        start_pos = end_pos
-
-    return Locus(
-        id="test",
-        structure="test",
-        location=Location(chrom="chr1", start=1000, end=start_pos),
-        satellites=satellites,
-        breaks=breaks,
-        left_anchor=left_anchor,
-        right_anchor=right_anchor,
-    )
-
-
-def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read:
-    """Create a synthetic read with the given full sequence (including anchors)."""
-    return Read(
-        name=name,
-        sequence=sequence,
-        qualities=[30] * len(sequence),
-        mod_5mc_probs="!" * len(sequence),
-        strand=strand,
-        n_soft_clipped_left=0,
-        n_soft_clipped_right=0,
-        locus=locus,
-    )
+from tests.helpers import make_locus, make_read
 
 
 @pytest.mark.parametrize(
-    ("satellite_seqs", "spanning_sequences", "left_flanking_sequences", "right_flanking_sequences", "expected_consensus"),
+    ("structure", "spanning_sequences", "left_flanking_sequences", "right_flanking_sequences", "expected_consensus"),
     [
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             ["CAG" * 4],
             [],
             [],
@@ -76,7 +21,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="A single spanning read is its own consensus",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             ["CAG" * 4] * 3,
             [],
             [],
@@ -84,7 +29,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Spanning reads that all agree produce that consensus",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             ["CAG" * 3, "CAG" * 4, "CAG" * 5],
             [],
             [],
@@ -92,7 +37,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Spanning reads - equal motif, differing length",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             ["CAG" * 2 + "AAA" + "CAG" * 2] * 3,
             [],
             [],
@@ -100,7 +45,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Spanning reads - equal motif, with interruption",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             [
                 "CAG" * 1 + "AAA" + "CAG" * 3,
                 "CAG" * 2 + "AAA" + "CAG" * 2,
@@ -112,7 +57,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Spanning reads - obvious interuption in the middle of the motif, but in different positions.",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             [
                 "CAG" * 1 + "AAA" + "CAG" * 2,
                 "CAG" * 2 + "AAA" + "CAG" * 1,
@@ -123,7 +68,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Spanning reads - obvious interuption in the middle of the motif, but in different positions - with tie.",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             [
                 "CAG" * 1 + "CCG" + "CAG" * 3,
                 *["CAG" * 2 + "CCG" + "CAG" * 2] * 2,
@@ -135,7 +80,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Spanning reads - slight interuption in the middle of the motif, different positions.",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             [
                 "CAG" * 2 + "CCG" + "CAG" * 2,
                 "CAG" * 1 + "CCG" + "CAG" * 2,
@@ -147,7 +92,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Spanning reads - slight interuption in the middle of the motif, different positions, differing length.",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             ["CAG" * 4 + "CCG"],
             [],
             ["CAG" * 3] * 2,
@@ -155,7 +100,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Right flanks should fix error in spanning read.",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             ["CCG" + "CAG" * 4],
             ["CAG" * 3] * 2,
             [],
@@ -163,7 +108,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Left flanks should fix error in spanning read.",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             ["CAG" * 4] * 2,
             [],
             ["CAG" * 3] * 2,
@@ -171,7 +116,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Right-flanking reads that agree with spanning reads don't change the consensus",
         ),
         pytest.param(
-            ["CAG"],
+            "(CAG)+",
             ["CAG" * 4],
             [],
             ["CAG" * 6] * 2,
@@ -179,7 +124,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Right-flanking reads that agree with each other extend the consensus past spanning reads",
         ),
         pytest.param(
-            ["CAG|AAA"],
+            "(CAG|AAA)+",
             ["CAG" * 4],
             [],
             ["AAA" * 3] * 2,
@@ -187,7 +132,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Right-flanking reads from a different allele pull the consensus tail towards their own motif",
         ),
         pytest.param(
-            ["CAG|AAA"],
+            "(CAG|AAA)+",
             ["CAG" * 4],
             ["AAA" * 3] * 2,
             [],
@@ -195,7 +140,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Left-flanking reads from a different allele pull the consensus head towards their own motif",
         ),
         pytest.param(
-            ["CAG|AAA"],
+            "(CAG|AAA)+",
             ["CAG" * 4],
             ["CAG" * 3 + "CA"] * 2,
             [],
@@ -203,7 +148,7 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
             id="Left-flanking reads ending mid-unit shouldn't out-vote a full unit with a partial one",
         ),
         pytest.param(
-            ["CAG|AAA"],
+            "(CAG|AAA)+",
             ["CAG" * 4],
             [],
             ["AG" + "CAG" * 3] * 2,
@@ -213,16 +158,14 @@ def make_read(name: str, sequence: str, locus: Locus, strand: str = "+") -> Read
     ],
 )
 def test_create_consensus_calls_respects_flanking_read_coverage(
-    satellite_seqs: list[str],
+    structure: str,
     spanning_sequences: list[str],
     left_flanking_sequences: list[str],
     right_flanking_sequences: list[str],
     expected_consensus: str,
 ):
     """Flanking reads should only outvote spanning reads at positions they actually cover, with real content."""
-    # Anchor content affects how the aligner reports a boundary kmer, so fix the seed for determinism.
-    random.seed(42)
-    locus = create_synthetic_locus(satellite_seqs, ["", ""])
+    locus = make_locus(structure)
 
     reads = (
         [make_read(f"spanning_{i}", locus.left_anchor + seq + locus.right_anchor, locus) for i, seq in enumerate(spanning_sequences)]
@@ -259,10 +202,10 @@ def make_stranded_reads(specs: list[StrandedReadSpec], locus: Locus) -> list[Rea
 
 
 @pytest.mark.parametrize(
-    ("satellite_seqs", "read_specs", "expected_consensus"),
+    ("structure", "read_specs", "expected_consensus"),
     [
         pytest.param(
-            ["CGG|GGG"],
+            "(CGG|GGG)+",
             [
                 ("CGG" * 4, "spanning", "+", 1),
                 ("GGG" * 4, "spanning", "+", 10),
@@ -272,7 +215,7 @@ def make_stranded_reads(specs: list[StrandedReadSpec], locus: Locus) -> list[Rea
             id="Plus-strand-only error is the pooled majority, but has no minus-strand support",
         ),
         pytest.param(
-            ["CGG|GGG"],
+            "(CGG|GGG)+",
             [
                 ("CGG" * 4, "spanning", "+", 1),
                 ("GGG" * 4, "spanning", "+", 10),
@@ -284,7 +227,7 @@ def make_stranded_reads(specs: list[StrandedReadSpec], locus: Locus) -> list[Rea
             id="Minus-strand support for the correct motif comes from flanking reads, not just spanning ones",
         ),
         pytest.param(
-            ["CAG|AAA"],
+            "(CAG|AAA)+",
             [
                 ("CAG" + "AAA" + "CAG" + "AAA" + "CAG", "spanning", "+", 10),
                 ("CAG" + "CAG" + "CAG" + "AAA" + "CAG", "spanning", "+", 1),
@@ -295,12 +238,11 @@ def make_stranded_reads(specs: list[StrandedReadSpec], locus: Locus) -> list[Rea
         ),
     ],
 )
-def test_create_consensus_calls_resist_strand_biased_errors(satellite_seqs: list[str], read_specs: list[StrandedReadSpec], expected_consensus: str):
+def test_create_consensus_calls_resist_strand_biased_errors(structure: str, read_specs: list[StrandedReadSpec], expected_consensus: str):
     """A motif that is common on one strand but rare/wrong-directioned should not out-vote a
     minority motif that is actually seen on both strands (a plus-strand-only ONT error should not
     be allowed to overrule a motif also confirmed by minus-strand reads)."""
-    random.seed(42)
-    locus = create_synthetic_locus(satellite_seqs, ["", ""])
+    locus = make_locus(structure)
     reads = make_stranded_reads(read_specs, locus)
 
     read_calls, _ = get_read_calls(reads, locus)
@@ -330,11 +272,10 @@ def make_segment_reads(specs: list[SegmentReadSpec], locus: Locus) -> list[Read]
 
 
 @pytest.mark.parametrize(
-    ("satellite_seqs", "breaks", "read_specs", "target_lengths", "expected_consensus"),
+    ("structure", "read_specs", "target_lengths", "expected_consensus"),
     [
         pytest.param(
-            ["CCG", "CCG"],
-            ["", "AATAA", ""],
+            "(CCG)*AATAA(CCG)*",
             [
                 ("CCG" * 2 + "AAGAA" + "CCG" * 3, "spanning"),
                 ("CCG" * 2 + "AAGAA" + "CCG" * 3, "spanning"),
@@ -347,8 +288,7 @@ def make_segment_reads(specs: list[SegmentReadSpec], locus: Locus) -> list[Read]
             id="A breaker that shifts position with satellite count must not be voted out by the flat majority",
         ),
         pytest.param(
-            ["CCG", "CCG"],
-            ["", "AATAA", ""],
+            "(CCG)*AATAA(CCG)*",
             [
                 ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
                 ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
@@ -360,8 +300,7 @@ def make_segment_reads(specs: list[SegmentReadSpec], locus: Locus) -> list[Read]
             id="A long left-flanking read extends satellite 1's count past what spanning reads show, without disturbing satellite 2",
         ),
         pytest.param(
-            ["CCG", "CCG"],
-            ["", "AATAA", ""],
+            "(CCG)*AATAA(CCG)*",
             [
                 ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
                 ("CCG" * 3 + "AATAA" + "CCG" * 2, "spanning"),
@@ -373,8 +312,7 @@ def make_segment_reads(specs: list[SegmentReadSpec], locus: Locus) -> list[Read]
             id="A long right-flanking read extends satellite 2's count past what spanning reads show, without disturbing satellite 1",
         ),
         pytest.param(
-            ["CAG", "GGC", "TGA"],
-            ["", "AAAAA", "TTTTT", ""],
+            "(CAG)*AAAAA(GGC)*TTTTT(TGA)*",
             [
                 ("CAG" * 2 + "AAAAA" + "GGC" * 2 + "TTTTT" + "TGA" * 2, "spanning"),
                 ("CAG" * 2 + "AAAAA" + "GGC" * 2 + "TTTTT" + "TGA" * 2, "spanning"),
@@ -389,8 +327,7 @@ def make_segment_reads(specs: list[SegmentReadSpec], locus: Locus) -> list[Read]
     ],
 )
 def test_create_consensus_calls_segments_by_satellite_and_break(
-    satellite_seqs: list[str],
-    breaks: list[str],
+    structure: str,
     read_specs: list[SegmentReadSpec],
     target_lengths: list[int],
     expected_consensus: str,
@@ -399,8 +336,7 @@ def test_create_consensus_calls_segments_by_satellite_and_break(
     mapped to, not against a flat position in the whole allele - two reads can genuinely agree on
     every satellite's content while disagreeing on an earlier satellite's count, which shifts
     where a later satellite (or a break) sits in the flat kmer string."""
-    random.seed(42)
-    locus = create_synthetic_locus(satellite_seqs, breaks)
+    locus = make_locus(structure)
     reads = make_segment_reads(read_specs, locus)
 
     read_calls, _ = get_read_calls(reads, locus)
@@ -418,8 +354,7 @@ def test_create_consensus_calls_folds_flanking_only_into_one_consensus():
     read covering the break and satellite 2 jointly cover the whole locus - this must produce one
     unified consensus call (not two disjoint left/right calls), and it must be identifiable as having
     no spanning support."""
-    random.seed(42)
-    locus = create_synthetic_locus(["CCG", "CCG"], ["", "AATAA", ""])
+    locus = make_locus("(CCG)*AATAA(CCG)*")
     reads = make_segment_reads(
         [
             ("CCG" * 3, "left"),
@@ -441,8 +376,7 @@ def test_create_consensus_calls_folds_flanking_only_into_one_consensus():
 
 def test_create_consensus_calls_zero_copy_allele():
     """Reads that skip the repeat entirely (0 copies) give an empty consensus, which is still a call."""
-    random.seed(42)
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     reads = [make_read(f"read_{i}", locus.left_anchor + locus.right_anchor, locus) for i in range(5)]
 
     read_calls, _ = get_read_calls(reads, locus)

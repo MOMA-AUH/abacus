@@ -264,13 +264,14 @@ class GraphAlignment(Read):
         )
 
     def __post_init__(self) -> None:
-        # Check if read has full STR and sufficient anchors
-        self.has_left_anchor = "left_anchor" in self.path and "left_anchor_overlap" in self.path
-        self.has_right_anchor = "right_anchor" in self.path and "right_anchor_overlap" in self.path
-
-        # TODO: REMOVE or change filtering behavior. This "disables" min_anchor_overlap
-        self.has_left_anchor = "left_anchor_overlap" in self.path
-        self.has_right_anchor = "right_anchor_overlap" in self.path
+        # Overlap-only anchors require a query end within max_trim; otherwise require
+        # the outer anchor. Use graph alignment coordinates, ignoring BAM soft clips.
+        self.has_left_anchor = "left_anchor_overlap" in self.path and (
+            "left_anchor" in self.path or self.query_start <= config.max_trim
+        )
+        self.has_right_anchor = "right_anchor_overlap" in self.path and (
+            "right_anchor" in self.path or self.query_length - self.query_end <= config.max_trim
+        )
 
         # Determine alignment type
         if self.has_left_anchor and self.has_right_anchor:

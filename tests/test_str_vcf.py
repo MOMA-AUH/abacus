@@ -13,7 +13,7 @@ from abacus.locus import Location
 from abacus.parameter_estimation import HomozygousParameters
 from abacus.str_vcf import create_no_call_records, create_vcf_records, generate_vcf_header
 from abacus.utils import Haplotype
-from tests.test_consensus import create_synthetic_locus
+from tests.helpers import make_locus
 
 
 @pytest.fixture
@@ -62,7 +62,7 @@ def test_header_follows_vcf_4_5(ref_path: Path):
 
 
 def test_het_record_uses_cnv_tr_with_padding_base(ref_path: Path):
-    locus = create_synthetic_locus(["CAG", "CCG"], breaks=["", "CAACAG", ""])
+    locus = make_locus("(CAG)*CAACAG(CCG)*")
     final_params = {Haplotype.H1: params(5, 3), Haplotype.H2: params(8, 4)}
     calls = [
         make_consensus_call(locus, "CAG" * 5 + "CAACAG" + "CCG" * 3, Haplotype.H1, spanning=11, flanking=2),
@@ -96,7 +96,7 @@ def test_het_record_uses_cnv_tr_with_padding_base(ref_path: Path):
 
 
 def test_interrupted_allele_is_split_into_runs(ref_path: Path):
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(18), Haplotype.H2: params(12)}
     calls = [
         make_consensus_call(locus, "CAG" * 9 + "CAA" + "CAG" * 8, Haplotype.H1),
@@ -114,7 +114,7 @@ def test_interrupted_allele_is_split_into_runs(ref_path: Path):
 
 
 def test_multi_motif_satellite_reports_motif_runs(ref_path: Path):
-    locus = create_synthetic_locus(["AAAAG|AAGGG"])
+    locus = make_locus("(AAAAG|AAGGG)+")
     final_params = {Haplotype.HOM: params(7)}
     calls = [make_consensus_call(locus, "AAAAG" * 3 + "AAGGG" * 4, Haplotype.HOM)]
 
@@ -131,7 +131,7 @@ def test_multi_motif_satellite_reports_motif_runs(ref_path: Path):
 
 
 def test_longest_pure_segment_tie_keeps_first_run(ref_path: Path):
-    locus = create_synthetic_locus(["CAG|CAA"])
+    locus = make_locus("(CAG|CAA)+")
     final_params = {Haplotype.HOM: params(10)}
     calls = [make_consensus_call(locus, "CAA" * 5 + "CAG" * 5, Haplotype.HOM)]
 
@@ -143,7 +143,7 @@ def test_longest_pure_segment_tie_keeps_first_run(ref_path: Path):
 
 
 def test_homozygous_record_has_one_alt_and_no_phase_set(ref_path: Path):
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     final_params = {Haplotype.HOM: params(5)}
     calls = [make_consensus_call(locus, "CAG" * 5, Haplotype.HOM, spanning=7, flanking=1)]
 
@@ -155,7 +155,7 @@ def test_homozygous_record_has_one_alt_and_no_phase_set(ref_path: Path):
 
 
 def test_allele_depths_follow_alt_order_regardless_of_call_order(ref_path: Path):
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(5), Haplotype.H2: params(10)}
     calls = [
         make_consensus_call(locus, "CAG" * 10, Haplotype.H2, spanning=5, flanking=3),
@@ -173,7 +173,7 @@ def test_allele_depths_follow_alt_order_regardless_of_call_order(ref_path: Path)
 
 def test_haplotype_without_consensus_has_no_repeat_sequences(ref_path: Path):
     # A zero-length haplotype yields an empty consensus, so create_consensus_calls returns no call for it
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(5), Haplotype.H2: params(0)}
     calls = [make_consensus_call(locus, "CAG" * 5, Haplotype.H1, spanning=11, flanking=2)]
 
@@ -194,7 +194,7 @@ def test_haplotype_without_consensus_has_no_repeat_sequences(ref_path: Path):
 
 def test_consensus_is_opt_in_info_field(ref_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config, "add_consensus_to_vcf", True)
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(0), Haplotype.H2: params(5)}
     calls = [make_consensus_call(locus, "CAG" * 5, Haplotype.H2, spanning=11, flanking=2)]
 
@@ -206,7 +206,7 @@ def test_consensus_is_opt_in_info_field(ref_path: Path, monkeypatch: pytest.Monk
 
 def test_consensus_is_missing_for_allele_without_units_in_satellite(ref_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config, "add_consensus_to_vcf", True)
-    locus = create_synthetic_locus(["CAG", "CCG"])
+    locus = make_locus("(CAG)*(CCG)*")
     final_params = {Haplotype.H1: params(5, 0), Haplotype.H2: params(8, 4)}
     calls = [
         make_consensus_call(locus, "CAG" * 5, Haplotype.H1),
@@ -221,7 +221,7 @@ def test_consensus_is_missing_for_allele_without_units_in_satellite(ref_path: Pa
 
 
 def test_repeat_absent_from_reference_has_svlen_one(ref_path: Path):
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     locus.satellites[0].location = Location("chr1", 1000, 1000)
     final_params = {Haplotype.HOM: params(5)}
     calls = [make_consensus_call(locus, "CAG" * 5, Haplotype.HOM)]
@@ -242,7 +242,7 @@ def test_header_declares_threshold_fields(ref_path: Path):
 
 
 def test_thresholds_add_status_per_allele(ref_path: Path):
-    locus = create_synthetic_locus(["CAG", "CCG"], breaks=["", "CAACAG", ""])
+    locus = make_locus("(CAG)*CAACAG(CCG)*")
     locus.satellites[0].benign_max = 26
     locus.satellites[0].pathogenic_min = 36
     final_params = {Haplotype.H1: params(19, 7), Haplotype.H2: params(45, 10)}
@@ -259,7 +259,7 @@ def test_thresholds_add_status_per_allele(ref_path: Path):
 
 
 def test_single_threshold_omits_the_other(ref_path: Path):
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     locus.satellites[0].pathogenic_min = 36
     final_params = {Haplotype.HOM: params(30)}
     calls = [make_consensus_call(locus, "CAG" * 30, Haplotype.HOM)]
@@ -273,7 +273,7 @@ def test_single_threshold_omits_the_other(ref_path: Path):
 
 @pytest.mark.parametrize(("depth", "filter_id"), [(0, "NoReads"), (54, "NoCall")])
 def test_no_call_record(ref_path: Path, depth: int, filter_id: str):
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     locus.satellites[0].benign_max = 26
 
     (record,) = create_no_call_records(locus, ref_path, depth)
@@ -285,7 +285,7 @@ def test_no_call_record(ref_path: Path, depth: int, filter_id: str):
 
 
 def test_refdiv_reports_consensus_divergence_per_allele(ref_path: Path):
-    locus = create_synthetic_locus(["CAG"])
+    locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(10), Haplotype.H2: params(10)}
     calls = [
         make_consensus_call(locus, "CAG" * 10, Haplotype.H1),

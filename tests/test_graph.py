@@ -1,5 +1,4 @@
 import array
-import random
 
 import pysam
 import pytest
@@ -16,7 +15,60 @@ from abacus.graph import (
     get_satellite_copy_lengths_from_path,
     split_into_copies,
 )
-from abacus.locus import Location, Satellite, create_satellites, parse_str_pattern
+from abacus.locus import Location
+from abacus.utils import AlignmentType
+from tests.helpers import make_locus, make_read
+
+
+def test_read_ending_in_short_flank_is_spanning():
+    locus = make_locus("(CTCC)+")
+    repeat = "CTCC" * 3
+    reads = [
+        make_read("short_left", locus.left_anchor[-60:] + repeat + locus.right_anchor, locus),
+        make_read("short_right", locus.left_anchor + repeat + locus.right_anchor[:60], locus),
+    ]
+
+    alignments = get_graph_alignments(reads, create_repeat_graph(locus))
+
+    assert {a.name: a.type for a in alignments} == {
+        "short_left": AlignmentType.SPANNING,
+        "short_right": AlignmentType.SPANNING,
+    }
+
+
+def test_read_continuing_beyond_short_flank_is_flanking():
+    locus = make_locus("(CTCC)+")
+    repeat = "CTCC" * 3
+    unaligned = "G" * 1000
+    reads = [
+        make_read("unaligned_left", unaligned + locus.left_anchor[-60:] + repeat + locus.right_anchor, locus),
+        make_read("unaligned_right", locus.left_anchor + repeat + locus.right_anchor[:60] + unaligned, locus),
+    ]
+
+    alignments = get_graph_alignments(reads, create_repeat_graph(locus))
+
+    assert {a.name: a.type for a in alignments} == {
+        "unaligned_left": AlignmentType.RIGHT_FLANKING,
+        "unaligned_right": AlignmentType.LEFT_FLANKING,
+    }
+
+
+def test_read_reaching_outer_anchors_is_spanning_despite_unaligned_ends():
+    locus = make_locus("(CTCC)+")
+    repeat = "CTCC" * 3
+    spanning = locus.left_anchor + repeat + locus.right_anchor
+    unaligned = "G" * 1000
+    reads = [
+        make_read("unaligned_left", unaligned + spanning, locus, n_soft_clipped_left=1000),
+        make_read("unaligned_right", spanning + unaligned, locus, n_soft_clipped_right=1000),
+    ]
+
+    alignments = get_graph_alignments(reads, create_repeat_graph(locus))
+
+    assert {a.name: a.type for a in alignments} == {
+        "unaligned_left": AlignmentType.SPANNING,
+        "unaligned_right": AlignmentType.SPANNING,
+    }
 
 
 @pytest.mark.parametrize(
@@ -291,59 +343,11 @@ from abacus.locus import Location, Satellite, create_satellites, parse_str_patte
     ],
 )
 def test_get_satellite_copy_lengths_from_path(structure, read, expected_satellite_counts, expected_str_reference):
-    alphabet = "ATCG"
-
-    # Set seed for reproducibility
-    random.seed(42)
-
-    # Make random left and right anchors
-    left_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
-    right_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
-
-    # Process STR pattern
-    satellite_seqs, satellites_skippable, breaks = parse_str_pattern(structure)
-
-    location = Location(
-        chrom="chr1",
-        start=100,
-        end=200,
-    )
-
-    # Create satellites
-    satellite_locations = [location] * len(satellite_seqs)
-    satelitte_ids = [f"satellite_{i}" for i in range(len(satellite_seqs))]
-    locus_id = "locus_test"
-    satellites = create_satellites(satellite_seqs, satellites_skippable, satellite_locations, satelitte_ids, locus_id)
-
-    locus = Locus(
-        id="locus1",
-        location=location,
-        left_anchor=left_anchor,
-        right_anchor=right_anchor,
-        structure=structure,
-        satellites=satellites,
-        breaks=breaks,
-    )
-
-    read_str = f"{left_anchor}{read}{right_anchor}"
-
-    read_id = "read"
-
-    reads = [
-        Read(
-            name=read_id,
-            sequence=read_str,
-            qualities=[30] * len(read_str),
-            strand="+",
-            mod_5mc_probs="",
-            n_soft_clipped_left=0,
-            n_soft_clipped_right=0,
-            locus=locus,
-        ),
-    ]
+    locus = make_locus(structure)
+    reads = [make_read("read", locus.left_anchor + read + locus.right_anchor, locus)]
 
     graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
-    graph_alignment = next(a for a in graph_alignments if a.name == read_id)
+    graph_alignment = next(a for a in graph_alignments if a.name == reads[0].name)
     path = graph_alignment.path
     satellite_copy_lengths = get_satellite_copy_lengths_from_path(locus=locus, path=path)
     satellite_counts = [len(lengths) for lengths in satellite_copy_lengths]
@@ -409,59 +413,9 @@ def test_get_satellite_copy_lengths_from_path(structure, read, expected_satellit
     ],
 )
 def test_get_satellite_strings(structure, read, expected_expected_kmer_string, expected_observed_kmer_string):
-    alphabet = "ATCG"
-
-    # Set seed for reproducibility
-    random.seed(42)
-
-    # Make random left and right anchors
-    left_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
-    right_anchor = "".join(random.choices(alphabet, k=config.anchor_len))
-
-    # Process STR pattern
-    satellite_seqs, satellites_skippable, breaks = parse_str_pattern(structure)
-
-    location = Location(
-        chrom="chr1",
-        start=100,
-        end=200,
-    )
-
-    # Create satellites
-    satellite_locations = [location] * len(satellite_seqs)
-    satelitte_ids = [f"satellite_{i}" for i in range(len(satellite_seqs))]
-    locus_id = "locus_test"
-    satellites = create_satellites(satellite_seqs, satellites_skippable, satellite_locations, satelitte_ids, locus_id)
-
-    locus = Locus(
-        id=locus_id,
-        location=location,
-        left_anchor=left_anchor,
-        right_anchor=right_anchor,
-        structure=structure,
-        satellites=satellites,
-        breaks=breaks,
-    )
-
-    read_str = f"{left_anchor}{read}{right_anchor}"
-
-    read_id = "read"
-
-    reads = [
-        Read(
-            name=read_id,
-            sequence=read_str,
-            qualities=[30] * len(read_str),
-            strand="+",
-            mod_5mc_probs="0" * len(read_str),
-            n_soft_clipped_left=0,
-            n_soft_clipped_right=0,
-            locus=locus,
-        ),
-    ]
-
-    graph_alignments = get_graph_alignments(reads, create_repeat_graph(locus))
-    graph_alignment = next(a for a in graph_alignments if a.name == read_id)
+    locus = make_locus(structure)
+    reads = [make_read("read", locus.left_anchor + read + locus.right_anchor, locus)]
+    graph_alignment = get_graph_alignments(reads, create_repeat_graph(locus))[0]
 
     satellite_copy_lengths = get_satellite_copy_lengths_from_path(path=graph_alignment.path, locus=locus)
 
@@ -485,24 +439,7 @@ def test_get_satellite_strings(structure, read, expected_expected_kmer_string, e
 def test_get_kmer_string_mixed_alternative_lengths():
     # No minigraph involved here - isolates get_kmer_string's own chopping logic
     # from what path the aligner picks (that's covered separately in test_get_satellite_strings).
-    structure = "(GAA|GA)+"
-    satellite_seqs, satellites_skippable, breaks = parse_str_pattern(structure)
-
-    location = Location(chrom="chr1", start=100, end=200)
-    satellite_locations = [location] * len(satellite_seqs)
-    satelitte_ids = [f"satellite_{i}" for i in range(len(satellite_seqs))]
-    locus_id = "locus_test"
-    satellites = create_satellites(satellite_seqs, satellites_skippable, satellite_locations, satelitte_ids, locus_id)
-
-    locus = Locus(
-        id=locus_id,
-        location=location,
-        left_anchor="A" * config.anchor_len,
-        right_anchor="A" * config.anchor_len,
-        structure=structure,
-        satellites=satellites,
-        breaks=breaks,
-    )
+    locus = make_locus("(GAA|GA)+")
 
     # 3 copies of GAA followed by 2 copies of GA - a real mixed-length path
     synced_list = list("GAA" * 3 + "GA" * 2)
@@ -544,29 +481,10 @@ def test_split_into_copies(observed: str, motif: str, expected: list[str] | None
 
 @pytest.mark.parametrize("flank", ["left", "right"])
 def test_slipped_flanking_read_is_split(flank: str):
-    random.seed(42)
-    location = Location("chr1", 100, 200)
-    locus = Locus(
-        id="test",
-        location=location,
-        left_anchor="".join(random.choices("ATCG", k=config.anchor_len)),
-        right_anchor="".join(random.choices("ATCG", k=config.anchor_len)),
-        structure="(CGG)+",
-        satellites=[Satellite(id="test", sequences=["CGG"], location=location, skippable=False)],
-        breaks=["", ""],
-    )
+    locus = make_locus("(CGG)+")
     slipped = "CGG" * 6 + "CG" * 4 + "CGG" * 5
     sequence = locus.left_anchor + slipped if flank == "left" else slipped + locus.right_anchor
-    read = Read(
-        name="read",
-        sequence=sequence,
-        qualities=[30] * len(sequence),
-        strand="+",
-        mod_5mc_probs="0" * len(sequence),
-        n_soft_clipped_left=0,
-        n_soft_clipped_right=0,
-        locus=locus,
-    )
+    read = make_read("read", sequence, locus)
 
     read_calls, _ = get_read_calls([read], locus)
 
@@ -627,27 +545,10 @@ def create_aligned_segment(query_name: str, query_sequence: str, mm_tag: str, ml
 
 
 def create_synthetic_simple_locus(satellite_seq: str) -> Locus:
-    # Create random anchors
-    left_anchor = ""
-    right_anchor = ""
-
-    # Create a simple locus with one satellite
-    return Locus(
-        id="test",
-        structure="test",
-        location=Location(chrom="chr1", start=1000, end=2000),
-        satellites=[
-            Satellite(
-                id="test",
-                sequences=[satellite_seq],
-                location=Location("chr1", 1000, 2000),
-                skippable=False,
-            ),
-        ],
-        breaks=["", ""],
-        left_anchor=left_anchor,
-        right_anchor=right_anchor,
-    )
+    locus = make_locus(f"({satellite_seq})+")
+    locus.left_anchor = ""
+    locus.right_anchor = ""
+    return locus
 
 
 # Note: Probs are represented with ASCII, i.e.:
@@ -812,30 +713,11 @@ def test_methylation_from_alignment(
 
 def observed_kmers(motif: str, repeat: str, read_type: str = "spanning") -> list[str]:
     """Return the kmers abacus observes for a read with `repeat` between the anchors; a flanking read has only its own anchor."""
-    random.seed(42)
-    location = Location("chr1", 100, 200)
-    locus = Locus(
-        id="test",
-        location=location,
-        left_anchor="".join(random.choices("ATCG", k=config.anchor_len)),
-        right_anchor="".join(random.choices("ATCG", k=config.anchor_len)),
-        structure=f"({motif})*",
-        satellites=[Satellite(id="test", sequences=[motif], location=location, skippable=False)],
-        breaks=["", ""],
-    )
+    locus = make_locus(f"({motif})+")
     left_anchor = locus.left_anchor if read_type in ("spanning", "left") else ""
     right_anchor = locus.right_anchor if read_type in ("spanning", "right") else ""
     sequence = left_anchor + repeat + right_anchor
-    read = Read(
-        name="read",
-        sequence=sequence,
-        qualities=[30] * len(sequence),
-        strand="+",
-        mod_5mc_probs="0" * len(sequence),
-        n_soft_clipped_left=0,
-        n_soft_clipped_right=0,
-        locus=locus,
-    )
+    read = make_read("read", sequence, locus)
     read_calls, _ = get_read_calls([read], locus)
     return read_calls[0].obs_kmer_string.split("|")
 

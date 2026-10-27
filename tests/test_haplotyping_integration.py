@@ -1,80 +1,23 @@
 from __future__ import annotations
 
-import random
 from collections import Counter
 from typing import Literal
 
 import pytest
 
-from abacus import config
 from abacus.consensus import build_consensus_for_locus
 from abacus.graph import (
     Read,
     get_read_calls,
 )
 from abacus.haplotyping import run_haplotyping
-from abacus.locus import Location, Locus, Satellite
 from abacus.utils import Haplotype
-
-
-def create_random_anchor() -> str:
-    """Create a random anchor sequence."""
-    return "".join(random.choices("ATCG", k=config.Config.anchor_len))
-
-
-def create_synthetic_locus(satellite_seqs: list[str], breaks: list[str] | None = None):
-    """Create a synthetic locus with one or multiple satellites."""
-    left_anchor = create_random_anchor()
-    right_anchor = create_random_anchor()
-
-    if breaks is None:
-        breaks = [""] * (len(satellite_seqs) + 1)
-
-    satellites = []
-    start_pos = 1000
-    for i, seq in enumerate(satellite_seqs):
-        # Split on OR operator if present
-        seqs = seq.split("|")
-        end_pos = start_pos + len(seqs[0])
-        satellites.append(
-            Satellite(
-                id=f"test_{i}",
-                sequences=seqs,
-                location=Location("chr1", start_pos, end_pos),
-                skippable=(len(satellite_seqs) > 1),
-            ),
-        )
-        start_pos = end_pos
-
-    return Locus(
-        id="test",
-        structure="test",
-        location=Location(chrom="chr1", start=1000, end=start_pos),
-        satellites=satellites,
-        breaks=breaks,
-        left_anchor=left_anchor,
-        right_anchor=right_anchor,
-    )
-
-
-def make_read(name: str, sequence: str, locus: Locus) -> Read:
-    """Create a synthetic read with the given full sequence (including anchors)."""
-    return Read(
-        name=name,
-        sequence=sequence,
-        qualities=[30] * len(sequence),
-        mod_5mc_probs="!" * len(sequence),
-        strand="+",
-        n_soft_clipped_left=0,
-        n_soft_clipped_right=0,
-        locus=locus,
-    )
+from tests.helpers import make_locus, make_read
 
 
 @pytest.mark.parametrize(
     (
-        "satellite_seqs",
-        "breaks",
+        "structure",
         "spanning_sequences",
         "left_flanking_sequences",
         "right_flanking_sequences",
@@ -85,8 +28,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
     [
         # Simple test cases (single satellite)
         pytest.param(
-            ["CAG"],
-            ["", ""],
+            "(CAG)+",
             [],
             [],
             [],
@@ -96,8 +38,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Simple-Empty",
         ),
         pytest.param(
-            ["CAG"],
-            ["", ""],
+            "(CAG)+",
             ["CAG"],
             [],
             [],
@@ -107,8 +48,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Simple-Single spanning",
         ),
         pytest.param(
-            ["CAG"],
-            ["", ""],
+            "(CAG)+",
             ["CAGCAG", "CAGCAG"],
             ["CAG"],
             ["CAG"],
@@ -118,8 +58,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Simple-Homozygous - Small",
         ),
         pytest.param(
-            ["CAG"],
-            ["", ""],
+            "(CAG)+",
             [
                 # Haplotype 1
                 *["CAG"] * 3,
@@ -134,8 +73,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Simple-Heterozygous - Small",
         ),
         pytest.param(
-            ["CTG"],
-            ["", ""],
+            "(CTG)+",
             [
                 # Haplotype 1
                 *["CTG" * 27] * 20,
@@ -151,8 +89,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         ),
         # Complex test cases (multiple satellites)
         pytest.param(
-            ["CAG", "CTG"],
-            ["", "", ""],
+            "(CAG)*(CTG)*",
             [
                 # Haplotype 1
                 *["CAG" * 2 + "CTG" * 3] * 2,
@@ -167,8 +104,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Complex-Two satellites - only spanning",
         ),
         pytest.param(
-            ["CAG", "CTG"],
-            ["", "", ""],
+            "(CAG)*(CTG)*",
             [
                 # Haplotype 1
                 *["CAG" * 2 + "CTG" * 3] * 2,
@@ -184,8 +120,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         ),
         # Cases with 2 satellites and a break sequence (HTT is a good example)
         pytest.param(
-            ["CAG", "CCG"],
-            ["", "CAACAG", ""],
+            "(CAG)*CAACAG(CCG)*",
             [
                 # Haplotype 1
                 *["CAG" * 2 + "CAACAG" + "CCG" * 3] * 3,
@@ -200,8 +135,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Complex-Two satellites with break - only spanning",
         ),
         pytest.param(
-            ["CAG", "CCG"],
-            ["", "CAACAG", ""],
+            "(CAG)*CAACAG(CCG)*",
             [
                 # Haplotype 1
                 *["CAG" * 2 + "CAACAG" + "CCG" * 3] * 2,
@@ -217,8 +151,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         ),
         # Cases with 3 satellites
         pytest.param(
-            ["CAG", "CCG", "CTG"],
-            ["", "", "", ""],
+            "(CAG)*(CCG)*(CTG)*",
             [
                 *["CAG" * 2 + "CCG" + "CTG" * 3] * 2,  # H1: 2 CAG, 1 CCG, 3 CTG
                 *["CAG" * 3 + "CCG" * 2 + "CTG"] * 2,  # H2: 3 CAG, 2 CCG, 1 CTG
@@ -232,8 +165,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         ),
         # OR operator test cases (satellite with multiple alternative sequences)
         pytest.param(
-            ["CAG|CAA"],
-            ["", ""],
+            "(CAG|CAA)+",
             [
                 *["CAG" * 10] * 5,
                 *["CAA" * 15] * 7,
@@ -246,8 +178,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="OR-Heterozygous by repeat count",
         ),
         pytest.param(
-            ["CAG|CAA"],
-            ["", ""],
+            "(CAG|CAA)+",
             [
                 *["CAG" * 10] * 7,
                 *["CAA" * 10] * 5,
@@ -260,8 +191,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="OR-Heterozygous by motif, but same length.",
         ),
         pytest.param(
-            ["GGCCCC|GGCCCCC"],
-            ["", ""],
+            "(GGCCCC|GGCCCCC)+",
             [
                 *["GGCCCC" * 12] * 8,
                 *["GGCCCCC" * 20] * 8,
@@ -275,8 +205,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         ),
         # Haplotyping based on motif differences
         pytest.param(
-            ["CAG"],
-            ["", ""],
+            "(CAG)+",
             [*["CAG" * 10] * 7, "CAG" * 9 + "CGG"],  # 8 reads: 7 normal + 1 with sequencing error, all same length
             [],
             [],
@@ -286,8 +215,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Sequence split-8 reads below min_haplotyping_depth-should not create singleton",
         ),
         pytest.param(
-            ["CAG"],
-            ["", ""],
+            "(CAG)+",
             [*["CAG" * 10] * 12],
             [],
             [],
@@ -297,8 +225,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Sequence split-No differences should remain homozygous",
         ),
         pytest.param(
-            ["CAG"],
-            ["", ""],
+            "(CAG)+",
             [
                 # Haplotype 1
                 *["CAGCAG"] * 7,
@@ -313,8 +240,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Sequence split-Short and simple",
         ),
         pytest.param(
-            ["CAG"],
-            ["", ""],
+            "(CAG)+",
             [
                 # Haplotype 1
                 *["CAG" * 31] * 11,
@@ -329,8 +255,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Sequence split-Long and simple",
         ),
         pytest.param(
-            ["CAG", "CCG"],
-            ["", "CAACAG", ""],
+            "(CAG)*CAACAG(CCG)*",
             [
                 # Haplotype 1
                 *["CAG" * 7 + "CAACAG" + "CCGCCGCCG"] * 9,
@@ -346,8 +271,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         ),
         # Outlier test cases
         pytest.param(
-            ["CTG"],
-            ["", ""],
+            "(CTG)+",
             [
                 # Haplotype 1
                 *["CTG" * 27] * 1,
@@ -369,8 +293,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         ),
         # Test cases from data - simple loci
         pytest.param(
-            ["AARRG"],
-            ["", ""],
+            "(AARRG)+",
             [
                 # Haplotype 1 (AARRG resolved: R -> A)
                 "AAAAG" * 765,
@@ -389,8 +312,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 1: Long RCF1. Only one flanking read for H2",
         ),
         pytest.param(
-            ["AARRG"],
-            ["", ""],
+            "(AARRG)+",
             [
                 # Haplotype 1
                 *["AAAAG" * 12] * 10,
@@ -414,8 +336,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 2: RFC1. Short H1, Long H2",
         ),
         pytest.param(
-            ["GAA"],
-            ["", ""],
+            "(GAA)+",
             [
                 # Haplotype 1
                 "GAA" * 8,
@@ -431,8 +352,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 3: FGF14. Close haplotypes, 1 apart",
         ),
         pytest.param(
-            ["GAA"],
-            ["", ""],
+            "(GAA)+",
             [
                 # Haplotype 1
                 *["GAA" * 8] * 7,
@@ -447,8 +367,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 4: FGF14. Close haplotypes 2, 0 apart",
         ),
         pytest.param(
-            ["GAA"],
-            ["", ""],
+            "(GAA)+",
             [
                 # Haplotype 1
                 *["GAA" * 5] * 10,
@@ -468,8 +387,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 5: DMPK",
         ),
         pytest.param(
-            ["GAA"],
-            ["", ""],
+            "(GAA)+",
             [
                 # Haplotype 1
                 *["GAA" * 8] * 9,
@@ -494,8 +412,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 6: RFC1",
         ),
         pytest.param(
-            ["CTG"],
-            ["", ""],
+            "(CTG)+",
             [
                 # Haplotype 1
                 *["CTG" * 28] * 8,
@@ -511,8 +428,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 7: ATXN1",
         ),
         pytest.param(
-            ["GGCCCC"],
-            ["", ""],
+            "(GGCCCC)+",
             [
                 # Haplotype 1
                 *["GGCCCC" * 12] * 17,
@@ -530,8 +446,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 9: C9ORF72",
         ),
         pytest.param(
-            ["NGC"],
-            ["", ""],
+            "(NGC)+",
             [
                 # Haplotype 1 (NGC resolved: N -> A)
                 *["AGC" * 12] * 17,
@@ -546,8 +461,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 10: ARX_EIEE",
         ),
         pytest.param(
-            ["GCC"],
-            ["", ""],
+            "(GCC)+",
             [],
             ["GCC" * 7],
             [],
@@ -557,8 +471,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 11: XYLT1 - Low coverage, no spanning reads",
         ),
         pytest.param(
-            ["GGC"],
-            ["", ""],
+            "(GGC)+",
             [
                 # Haplotype 1
                 *["GGC" * 19] * 3,
@@ -574,8 +487,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 12: NOTCH2NLC",
         ),
         pytest.param(
-            ["CAG", "CCG", "CTG"],
-            ["", "", "", ""],
+            "(CAG)*(CCG)*(CTG)*",
             [
                 # Haplotype 1
                 "CAG" * 13 + "CCG" * 8 + "CTG" * 18,
@@ -598,8 +510,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 13: CNBP",
         ),
         pytest.param(
-            ["GCN"],
-            ["", ""],
+            "(GCN)+",
             [
                 # Haplotype 1
                 *["GCC" * 10] * 24,
@@ -617,8 +528,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 14: PABPN1 - Outlier should not affect haplotype grouping (issue #18).",
         ),
         pytest.param(
-            ["CTG"],
-            ["", ""],
+            "(CTG)+",
             [
                 # Haplotype 1
                 *["CTG" * 19] * 12,
@@ -637,8 +547,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 15: ATXN3 - Flanking outlier should be separated from H2",
         ),
         pytest.param(
-            ["GAA"],
-            ["", ""],
+            "(GAA)+",
             [
                 # Haplotype 1
                 *["GAA" * 275] * 1,
@@ -668,8 +577,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 16: FGF14 - Same varying length, differing motif",
         ),
         pytest.param(
-            ["GGCCCC"],
-            ["", ""],
+            "(GGCCCC)+",
             [
                 # Haplotype 1
                 *["GGCCCC" * 12] * 16,
@@ -691,8 +599,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 17: C9ORF72 - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
         pytest.param(
-            ["CAG"],
-            ["", ""],
+            "(CAG)+",
             [
                 # Haplotype 1 - normal allele
                 *["CAG" * 5] * 14,
@@ -725,8 +632,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 18: DMPK - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
         pytest.param(
-            ["CGG"],
-            ["", ""],
+            "(CGG)+",
             [
                 # Haplotype 1 - normal allele
                 "CGG" * 30,
@@ -751,8 +657,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 19: FMR1 - High somatic mosaicism should not affect parameter estimation for shorter allele (H1).",
         ),
         pytest.param(
-            ["CGG"],
-            ["", ""],
+            "(CGG)+",
             [
                 # Single premutation allele - all reads should be hom, none outliers
                 "CGG" * 142,
@@ -779,8 +684,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 20: FMR1 - Single premutation allele should not be split into two haplotypes.",
         ),
         pytest.param(
-            ["CTG"],
-            ["", ""],
+            "(CTG)+",
             [
                 # Haplotype 1 - CTG with ATG interruptions at k-mer positions 13 and 15
                 *["CTG" * 13 + "ATG" + "CTG" + "ATG" + "CTG" * 15] * 14,
@@ -796,8 +700,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
             id="Case 21: CTG - same length, ATG interruptions - sequence split should be detected",
         ),
         pytest.param(
-            ["AAAAG"],
-            ["", ""],
+            "(AAAAG)+",
             [
                 # Haplotype 1: short allele, tight cluster (~417-490 repeats)
                 *["AAAAG" * 417] * 1,
@@ -829,8 +732,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         # estimated count must come out as 0 (not confused with "unobserved"), and the consensus
         # must contain zero copies of it, not a fabricated or flat-position-voted value.
         pytest.param(
-            ["CAG", "CCG", "CTG"],
-            ["", "", "", ""],
+            "(CAG)*(CCG)*(CTG)*",
             [],
             ["CAG" * 17] * 3,
             ["CTG" * 12] * 3,
@@ -844,8 +746,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         # a different position with the same copy count as its allele - so every copy is still CGG
         # in most reads, and neither the means nor the consensus may shift.
         pytest.param(
-            ["CGG"],
-            ["", ""],
+            "(CGG)+",
             [
                 *["CGG" * 30] * 3,
                 *["CGG" * start + "CG" * 4 + "CGG" * (26 - start) for start in (4, 8, 12, 16, 20)],
@@ -862,8 +763,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         # Two reads far shorter than both alleles must not become a haplotype, leaving the 10-read
         # 51-copy allele as outlier
         pytest.param(
-            ["TAGTCATAGTACCCCAA|TAGTCATAGTACCA", "GVA"],
-            ["", "", ""],
+            "(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*",
             [
                 # Haplotype 1
                 *["GAA" * 37] * 2,
@@ -889,8 +789,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         # As Case 24, but the two short reads also carry the 17-mer. From a sample that looks ~3-5%
         # contaminated: these reads match neither phased haplotype and are most likely another person's DNA
         pytest.param(
-            ["TAGTCATAGTACCCCAA|TAGTCATAGTACCA", "GVA"],
-            ["", "", ""],
+            "(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*",
             [
                 # Haplotype 1
                 *["GAA" * 37] * 2,
@@ -917,8 +816,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
         # size. Removing the minor allele leaves no more outliers than the scattered reads, so only the initial
         # split (median-based, not mean-based) gets this right.
         pytest.param(
-            ["GAA"],
-            ["", ""],
+            "(GAA)+",
             [
                 # Haplotype 1
                 *["GAA" * 20] * 10,
@@ -940,8 +838,7 @@ def make_read(name: str, sequence: str, locus: Locus) -> Read:
     ],
 )
 def test_haplotyping_integration(
-    satellite_seqs: list[str],
-    breaks: list[str],
+    structure: str,
     spanning_sequences: list[str],
     left_flanking_sequences: list[str],
     right_flanking_sequences: list[str],
@@ -950,9 +847,7 @@ def test_haplotyping_integration(
     expected_consensus: dict[str, str | set[str]] | None,
 ) -> None:
     """Test the haplotype grouping functionality for both simple and complex loci."""
-    # Anchors are random and can affect alignment, so fix the seed for determinism
-    random.seed(42)
-    locus = create_synthetic_locus(satellite_seqs, breaks)
+    locus = make_locus(structure)
 
     reads: list[Read] = (
         [make_read(f"spanning_{i}", locus.left_anchor + seq + locus.right_anchor, locus) for i, seq in enumerate(spanning_sequences)]
@@ -1041,7 +936,7 @@ def test_flanking_reads_partly_in_noisy_anchor_are_not_counted_as_copies(flankin
     The read's part of the anchor must be found despite the errors, or it is aligned as extra CCG
     copies; the reads then form a false ~30-copy haplotype that pushes the 8 spanning 13-copy reads out.
     """
-    locus = create_synthetic_locus(["CCG"])
+    locus = make_locus("(CCG)+")
     locus.left_anchor = locus.left_anchor[: -len(GIPC1_LEFT_FLANK)] + GIPC1_LEFT_FLANK
     locus.right_anchor = GIPC1_RIGHT_FLANK + locus.right_anchor[len(GIPC1_RIGHT_FLANK) :]
 
