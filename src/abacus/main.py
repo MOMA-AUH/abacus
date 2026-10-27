@@ -215,7 +215,7 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
         if final_consensus_calls:
             vcf_records = create_vcf_records(final_consensus_calls, ref, final_params, locus_is_het)
         else:
-            # Every read was lost: write a no-call, so the locus isn't silently missing from the VCF
+            # Filtering or consensus mapping left no reliable call; keep the locus in the VCF.
             removal_reasons = [reason for rc in all_removed_read_calls for reason in rc.outlier_reasons] + [read.error_flags for read in unmapped_reads]
             logger.warning("No call, %d reads; removal reasons: %s", len(reads), dict(Counter(removal_reasons)))
             vcf_records = create_no_call_records(locus, ref, len(reads))

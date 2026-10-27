@@ -87,10 +87,19 @@ def build_consensus_for_locus(grouped_read_calls: list[ReadCall], final_params: 
     spanning reads.
     """
     with timed("consensus"):
+        expected_haplotypes = {r.haplotype for r in grouped_read_calls}
         target_lengths = consensus_lengths(grouped_read_calls, final_params)
         raw_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls, target_lengths)
+        # A missing haplotype must not move flanking reads to the surviving one
+        # or produce a complete genotype from only a partial consensus.
+        if {call.haplotype for call in raw_consensus_calls} != expected_haplotypes:
+            logger.warning("Incomplete raw consensus; emitting NoCall for the whole locus.")
+            return []
         update_flanking_labels_based_on_consensus(read_calls=grouped_read_calls, consensus_read_calls=raw_consensus_calls)
         final_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls, target_lengths)
+        if {call.haplotype for call in final_consensus_calls} != expected_haplotypes:
+            logger.warning("Incomplete final consensus; emitting NoCall for the whole locus.")
+            return []
         for call in final_consensus_calls:
             if call.spanning_reads == 0:
                 logger.warning(
@@ -235,6 +244,8 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype, tar
         return []
 
     consensus_read_call = get_consensus_read_call(locus, consensus_sequence, AlignmentType.SPANNING, haplotype)
+    if consensus_read_call is None:
+        return []
     consensus_read_call.set_haplotype(haplotype)
 
     return [
@@ -246,7 +257,8 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype, tar
     ]
 
 
-def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: AlignmentType, haplotype: str) -> ReadCall:
+def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: AlignmentType, haplotype: str) -> ReadCall | None:
+    """Retry an unusable consensus alignment with denser seeds before returning no call."""
     if alignment_type == AlignmentType.SPANNING:
         full_sequence = locus.left_anchor + sequence + locus.right_anchor
     elif alignment_type == AlignmentType.LEFT_FLANKING:
@@ -275,9 +287,18 @@ def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: Alignme
         n_soft_clipped_right=0,
     )
 
-    # Get consensus read calls
-    consensus_read_calls, _ = get_read_calls([consensus_read], locus)
-    return consensus_read_calls[0]
+    for minimizer_window in (11, 3):
+        consensus_read_calls, filtered_reads = get_read_calls([consensus_read], locus, minimizer_window=minimizer_window)
+        for call in consensus_read_calls:
+            if call.alignment.type == alignment_type:
+                return call
+
+    reasons = [r.error_flags for r in filtered_reads] + [f"unexpected_{c.alignment.type}" for c in consensus_read_calls]
+    logger.warning(
+        "Locus %s, haplotype %s: consensus mapping failed after retry (%s).",
+        locus.id, haplotype, ";".join(reasons) or "no alignment returned",
+    )
+    return None
 
 
 def update_flanking_labels_based_on_consensus(

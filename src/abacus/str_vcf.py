@@ -34,7 +34,7 @@ def generate_vcf_header(reference: Path, sample_name: str) -> str:
         """\
         ##FILTER=<ID=PASS,Description="All filters passed">
         ##FILTER=<ID=NoReads,Description="No call: no reads at the locus">
-        ##FILTER=<ID=NoCall,Description="No call: all reads were filtered out">
+        ##FILTER=<ID=NoCall,Description="No reliable call could be produced">
         ##ALT=<ID=CNV:TR,Description="Tandem repeat">
         ##INFO=<ID=SVLEN,Number=A,Type=Integer,Description="Length of structural variant">
         ##INFO=<ID=RN,Number=A,Type=Integer,Description="Total number of repeat sequences in this allele">
