@@ -3,10 +3,9 @@ from __future__ import annotations
 import pytest
 
 from abacus.consensus import create_consensus_calls
-from abacus.graph import Read, get_read_calls
-from abacus.locus import Locus
+from abacus.graph import get_read_calls
 from abacus.utils import Haplotype
-from tests.helpers import make_locus, make_read
+from tests.helpers import make_locus, make_reads
 
 
 @pytest.mark.parametrize(
@@ -168,9 +167,9 @@ def test_create_consensus_calls_respects_flanking_read_coverage(
     locus = make_locus(structure)
 
     reads = (
-        [make_read(f"spanning_{i}", locus.left_anchor + seq + locus.right_anchor, locus) for i, seq in enumerate(spanning_sequences)]
-        + [make_read(f"left_flanking_{i}", locus.left_anchor + seq, locus) for i, seq in enumerate(left_flanking_sequences)]
-        + [make_read(f"right_flanking_{i}", seq + locus.right_anchor, locus) for i, seq in enumerate(right_flanking_sequences)]
+        make_reads(spanning_sequences, locus)
+        + make_reads(left_flanking_sequences, locus, "left")
+        + make_reads(right_flanking_sequences, locus, "right")
     )
     read_calls, _ = get_read_calls(reads, locus)
     for read_call in read_calls:
@@ -185,20 +184,6 @@ def test_create_consensus_calls_respects_flanking_read_coverage(
 
 # Each entry: (unit sequence repeated to build the read, alignment type, strand, read count).
 StrandedReadSpec = tuple[str, str, str, int]
-
-
-def make_stranded_reads(specs: list[StrandedReadSpec], locus: Locus) -> list[Read]:
-    """Build reads from (sequence, alignment type, strand, count) specs - see StrandedReadSpec."""
-    full_sequence_for_type = {
-        "spanning": lambda seq: locus.left_anchor + seq + locus.right_anchor,
-        "left": lambda seq: locus.left_anchor + seq,
-        "right": lambda seq: seq + locus.right_anchor,
-    }
-    reads = []
-    for spec_i, (seq, read_type, strand, count) in enumerate(specs):
-        full_sequence = full_sequence_for_type[read_type](seq)
-        reads += [make_read(f"{read_type}_{strand}_{spec_i}_{j}", full_sequence, locus, strand=strand) for j in range(count)]
-    return reads
 
 
 @pytest.mark.parametrize(
@@ -243,7 +228,11 @@ def test_create_consensus_calls_resist_strand_biased_errors(structure: str, read
     minority motif that is actually seen on both strands (a plus-strand-only ONT error should not
     be allowed to overrule a motif also confirmed by minus-strand reads)."""
     locus = make_locus(structure)
-    reads = make_stranded_reads(read_specs, locus)
+    reads = [
+        read
+        for i, (seq, read_type, strand, count) in enumerate(read_specs)
+        for read in make_reads([seq] * count, locus, read_type, strand, name_prefix=f"{read_type}_{strand}_{i}")
+    ]
 
     read_calls, _ = get_read_calls(reads, locus)
     for read_call in read_calls:
@@ -260,15 +249,6 @@ def test_create_consensus_calls_resist_strand_biased_errors(structure: str, read
 
 # Each entry: (sequence, alignment type). Strand is always "+".
 SegmentReadSpec = tuple[str, str]
-
-
-def make_segment_reads(specs: list[SegmentReadSpec], locus: Locus) -> list[Read]:
-    full_sequence_for_type = {
-        "spanning": lambda seq: locus.left_anchor + seq + locus.right_anchor,
-        "left": lambda seq: locus.left_anchor + seq,
-        "right": lambda seq: seq + locus.right_anchor,
-    }
-    return [make_read(f"{read_type}_{i}", full_sequence_for_type[read_type](seq), locus) for i, (seq, read_type) in enumerate(specs)]
 
 
 @pytest.mark.parametrize(
@@ -337,7 +317,11 @@ def test_create_consensus_calls_segments_by_satellite_and_break(
     every satellite's content while disagreeing on an earlier satellite's count, which shifts
     where a later satellite (or a break) sits in the flat kmer string."""
     locus = make_locus(structure)
-    reads = make_segment_reads(read_specs, locus)
+    reads = [
+        read
+        for i, (seq, read_type) in enumerate(read_specs)
+        for read in make_reads([seq], locus, read_type, name_prefix=f"{read_type}_{i}")
+    ]
 
     read_calls, _ = get_read_calls(reads, locus)
     for read_call in read_calls:
@@ -355,13 +339,7 @@ def test_create_consensus_calls_folds_flanking_only_into_one_consensus():
     unified consensus call (not two disjoint left/right calls), and it must be identifiable as having
     no spanning support."""
     locus = make_locus("(CCG)*AATAA(CCG)*")
-    reads = make_segment_reads(
-        [
-            ("CCG" * 3, "left"),
-            ("AATAA" + "CCG" * 2, "right"),
-        ],
-        locus,
-    )
+    reads = make_reads(["CCG" * 3], locus, "left") + make_reads(["AATAA" + "CCG" * 2], locus, "right")
 
     read_calls, _ = get_read_calls(reads, locus)
     for read_call in read_calls:
@@ -377,7 +355,7 @@ def test_create_consensus_calls_folds_flanking_only_into_one_consensus():
 def test_create_consensus_calls_zero_copy_allele():
     """Reads that skip the repeat entirely (0 copies) give an empty consensus, which is still a call."""
     locus = make_locus("(CAG)+")
-    reads = [make_read(f"read_{i}", locus.left_anchor + locus.right_anchor, locus) for i in range(5)]
+    reads = make_reads([""] * 5, locus)
 
     read_calls, _ = get_read_calls(reads, locus)
     for read_call in read_calls:

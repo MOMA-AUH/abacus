@@ -1,6 +1,8 @@
 """Shared builders for synthetic loci and reads."""
 
 import random
+from collections.abc import Iterable
+from typing import Literal
 
 from abacus.config import config
 from abacus.locus import Location, Locus, Satellite, parse_str_pattern
@@ -48,3 +50,18 @@ def make_read(
         n_soft_clipped_left=n_soft_clipped_left,
         n_soft_clipped_right=n_soft_clipped_right,
     )
+
+
+def make_reads(
+    sequences: Iterable[str], locus: Locus, read_type: Literal["spanning", "left", "right"] = "spanning",
+    strand: str = "+", *, name_prefix: str | None = None,
+) -> list[Read]:
+    """Add the appropriate anchors to repeat sequences and build named reads."""
+    anchors = {
+        "spanning": (locus.left_anchor, locus.right_anchor),
+        "left": (locus.left_anchor, ""),
+        "right": ("", locus.right_anchor),
+    }
+    left, right = anchors[read_type]
+    prefix = name_prefix if name_prefix is not None else read_type
+    return [make_read(f"{prefix}_{i}", left + seq + right, locus, strand) for i, seq in enumerate(sequences)]

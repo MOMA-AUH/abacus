@@ -1,5 +1,5 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -11,7 +11,7 @@ from abacus.locus import Location, Satellite, create_satellites, load_loci_from_
 
 
 def _make_fasta_mock(anchor_len=20):
-    """Return a mock pyfaidx.Fasta that yields empty anchor strings."""
+    """Return a mock pyfaidx.Fasta that yields N-filled anchor strings."""
     seq_mock = MagicMock()
     seq_mock.__getitem__ = MagicMock(return_value="N" * anchor_len)
     seq_mock.__str__ = MagicMock(return_value="N" * anchor_len)
@@ -24,10 +24,16 @@ def _make_fasta_mock(anchor_len=20):
     return fasta_mock
 
 
-def _write_json(tmp_path, entries):
-    p = tmp_path / "catalog.json"
-    p.write_text(json.dumps(entries))
-    return p
+@pytest.fixture
+def load_catalog(tmp_path, monkeypatch):
+    monkeypatch.setattr("abacus.locus.Fasta", MagicMock(return_value=_make_fasta_mock()))
+
+    def load(entries):
+        path = tmp_path / "catalog.json"
+        path.write_text(json.dumps(entries))
+        return load_loci_from_json(path, tmp_path / "ref.fa")
+
+    return load
 
 
 # ---------------------------------------------------------------------------
@@ -124,83 +130,54 @@ def test_create_satellites_single_location_broadcast():
 # ---------------------------------------------------------------------------
 
 
-@patch("abacus.locus.Fasta")
-def test_load_loci_string_variant_id_single_satellite(mock_fasta_cls, tmp_path):
-    """String VariantId must be treated as one ID for a single-satellite locus."""
-    mock_fasta_cls.return_value = _make_fasta_mock()
-    entry = {
-        "LocusId": "chr10_10000703_10000721",
-        "LocusStructure": "(GT)*",
-        "ReferenceRegion": "chr10:10000703-10000721",
-        "VariantId": "chr10_10000703_10000721",
-        "VariantType": "Repeat",
-    }
-    json_path = _write_json(tmp_path, [entry])
-    loci = load_loci_from_json(json_path, tmp_path / "ref.fa")
-    assert len(loci) == 1
-    assert len(loci[0].satellites) == 1
-    assert loci[0].satellites[0].id == "chr10_10000703_10000721"
+@pytest.mark.parametrize(
+    ("entry", "expected_ids"),
+    [
+        pytest.param(
+            {
+                "LocusId": "chr10_10000703_10000721",
+                "LocusStructure": "(GT)*",
+                "ReferenceRegion": "chr10:10000703-10000721",
+                "VariantId": "chr10_10000703_10000721",
+                "VariantType": "Repeat",
+            },
+            ["chr10_10000703_10000721"],
+            id="string_variant_id_single_satellite",
+        ),
+        pytest.param(
+            {"LocusId": "locus1", "LocusStructure": "(CAG)*", "ReferenceRegion": "chr1:100-130", "VariantId": ["my_id"]},
+            ["my_id"],
+            id="list_variant_id_single_satellite",
+        ),
+        pytest.param(
+            {
+                "LocusId": "locus_multi",
+                "LocusStructure": "(CAG)*GGGG(GCG)*",
+                "ReferenceRegion": ["chr1:100-130", "chr1:134-160"],
+                "VariantId": ["id_cag", "id_gcg"],
+            },
+            ["id_cag", "id_gcg"],
+            id="list_variant_id_multi_satellite",
+        ),
+        pytest.param(
+            {"LocusId": "locus_solo", "LocusStructure": "(GT)*", "ReferenceRegion": "chr1:100-120"},
+            ["locus_solo"],
+            id="no_variant_id_single_satellite",
+        ),
+        pytest.param(
+            {"LocusId": "locus_multi", "LocusStructure": "(CAG)*(GCG)*", "ReferenceRegion": ["chr1:100-130", "chr1:130-160"]},
+            ["locus_multi.1", "locus_multi.2"],
+            id="no_variant_id_multi_satellite",
+        ),
+    ],
+)
+def test_load_loci_variant_ids(load_catalog, entry, expected_ids):
+    (locus,) = load_catalog([entry])
+    assert [satellite.id for satellite in locus.satellites] == expected_ids
 
 
-@patch("abacus.locus.Fasta")
-def test_load_loci_list_variant_id_single_satellite(mock_fasta_cls, tmp_path):
-    """List VariantId with one element works for single-satellite locus."""
-    mock_fasta_cls.return_value = _make_fasta_mock()
-    entry = {
-        "LocusId": "locus1",
-        "LocusStructure": "(CAG)*",
-        "ReferenceRegion": "chr1:100-130",
-        "VariantId": ["my_id"],
-    }
-    loci = load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
-    assert loci[0].satellites[0].id == "my_id"
-
-
-@patch("abacus.locus.Fasta")
-def test_load_loci_list_variant_id_multi_satellite(mock_fasta_cls, tmp_path):
-    """List VariantId with two elements works for two-satellite locus."""
-    mock_fasta_cls.return_value = _make_fasta_mock()
-    entry = {
-        "LocusId": "locus_multi",
-        "LocusStructure": "(CAG)*GGGG(GCG)*",
-        "ReferenceRegion": ["chr1:100-130", "chr1:134-160"],
-        "VariantId": ["id_cag", "id_gcg"],
-    }
-    loci = load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
-    assert len(loci[0].satellites) == 2
-    assert [s.id for s in loci[0].satellites] == ["id_cag", "id_gcg"]
-
-
-@patch("abacus.locus.Fasta")
-def test_load_loci_no_variant_id_single_satellite(mock_fasta_cls, tmp_path):
-    """Without VariantId, single-satellite locus uses LocusId as satellite ID."""
-    mock_fasta_cls.return_value = _make_fasta_mock()
-    entry = {
-        "LocusId": "locus_solo",
-        "LocusStructure": "(GT)*",
-        "ReferenceRegion": "chr1:100-120",
-    }
-    loci = load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
-    assert loci[0].satellites[0].id == "locus_solo"
-
-
-@patch("abacus.locus.Fasta")
-def test_load_loci_no_variant_id_multi_satellite(mock_fasta_cls, tmp_path):
-    """Without VariantId, multi-satellite locus generates locus_id.1, locus_id.2, ..."""
-    mock_fasta_cls.return_value = _make_fasta_mock()
-    entry = {
-        "LocusId": "locus_multi",
-        "LocusStructure": "(CAG)*(GCG)*",
-        "ReferenceRegion": ["chr1:100-130", "chr1:130-160"],
-    }
-    loci = load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
-    assert [s.id for s in loci[0].satellites] == ["locus_multi.1", "locus_multi.2"]
-
-
-@patch("abacus.locus.Fasta")
-def test_load_loci_variant_id_count_mismatch_raises(mock_fasta_cls, tmp_path):
+def test_load_loci_variant_id_count_mismatch_raises(load_catalog):
     """VariantId list length mismatching satellite count must raise ValueError."""
-    mock_fasta_cls.return_value = _make_fasta_mock()
     entry = {
         "LocusId": "locus_multi",
         "LocusStructure": "(CAG)*(GCG)*",
@@ -208,7 +185,7 @@ def test_load_loci_variant_id_count_mismatch_raises(mock_fasta_cls, tmp_path):
         "VariantId": ["only_one_id"],
     }
     with pytest.raises(ValueError, match="Mismatch between number of satellites"):
-        load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
+        load_catalog([entry])
 
 
 # ---------------------------------------------------------------------------
@@ -216,22 +193,18 @@ def test_load_loci_variant_id_count_mismatch_raises(mock_fasta_cls, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@patch("abacus.locus.Fasta")
-def test_load_loci_missing_required_field_raises(mock_fasta_cls, tmp_path):
-    mock_fasta_cls.return_value = _make_fasta_mock()
+def test_load_loci_missing_required_field_raises(load_catalog):
     entry = {"LocusId": "x", "LocusStructure": "(GT)*"}  # missing ReferenceRegion
     with pytest.raises(ValueError, match="Incomplete locus data"):
-        load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
+        load_catalog([entry])
 
 
-@patch("abacus.locus.Fasta")
-def test_load_loci_multiple_entries(mock_fasta_cls, tmp_path):
-    mock_fasta_cls.return_value = _make_fasta_mock()
+def test_load_loci_multiple_entries(load_catalog):
     entries = [
         {"LocusId": "loc1", "LocusStructure": "(GT)*", "ReferenceRegion": "chr1:100-120"},
         {"LocusId": "loc2", "LocusStructure": "(CAG)+", "ReferenceRegion": "chr2:200-230"},
     ]
-    loci = load_loci_from_json(_write_json(tmp_path, entries), tmp_path / "ref.fa")
+    loci = load_catalog(entries)
     assert len(loci) == 2
     assert loci[0].id == "loc1"
     assert loci[1].id == "loc2"
@@ -242,42 +215,40 @@ def test_load_loci_multiple_entries(mock_fasta_cls, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@patch("abacus.locus.Fasta")
-def test_load_loci_without_thresholds(mock_fasta_cls, tmp_path):
-    mock_fasta_cls.return_value = _make_fasta_mock()
-    entry = {"LocusId": "loc1", "LocusStructure": "(CAG)*", "ReferenceRegion": "chr1:100-130"}
-    (locus,) = load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
-    assert (locus.satellites[0].benign_max, locus.satellites[0].pathogenic_min) == (None, None)
-
-
-@patch("abacus.locus.Fasta")
-def test_load_loci_scalar_thresholds_single_satellite(mock_fasta_cls, tmp_path):
-    mock_fasta_cls.return_value = _make_fasta_mock()
-    entry = {"LocusId": "loc1", "LocusStructure": "(CAG)*", "ReferenceRegion": "chr1:100-130", "BenignMax": 26, "PathogenicMin": 36}
-    (locus,) = load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
-    assert (locus.satellites[0].benign_max, locus.satellites[0].pathogenic_min) == (26, 36)
-
-
-@patch("abacus.locus.Fasta")
-def test_load_loci_list_thresholds_multi_satellite(mock_fasta_cls, tmp_path):
-    mock_fasta_cls.return_value = _make_fasta_mock()
-    entry = {
-        "LocusId": "HTT",
-        "LocusStructure": "(CAG)*CAACAG(CCG)*",
-        "ReferenceRegion": ["chr4:3074876-3074933", "chr4:3074939-3074966"],
-        "BenignMax": [26, None],
-        "PathogenicMin": [36, None],
-    }
-    (locus,) = load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
-    assert [(s.benign_max, s.pathogenic_min) for s in locus.satellites] == [(26, 36), (None, None)]
-
-
-@patch("abacus.locus.Fasta")
-def test_load_loci_only_one_threshold_key(mock_fasta_cls, tmp_path):
-    mock_fasta_cls.return_value = _make_fasta_mock()
-    entry = {"LocusId": "loc1", "LocusStructure": "(CAG)*", "ReferenceRegion": "chr1:100-130", "PathogenicMin": 36}
-    (locus,) = load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
-    assert (locus.satellites[0].benign_max, locus.satellites[0].pathogenic_min) == (None, 36)
+@pytest.mark.parametrize(
+    ("entry", "expected_thresholds"),
+    [
+        pytest.param(
+            {"LocusId": "loc1", "LocusStructure": "(CAG)*", "ReferenceRegion": "chr1:100-130"},
+            [(None, None)],
+            id="without_thresholds",
+        ),
+        pytest.param(
+            {"LocusId": "loc1", "LocusStructure": "(CAG)*", "ReferenceRegion": "chr1:100-130", "BenignMax": 26, "PathogenicMin": 36},
+            [(26, 36)],
+            id="scalar_thresholds_single_satellite",
+        ),
+        pytest.param(
+            {
+                "LocusId": "HTT",
+                "LocusStructure": "(CAG)*CAACAG(CCG)*",
+                "ReferenceRegion": ["chr4:3074876-3074933", "chr4:3074939-3074966"],
+                "BenignMax": [26, None],
+                "PathogenicMin": [36, None],
+            },
+            [(26, 36), (None, None)],
+            id="list_thresholds_multi_satellite",
+        ),
+        pytest.param(
+            {"LocusId": "loc1", "LocusStructure": "(CAG)*", "ReferenceRegion": "chr1:100-130", "PathogenicMin": 36},
+            [(None, 36)],
+            id="only_one_threshold_key",
+        ),
+    ],
+)
+def test_load_loci_thresholds(load_catalog, entry, expected_thresholds):
+    (locus,) = load_catalog([entry])
+    assert [(satellite.benign_max, satellite.pathogenic_min) for satellite in locus.satellites] == expected_thresholds
 
 
 @pytest.mark.parametrize(
@@ -292,12 +263,10 @@ def test_load_loci_only_one_threshold_key(mock_fasta_cls, tmp_path):
         ({"BenignMax": [36, None], "PathogenicMin": [36, None]}, "BenignMax must be smaller than PathogenicMin"),
     ],
 )
-@patch("abacus.locus.Fasta")
-def test_load_loci_invalid_thresholds_raise(mock_fasta_cls, tmp_path, thresholds, match):
-    mock_fasta_cls.return_value = _make_fasta_mock()
+def test_load_loci_invalid_thresholds_raise(load_catalog, thresholds, match):
     entry = {"LocusId": "loc1", "LocusStructure": "(CAG)*(CCG)*", "ReferenceRegion": ["chr1:100-130", "chr1:130-160"], **thresholds}
     with pytest.raises(ValueError, match=match):
-        load_loci_from_json(_write_json(tmp_path, [entry]), tmp_path / "ref.fa")
+        load_catalog([entry])
 
 
 # ---------------------------------------------------------------------------

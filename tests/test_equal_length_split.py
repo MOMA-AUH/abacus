@@ -6,11 +6,11 @@ from abacus.graph import get_read_calls
 from abacus.haplotyping import _estimate_final_parameters
 from abacus.locus import Locus
 from abacus.utils import Haplotype
-from tests.helpers import make_locus, make_read
+from tests.helpers import make_locus, make_reads
 
 
 def _spanning_read_calls(kmer_strings: list[str], locus: Locus):
-    reads = [make_read(f"read_{i}", locus.left_anchor + seq + locus.right_anchor, locus) for i, seq in enumerate(kmer_strings)]
+    reads = make_reads(kmer_strings, locus)
     read_calls, _ = get_read_calls(reads, locus)
     for rc in read_calls:
         rc.set_haplotype(Haplotype.HOM)
@@ -18,34 +18,29 @@ def _spanning_read_calls(kmer_strings: list[str], locus: Locus):
 
 
 @pytest.mark.parametrize(
-    ("sequences", "expected_significant", "description"),
+    ("sequences", "expected_significant"),
     [
         pytest.param(
             ["CAG" * 10] * 12,
             True,
-            "identical sequences — no differences, no split possible",
             id="backup_test-identical_sequences_no_split",
         ),
         pytest.param(
             ["CAG" * 10] * 7 + ["CAG" * 9 + "CGG"] * 5,
             False,
-            "different sequences — split is consistent with 50/50",
             id="backup_test-different_sequences_split",
         ),
     ],
 )
-def test_run_equal_length_backup_test_significance(sequences: list[str], expected_significant: bool, description: str):
+def test_run_equal_length_backup_test_significance(sequences: list[str], expected_significant: bool):
     """Backup test should be significant (no split) when there are no sequence differences."""
     locus = make_locus("(CAG)+")
     read_calls = _spanning_read_calls(sequences, locus)
 
     _, _, summary = run_equal_length_backup_test(read_calls, alpha=0.05)
 
-    assert bool(summary["backup_test_run"].iloc[0]) is True, f"Expected test to run ({description})"
-    assert bool(summary["backup_test_significant"].iloc[0]) == expected_significant, (
-        f"Expected backup_test_significant={expected_significant} ({description}), "
-        f"got {summary['backup_test_significant'].iloc[0]}"
-    )
+    assert bool(summary["backup_test_run"].iloc[0]) is True
+    assert bool(summary["backup_test_significant"].iloc[0]) == expected_significant
 
 
 def test_run_equal_length_backup_test_skips_below_min_haplotyping_depth():
@@ -57,9 +52,7 @@ def test_run_equal_length_backup_test_skips_below_min_haplotyping_depth():
 
     _, _, summary = run_equal_length_backup_test(read_calls, alpha=0.05)
 
-    assert not bool(summary["backup_test_run"].iloc[0]), (
-        "Backup test should not run with 8 reads when min_haplotyping_depth=10"
-    )
+    assert not bool(summary["backup_test_run"].iloc[0])
 
 
 def test_run_equal_length_backup_test_singleton_cancel_returns_all_reads_as_hom():

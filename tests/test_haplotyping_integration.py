@@ -6,13 +6,10 @@ from typing import Literal
 import pytest
 
 from abacus.consensus import build_consensus_for_locus
-from abacus.graph import (
-    Read,
-    get_read_calls,
-)
+from abacus.graph import get_read_calls
 from abacus.haplotyping import run_haplotyping
 from abacus.utils import Haplotype
-from tests.helpers import make_locus, make_read
+from tests.helpers import make_locus, make_read, make_reads
 
 
 @pytest.mark.parametrize(
@@ -843,48 +840,33 @@ def test_haplotyping_integration(
     left_flanking_sequences: list[str],
     right_flanking_sequences: list[str],
     expected_group_sizes: dict[Literal["h1", "h2", "hom", "outlier"], int],
-    expected_means: dict[str, list[float]] | None,
+    expected_means: dict[str, list[float] | None] | None,
     expected_consensus: dict[str, str | set[str]] | None,
 ) -> None:
     """Test the haplotype grouping functionality for both simple and complex loci."""
     locus = make_locus(structure)
 
-    reads: list[Read] = (
-        [make_read(f"spanning_{i}", locus.left_anchor + seq + locus.right_anchor, locus) for i, seq in enumerate(spanning_sequences)]
-        + [make_read(f"left_flanking_{i}", locus.left_anchor + seq, locus) for i, seq in enumerate(left_flanking_sequences)]
-        + [make_read(f"right_flanking_{i}", seq + locus.right_anchor, locus) for i, seq in enumerate(right_flanking_sequences)]
+    reads = (
+        make_reads(spanning_sequences, locus)
+        + make_reads(left_flanking_sequences, locus, "left")
+        + make_reads(right_flanking_sequences, locus, "right")
     )
 
     read_calls, _ = get_read_calls(reads, locus)
     grouped_reads, outlier_reads, _, _, final_params, _ = run_haplotyping(read_calls, ploidy=2)
 
-    group_counts: dict[str, int] = {}
-    for read in grouped_reads + outlier_reads:
-        group_counts[read.haplotype] = group_counts.get(read.haplotype, 0) + 1
-
-    assert group_counts == expected_group_sizes, f"Test case failed: Expected {expected_group_sizes}, got {group_counts}"
+    group_counts = Counter(read.haplotype for read in grouped_reads + outlier_reads)
+    assert group_counts == expected_group_sizes
 
     for i, seq in enumerate(spanning_sequences):
         read_call = next((rc for rc in read_calls if rc.alignment.name == f"spanning_{i}"), None)
         assert read_call is not None, f"Read call for spanning_{i} not found"
         assert seq == read_call.alignment.str_sequence, f"Expected sequence in read {read_call.alignment.name} was {seq}, got {read_call.obs_kmer_string}"
 
-    # Check value of means if expected_means is provided
     if expected_means is not None:
-        if "h1" in expected_means and expected_means["h1"] is not None:
-            assert final_params[Haplotype.H1].mean.tolist() == expected_means["h1"], (
-                f"Expected h1 mean {expected_means['h1']}, got {final_params[Haplotype.H1].mean[0]}"
-            )
-
-        if "h2" in expected_means and expected_means["h2"] is not None:
-            assert final_params[Haplotype.H2].mean.tolist() == expected_means["h2"], (
-                f"Expected h2 mean {expected_means['h2']}, got {final_params[Haplotype.H2].mean[0]}"
-            )
-
-        if "hom" in expected_means and expected_means["hom"] is not None:
-            assert final_params[Haplotype.HOM].mean.tolist() == expected_means["hom"], (
-                f"Expected homozygous mean {expected_means['hom']}, got {final_params[Haplotype.HOM].mean[0]}"
-            )
+        for haplotype, expected_mean in expected_means.items():
+            if expected_mean is not None:
+                assert final_params[Haplotype(haplotype)].mean.tolist() == expected_mean
 
     # Build the real, final per-haplotype consensus the same way main.py does, and check it against
     # every haplotype expected_consensus names - always run so a case with no expectations still
@@ -950,7 +932,7 @@ def test_flanking_reads_partly_in_noisy_anchor_are_not_counted_as_copies(flankin
     else:
         flanking_sequences = [part + h2_repeat + locus.right_anchor for part in noisy_anchor_parts]
 
-    reads = [make_read(f"spanning_{i}", locus.left_anchor + seq + locus.right_anchor, locus) for i, seq in enumerate(spanning_sequences)] + [
+    reads = make_reads(spanning_sequences, locus) + [
         make_read(f"flanking_{i}", seq, locus) for i, seq in enumerate(flanking_sequences)
     ]
     read_calls, _ = get_read_calls(reads, locus)

@@ -3,7 +3,6 @@ import array
 import pysam
 import pytest
 
-from abacus.config import config
 from abacus.graph import (
     Locus,
     Read,
@@ -642,73 +641,6 @@ def test_methylation_from_alignment(
     read = Read.from_alignment(alignment, locus=dummy_locus)
 
     assert read.mod_5mc_probs == expected_methylation
-
-
-# TODO: Fix these test cases
-# @pytest.mark.parametrize(
-#     "id, structure, chr, start, end, bam_path_str",
-#     [
-#         pytest.param(
-#             "test",
-#             "(CGG)*",
-#             "chrX",
-#             147912050,
-#             147912110,
-#             "/faststorage/project/MomaDiagnosticsHg38/NO_BACKUP/nanopore/nanopore-methylation-pipeline/N575/N575_Repeat_Expansion_Validation_DEVEL/output/106241996890_N575_008/106241996890_N575_008_alignment_phased.bam",
-#             id="Case 1: Low QUAL read e.g. 75276889-3579-4198-b254-6f2157573234",
-#         ),
-#         pytest.param(
-#             "test",
-#             "(CAGG)*(CAGA)*(CA)*",
-#             "chr3",
-#             129172576,
-#             129172732,
-#             "/faststorage/project/MomaDiagnosticsHg38/NO_BACKUP/nanopore/nanopore-methylation-pipeline/N575/N575_Repeat_Expansion_Validation_DEVEL/output/106241996890_N575_008/106241996890_N575_008_alignment_phased.bam",
-#             id="Case 2: Low QUAL read e.g. 7e320817-fa55-49ee-a946-0cd0b6629cc4	",
-#         ),
-#         pytest.param(
-#             "EIF4A3",
-#             "(CCTCGCTGCGCCGCTGCCGA)*(CCTCGCTGTGCCGCTGCCGA)*",
-#             "chr17",
-#             80147022,
-#             80147139,
-#             "/faststorage/project/MomaDiagnosticsHg38/NO_BACKUP/nanopore/nanopore-methylation-pipeline/N575/N575_Repeat_Expansion_Validation_DEVEL/output/106284154866_N575_002/106284154866_N575_002_alignment_phased.bam",
-#             id="Case 3: Stop at EIF4A3",
-#         ),
-#     ],
-# )
-# def test_cases(id: str, structure: str, chr: str, start: int, end: int, bam_path_str: str):
-#     ref = Fasta("/faststorage/project/MomaReference/BACKUP/hg38/reference_genome/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna")
-
-#     satellites, breaks = parse_str_pattern(structure)
-
-#     left_anchor = str(ref[chr][(start - config.ANCHOR_LEN) : start])
-#     right_anchor = str(ref[chr][end : (end + config.ANCHOR_LEN)])
-
-#     locus = Locus(
-#         id=id,
-#         chrom=chr,
-#         start=start,
-#         end=end,
-#         left_anchor=left_anchor,
-#         right_anchor=right_anchor,
-#         structure=structure,
-#         satellites=satellites,
-#         breaks=breaks,
-#     )
-
-#     read_calls, _ = get_reads_in_locus(bam=Path(bam_path_str), locus=locus)
-
-#     haplotyping_res_df, all_read_calls, test_summary_res_df = filter_read_calls(read_calls=read_calls)
-
-#     pd.DataFrame([r.to_dict() for r in all_read_calls])
-
-#     file = "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test_graph.csv"
-
-#     pd.DataFrame([r.to_dict() for r in all_read_calls]).to_csv(file, index=False)
-
-#     assert True
-
 
 
 def observed_kmers(motif: str, repeat: str, read_type: str = "spanning") -> list[str]:
