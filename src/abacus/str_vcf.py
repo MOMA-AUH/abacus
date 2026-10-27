@@ -44,6 +44,7 @@ def generate_vcf_header(reference: Path, sample_name: str) -> str:
         ##INFO=<ID=LPSRUC,Number=A,Type=Integer,Description="Repeat unit count of the longest pure segment in the allele">
         ##INFO=<ID=TRUC,Number=A,Type=Float,Description="Estimated total number of repeat units in the allele">
         ##INFO=<ID=CITRUC,Number=.,Type=Float,Description="Confidence interval around TRUC">
+        ##INFO=<ID=REFDIV,Number=A,Type=Float,Description="Divergence of the allele's consensus from the catalog locus structure (0-1); a high value means the repeat counts don't describe the allele well">
         ##INFO=<ID=CONS,Number=A,Type=String,Description="Consensus sequence of the allele">
         ##INFO=<ID=LOCUSID,Number=1,Type=String,Description="Locus identifier">
         ##INFO=<ID=REPID,Number=1,Type=String,Description="Repeat identifier">
@@ -144,6 +145,7 @@ def create_vcf_records(
         info["LPSRUC"] = _join(count for _, count in lps_per_allele)
         info["TRUC"] = _join(round(est, 3) for est in truc)
         info["CITRUC"] = _join(round(bound, 3) for bound in citruc)
+        info["REFDIV"] = _join(round(call.alignment.str_ref_divergence, 3) if call else "." for call in alt_calls)
         if config.add_consensus_to_vcf:
             info["CONS"] = _join("".join(kmers) if kmers else "." for kmers in kmers_per_allele)
         info["LOCUSID"] = locus.id

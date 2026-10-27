@@ -23,7 +23,7 @@ class Config:
     tol_q10_str_quality: int = 25
     max_error_rate: float = 0.01
     tol_error_rate: float = 0.005
-    max_ref_divergence: float = 0.34
+    tol_ref_divergence: float = 0.20
 
     # Length outlier detection parameters
     min_n_length_outlier_detection: int = 5

@@ -282,3 +282,19 @@ def test_no_call_record(ref_path: Path, depth: int, filter_id: str):
     assert info_values(record) == {"LOCUSID": "test", "REPID": locus.satellites[0].id, "BENIGNMAX": "26"}
     assert format_values(record) == {"GT": "./.", "DP": str(depth)}
     assert f"##FILTER=<ID={filter_id}," in generate_vcf_header(ref_path, "sample")
+
+
+def test_refdiv_reports_consensus_divergence_per_allele(ref_path: Path):
+    locus = create_synthetic_locus(["CAG"])
+    final_params = {Haplotype.H1: params(10), Haplotype.H2: params(10)}
+    calls = [
+        make_consensus_call(locus, "CAG" * 10, Haplotype.H1),
+        make_consensus_call(locus, "CAG" * 3 + "TTTTTTTTTTTT" + "CAG" * 3, Haplotype.H2),
+    ]
+
+    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+
+    pure, divergent = (float(x) for x in info_values(record)["REFDIV"].split(","))
+    assert pure == 0
+    assert divergent > 0.2
+    assert "##INFO=<ID=REFDIV,Number=A,Type=Float," in generate_vcf_header(ref_path, "sample")

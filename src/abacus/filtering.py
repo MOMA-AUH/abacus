@@ -39,10 +39,6 @@ def qc_check(rc: ReadCall) -> None:
     if rc.str_error_rate > config.max_error_rate:
         rc.add_qc_filter_reason("filtered_high_str_error_rate")
 
-    # Check STR reference divergence
-    if rc.alignment.str_ref_divergence > config.max_ref_divergence:
-        rc.add_qc_filter_reason("filtered_high_str_ref_divergence")
-
 
 def filter_outlier_qual_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:
     if not read_calls:
@@ -113,6 +109,15 @@ def mark_qc_outliers(read_calls: list[ReadCall]) -> None:
         # If the error rate is above the outlier threshold, and above the tolerance, mark it as qc_filtered
         if error_rate > error_rate_high and error_rate > config.tol_error_rate:
             rc.add_qc_filter_reason("outlier_error_rate")
+
+    # Reference divergence; only relative to the haplotype's own reads, so an allele that differs from the catalog is kept
+    ref_divergences = [rc.alignment.str_ref_divergence for rc in read_calls]
+    _, ref_divergence_high = compute_robust_thresholds(ref_divergences)
+    for rc in read_calls:
+        ref_divergence = rc.alignment.str_ref_divergence
+        # If the reference divergence is above the outlier threshold, and above the tolerance, mark it as qc_filtered
+        if ref_divergence > ref_divergence_high and ref_divergence > config.tol_ref_divergence:
+            rc.add_qc_filter_reason("outlier_ref_divergence")
 
 
 def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]:

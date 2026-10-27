@@ -135,7 +135,7 @@ Fine-tuning knobs for the analysis:
 - `--tol-q10-str-quality`: tolerance for Q10 base quality in the STR region. Default: `30`.
 - `--max-error-rate`: max allowed error rate in the STR region; higher is filtered out. Default: `0.01`.
 - `--tol-error-rate`: tolerance for error rate in the STR region. Default: `0.005`.
-- `--max-ref-divergence`: max allowed reference divergence in the STR region. Default: `0.34`.
+- `--tol-ref-divergence`: tolerance for reference divergence in the STR region; reads are only removed as divergence outliers above it. Default: `0.20`.
 - `--length-outlier-tolerance`: fraction of the haplotype median STR base-pair length; reads within `median × (1 ± tolerance)` are always kept, even outside the Tukey-fence bounds. Default: `0.10` (10%).
 - `--min-n-qc-filtering`: minimum read calls required to run statistical QC filtering. Default: `10`.
 - `--min-n-length-outlier-detection`: minimum spanning reads per haplotype group to run length outlier detection. Default: `5`.
@@ -161,7 +161,7 @@ The VCF follows [VCFv4.5](https://samtools.github.io/hts-specs/VCFv4.5.pdf) and 
 Example: the HTT CAG satellite, where H1 is `(CAG)9CAA(CAG)8` and H2 is `(CAG)42`:
 
 ```
-chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;RUS=CAG,CAA,CAG,CAG;RUC=9,1,8,42;LPSRUS=CAG,CAG;LPSRUC=9,42;TRUC=18.1,41.7;CITRUC=-0.9,1.1,-2.4,3;LOCUSID=HTT;REPID=HTT_CAG  GT:PS:DP:AD:ADSP:ADFL  1|2:3074876:30:0,18,12:0,15,9:0,3,3
+chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;RUS=CAG,CAA,CAG,CAG;RUC=9,1,8,42;LPSRUS=CAG,CAG;LPSRUC=9,42;TRUC=18.1,41.7;CITRUC=-0.9,1.1,-2.4,3;REFDIV=0.023,0.006;LOCUSID=HTT;REPID=HTT_CAG  GT:PS:DP:AD:ADSP:ADFL  1|2:3074876:30:0,18,12:0,15,9:0,3,3
 ```
 
 | Column / field | Description |
@@ -174,6 +174,7 @@ chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;R
 | `INFO/LPSRUS`, `INFO/LPSRUC` | Repeat unit sequence and count of the longest pure segment of each allele (see [Longest pure segment](#longest-pure-segment)). `.` for an allele without a consensus. |
 | `INFO/TRUC` | Estimated total number of repeat units in each allele. |
 | `INFO/CITRUC` | Confidence interval around `TRUC`, as lower and upper offsets from it for each allele. |
+| `INFO/REFDIV` | Divergence (0–1) of each allele's consensus from the catalog locus structure. Informational: a high value means the allele doesn't look like the catalog motif (e.g. a different or interrupted repeat), so its repeat counts should be read with care. |
 | `INFO/CONS` | Consensus sequence of each allele. Only with `--add-consensus-to-vcf`. |
 | `INFO/LOCUSID`, `INFO/REPID` | The catalog `LocusId` and `VariantId`. |
 | `INFO/STRSTATUS` | `normal`, `intermediate` or `pathogenic` for each allele, from `TRUC` and the catalog thresholds (see [Thresholds](#thresholds)). Only for satellites with thresholds. |

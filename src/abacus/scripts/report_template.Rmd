@@ -22,7 +22,7 @@ params:
   min_mean_str_quality: ~
   min_q10_str_quality: ~
   max_error_rate: ~
-  max_ref_divergence: ~
+  tol_ref_divergence: ~
   logo_path: ~
 ---
 
@@ -1080,7 +1080,7 @@ for (i in seq_len(nrow(regions))) {
       params$min_mean_str_quality,
       params$min_q10_str_quality,
       params$max_error_rate,
-      params$max_ref_divergence,
+      params$tol_ref_divergence,
       NA
     )
   )

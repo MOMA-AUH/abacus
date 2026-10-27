@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `BenignMax`/`PathogenicMin` catalog thresholds: count estimates are highlighted in the report summary table and classified in the new VCF fields `STRSTATUS`, `BENIGNMAX` and `PATHOGENICMIN` ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 - `LPSRUS`/`LPSRUC` INFO fields with the longest pure segment (LPS) of each allele, after [Danzi et al. (2025)](https://doi.org/10.1101/2025.01.06.631535)
 - Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
+- `REFDIV` INFO field: each allele's divergence from the catalog locus structure, so alleles the catalog motif doesn't describe are visible
 ### Changed
 - **Breaking:** VCF output now follows VCFv4.5 and uses the `<CNV:TR>` tandem repeat representation (see the README for all fields):
   - `POS`/`REF` is the padding base before the repeat; `POS` was previously reported with a reference base it did not match
@@ -28,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Faster consensus search when some reads are much noisier than the rest: reads far from the consensus no longer propose changes
 - Faster and more accurate consensus search for long alleles
 - A catalog entry whose `LocusStructure` has no repeat unit now raises an error instead of being skipped with a log message
+- **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
 - VCF genotype and per-allele field ordering

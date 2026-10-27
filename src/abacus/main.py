@@ -444,14 +444,14 @@ def abacus(
             rich_help_panel=QC_OPTIONS,
         ),
     ] = config.tol_error_rate,
-    max_ref_divergence: Annotated[
+    tol_ref_divergence: Annotated[
         float,
         typer.Option(
-            "--max-ref-divergence",
-            help="Maximum allowed reference divergence in STR region",
+            "--tol-ref-divergence",
+            help="Tolerance for reference divergence in STR region",
             rich_help_panel=QC_OPTIONS,
         ),
-    ] = config.max_ref_divergence,
+    ] = config.tol_ref_divergence,
     min_n_qc_filtering: Annotated[
         int,
         typer.Option(
@@ -613,7 +613,7 @@ def abacus(
     config.tol_q10_str_quality = tol_q10_str_quality
     config.max_error_rate = max_error_rate
     config.tol_error_rate = tol_error_rate
-    config.max_ref_divergence = max_ref_divergence
+    config.tol_ref_divergence = tol_ref_divergence
 
     config.min_n_qc_filtering = min_n_qc_filtering
     config.min_n_length_outlier_detection = min_n_length_outlier_detection
@@ -761,7 +761,7 @@ def abacus(
                                     min_mean_str_quality = {config.min_mean_str_quality}, \
                                     min_q10_str_quality = {config.min_q10_str_quality}, \
                                     max_error_rate = {config.max_error_rate}, \
-                                    max_ref_divergence = {config.max_ref_divergence}, \
+                                    tol_ref_divergence = {config.tol_ref_divergence}, \
                                     logo_path = '{logo_path}' \
                                 ) \
                             ) \
