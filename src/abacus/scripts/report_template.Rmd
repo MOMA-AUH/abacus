@@ -154,10 +154,17 @@ wrangle_reads_data <- function(reads_df) {
   reads_df %>%
     # Get number of kmers
     mutate(
-      # Fix missing
-      obs_kmer_string = if_else(is.na(obs_kmer_string), "", obs_kmer_string),
-      # Count kmers
-      n_kmer = str_count(obs_kmer_string, fixed("|")) + 1,
+      # All-empty CSV columns may be logical; normalize to text.
+      across(
+        c(obs_kmer_string, ref_kmer_string, mod_5mc_kmer_string, qual_kmer_string),
+        ~ replace_na(as.character(.x), "")
+      ),
+      # Empty sequences have zero kmers.
+      n_kmer = if_else(
+        obs_kmer_string == "",
+        0L,
+        str_count(obs_kmer_string, fixed("|")) + 1L
+      ),
       # Convert alignment_type to factor
       alignment_type_fct = factor(alignment_type, levels = ALIGNMENT_TYPES),
       alignment_type_txt = if_else(
@@ -341,6 +348,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
   n_reads <- nrow(hz_lines_df)
   n_kmers <- max(kmer_plot_df$cor_kmer_idx)
 
+  # Zero-copy rows contribute read lines and facets, but no repeat beads.
   # Add points for each kmer
   if (color_by == "kmer" || color_by == "ref_kmer") {
     # If ref_kmer is selected, use ref_kmer instead of kmer
@@ -371,7 +379,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
             alpha = qual
           ),
           size = 5,
-          data = kmer_plot_df
+          data = filter(kmer_plot_df, n_kmer > 0)
         ) +
         # Add color palette
         scale_color_manual(
@@ -387,7 +395,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
             fill = kmer,
             alpha = qual
           ),
-          data = kmer_plot_df
+          data = filter(kmer_plot_df, n_kmer > 0)
         ) +
         # Add color palette
         scale_fill_manual(
@@ -415,7 +423,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
         geom_point(
           aes(x = cor_kmer_idx, y = read_id, col = mod_prob),
           size = 5,
-          data = kmer_plot_df
+          data = filter(kmer_plot_df, n_kmer > 0)
         ) +
         # Add color gradient with low (0) = "blue", high (100) = "red", NA = "grey" (similar to IGV)
         scale_color_gradient(
@@ -429,7 +437,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
       plot <- plot +
         geom_tile(
           aes(x = cor_kmer_idx, y = read_id, fill = mod_prob),
-          data = kmer_plot_df
+          data = filter(kmer_plot_df, n_kmer > 0)
         ) +
         # Add color gradient with low (0) = "blue", high (100) = "red", NA = "grey" (similar to IGV)
         scale_fill_gradient(
@@ -896,7 +904,7 @@ for (i in seq_len(nrow(regions))) {
 
   # Also used unranked as a membership check for the QC-filtered palette below
   ref_kmers <- kmer_ranking_df %>%
-    filter(!is.na(ref_kmer)) %>%
+    filter(!is.na(ref_kmer), ref_kmer != "") %>%
     pull(ref_kmer) %>%
     unique()
   ref_kmers_ranked <- order_by_rank(ref_kmers, kmer_occurrence_rank)
@@ -1261,7 +1269,11 @@ for (i in seq_len(nrow(regions))) {
   if (nrow(consensus_region_df) > 0) {
     consensus_region_df %>%
       mutate(
-        consensus_strings = add_colors_to_consensus_strings(consensus_strings, kmer_color_palette)
+        consensus_strings = if_else(
+          n_kmer == 0,
+          "0 copies",
+          add_colors_to_consensus_strings(consensus_strings, kmer_color_palette)
+        )
       ) %>%
       select(
         "Haplotype" = haplotype,

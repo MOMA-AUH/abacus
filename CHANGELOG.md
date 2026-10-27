@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
+- Report handling and display of 0-copy alleles
 - VCF genotype and per-allele field ordering
 - Kmer chopping for mixed-length alternatives, e.g. `(GAA|GA)*`
 - Reading-frame slips: slipped satellite copies are split into short-copy stretches, not packed (e.g. `CG CG` in a `(CGG)*` repeat was counted as 1 `CGCG`, but is now counted as 2 `CG`)
