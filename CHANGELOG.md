@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed the `##reference` header line
 - Consensus built by hill-climbing search instead of spoa (new dependency: `rapidfuzz`); consensus length now matches the estimated repeat count ([#25](https://github.com/MOMA-AUH/abacus/issues/25))
 - Faster parameter estimation and report
-- Faster consensus search when some reads are much noisier than the rest: reads far from the seed no longer propose changes
+- Faster consensus search when some reads are much noisier than the rest: reads far from the consensus no longer propose changes
+- Faster and more accurate consensus search for long alleles
 - A catalog entry whose `LocusStructure` has no repeat unit now raises an error instead of being skipped with a log message
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed

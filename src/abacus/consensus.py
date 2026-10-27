@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from Levenshtein import distance as levenshtein_distance
 
-from abacus.consensus_search import KmerRead, hill_climb
+from abacus.consensus_search import KmerRead, find_consensus
 from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
 from abacus.locus import Locus
 from abacus.logging import logger
@@ -176,7 +176,7 @@ def segment_read_kmers(read_call: ReadCall, breaks: list[str]) -> list[tuple[Slo
 
 
 def segment_reads_for_slot(read_calls: list[ReadCall], segmented: list[list[tuple[Slot, list[str]]]], slot: Slot) -> list[KmerRead]:
-    """Reads covering one slot, with the "spanning"/"left"/"right" type hill_climb needs to weigh
+    """Reads covering one slot, with the "spanning"/"left"/"right" type find_consensus needs to weigh
     an edge as a true anchor or as merely where the read's own alignment stops.
 
     A spanning read is anchored at both true ends for every slot it covers. A flanking read is
@@ -227,7 +227,7 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype, tar
         kind, idx = slot
         length = 1 if kind == "break" else target_lengths[idx]
         reads_for_slot = segment_reads_for_slot(read_calls, segmented, slot)
-        consensus_kmers.extend(hill_climb(reads_for_slot, length, trim_boundaries=(kind == "satellite")))
+        consensus_kmers.extend(find_consensus(reads_for_slot, length, trim_boundaries=(kind == "satellite")))
 
     consensus_sequence = "".join(consensus_kmers)
     # Empty is only a call for a 0-copy allele; otherwise no read covered the locus
