@@ -11,6 +11,7 @@ from statistics import mean
 
 import networkx as nx
 import numpy as np
+from Bio.Align import PairwiseAligner
 from Levenshtein import distance as levenshtein_distance
 
 from abacus.config import config
@@ -90,6 +91,9 @@ ANCHOR_NODES = frozenset({"left_anchor", "left_anchor_overlap", "right_anchor_ov
 # Only simple (single-node, unambiguous) satellite copies can be split.
 SATELLITE_COPY_NODE = re.compile(r"^satellite_(\d+)(?:_alt(\d+))?$")
 
+# Global alignment with mismatches cheaper than gaps, for realigning a read along its path
+REALIGNER = PairwiseAligner(mode="global", match_score=1, mismatch_score=-1, open_gap_score=-3, extend_gap_score=-2)
+
 
 def get_reference_sequence_from_path(path: list[str], locus: Locus, graph: nx.DiGraph) -> str:
     """Reconstruct the reference sequence for an alignment path through the graph.
@@ -119,6 +123,36 @@ def split_into_copies(observed: str, motif: str) -> list[str] | None:
         if n >= 2 and remainder == 0 and observed == piece * n:
             return [piece] * n
     return None
+
+
+def read_bases_per_position(reference_row: str, read_row: str) -> tuple[list[list[int]], list[str]]:
+    """Return, per reference position of a gapped alignment, the indices of the read bases at it and its CIGAR ops.
+
+    As in the synced lists, an inserted base belongs to the position before it; one before the first position belongs
+    to the first.
+    """
+    bases: list[list[int]] = []
+    cigar: list[str] = []
+    leading_bases: list[int] = []
+    i = 0
+    for reference_base, read_base in zip(reference_row, read_row, strict=True):
+        if reference_base == "-":
+            if bases:
+                bases[-1].append(i)
+                cigar[-1] += "I"
+            else:
+                leading_bases.append(i)
+            i += 1
+        elif read_base == "-":
+            bases.append([])
+            cigar.append("D")
+        else:
+            bases.append([i])
+            cigar.append("=" if read_base == reference_base else "X")
+            i += 1
+    bases[0] = leading_bases + bases[0]
+    cigar[0] = "I" * len(leading_bases) + cigar[0]
+    return bases, cigar
 
 
 def respread_over_copies(synced: list, start: int, end: int, pieces: list[str], copy_length: int) -> list:
@@ -288,6 +322,7 @@ class GraphAlignment(Read):
             self.str_cigar_synced = self.str_cigar_synced[:-trim_end]
             self.str_mod_5mc_synced = self.str_mod_5mc_synced[:-trim_end]
 
+        self.realign_deleted_copies()
         self.split_slipped_copies()
 
         # Get sequence and qualities of the STR region
@@ -328,17 +363,55 @@ class GraphAlignment(Read):
         kmer strings show the extra copies. Anything else - e.g. a genuine insertion, or an
         observed sequence that is itself one of the satellite's alternatives - is left alone.
 
-        Only runs when the synced lists cover the path from the STR start (spanning reads), since
-        copy offsets are counted from there.
+        Only runs when the synced lists cover the path from the STR start (see `satellite_copies`).
 
         E.g. motif "CGG", path [CGG, CGG, CGG] observed as "CGG|CGCG|CGG"
         -> path [CGG, CGG, CGG, CGG] observed as "CGG|CG|CG|CGG".
         """
-        # Copy offsets below assume the synced lists cover the whole path, from STR start to end.
-        str_positions = sum(len(self.graph.nodes[node]["sequence"]) for node in self.path if node not in ANCHOR_NODES)
-        if "left_anchor_overlap" not in self.path or str_positions != len(self.str_sequence_synced):
+        # Right to left, so a split never shifts a copy still to be visited.
+        for path_index, satellite_index, start in reversed(self.satellite_copies()):
+            self.split_copy(path_index, satellite_index, start)
+
+    def realign_deleted_copies(self) -> None:
+        """Realign the read along its path if the alignment leaves a satellite copy without read bases.
+
+        Where the read doesn't fit the motif, minigraph unrolls the satellite loop to about the
+        read's length, but puts the read's bases in insertions and deletes whole copies, which then
+        show up as empty kmers. Realigning the read globally to the path's sequence, with mismatches
+        cheaper than gaps, spreads its bases over the copies: same path, same count, no empty kmers.
+        """
+        read_sequence = "".join(self.str_sequence_synced)
+        # Nothing to realign without an empty copy, or without repeat bases (0 copies)
+        if not read_sequence or not self.has_empty_copy():
             return
 
+        reference = "".join(self.graph.nodes[node]["sequence"] for node in self.path if node not in ANCHOR_NODES)
+        alignment = REALIGNER.align(reference, read_sequence)[0]
+        bases_per_position, self.str_cigar_synced = read_bases_per_position(alignment[0], alignment[1])
+
+        read_qualities = [quality for qualities in self.str_qualities_synced for quality in qualities]
+        read_mod_5mc = "".join(self.str_mod_5mc_synced)
+        self.str_sequence_synced = ["".join(read_sequence[i] for i in bases) for bases in bases_per_position]
+        self.str_qualities_synced = [[read_qualities[i] for i in bases] for bases in bases_per_position]
+        self.str_mod_5mc_synced = ["".join(read_mod_5mc[i : i + 1] for i in bases) for bases in bases_per_position]
+
+    def has_empty_copy(self) -> bool:
+        """Whether a satellite copy in the path holds no read bases."""
+        for path_index, _, start in self.satellite_copies():
+            length = len(self.graph.nodes[self.path[path_index]]["sequence"])
+            if not any(self.str_sequence_synced[start : start + length]):
+                return True
+        return False
+
+    def satellite_copies(self) -> list[tuple[int, int, int]]:
+        """Return each simple satellite copy in the path as (path index, satellite index, start in the synced lists).
+
+        Empty unless the synced lists cover the path from the STR start (spanning reads), since copy
+        offsets are counted from there.
+        """
+        str_positions = sum(len(self.graph.nodes[node]["sequence"]) for node in self.path if node not in ANCHOR_NODES)
+        if "left_anchor_overlap" not in self.path or str_positions != len(self.str_sequence_synced):
+            return []
         copies = []
         position = 0
         for path_index, node in enumerate(self.path):
@@ -348,10 +421,7 @@ class GraphAlignment(Read):
             if match:
                 copies.append((path_index, int(match[1]), position))
             position += len(self.graph.nodes[node]["sequence"])
-
-        # Right to left, so a split never shifts a copy still to be visited.
-        for path_index, satellite_index, start in reversed(copies):
-            self.split_copy(path_index, satellite_index, start)
+        return copies
 
     def split_copy(self, path_index: int, satellite_index: int, start: int) -> None:
         node = self.path[path_index]

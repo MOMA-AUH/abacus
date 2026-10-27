@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Loci without usable reads were silently missing from the VCF; they now get a `NoReads`/`NoCall` record and a log warning
 - A failing locus is now logged with its ID and traceback
 - 0-copy alleles (reads that skip the repeat) were filtered as low quality; they are now called with `TRUC=0`
+- Empty repeat units where a read doesn't fit the motif (minigraph deletes whole copies and inserts the read's bases elsewhere); such reads are now realigned along their path (new dependency: `biopython`)
 ### Removed
 - `--add-contracted-consensus-to-vcf` and the `CONTRCONS` VCF field; `RUS`/`RUC` carry the same information
 - VCF fields `END`, `RU`, the unused `INFO/REF` and `FILTER/LowQual`, and the `<STRn>` ALT header lines

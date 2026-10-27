@@ -23,6 +23,7 @@ dependencies = [
     "scipy>=1.15.2",
     "typer>=0.12.4",
     "pyspoa>=0.2.1",
+    "biopython>=1.80",
 ]
 
 [project.scripts]

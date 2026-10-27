@@ -807,3 +807,54 @@ def test_methylation_from_alignment(
 #     pd.DataFrame([r.to_dict() for r in all_read_calls]).to_csv(file, index=False)
 
 #     assert True
+
+
+
+def observed_kmers(motif: str, repeat: str, read_type: str = "spanning") -> list[str]:
+    """Return the kmers abacus observes for a read with `repeat` between the anchors; a flanking read has only its own anchor."""
+    random.seed(42)
+    location = Location("chr1", 100, 200)
+    locus = Locus(
+        id="test",
+        location=location,
+        left_anchor="".join(random.choices("ATCG", k=config.anchor_len)),
+        right_anchor="".join(random.choices("ATCG", k=config.anchor_len)),
+        structure=f"({motif})*",
+        satellites=[Satellite(id="test", sequences=[motif], location=location, skippable=False)],
+        breaks=["", ""],
+    )
+    left_anchor = locus.left_anchor if read_type in ("spanning", "left") else ""
+    right_anchor = locus.right_anchor if read_type in ("spanning", "right") else ""
+    sequence = left_anchor + repeat + right_anchor
+    read = Read(
+        name="read",
+        sequence=sequence,
+        qualities=[30] * len(sequence),
+        strand="+",
+        mod_5mc_probs="0" * len(sequence),
+        n_soft_clipped_left=0,
+        n_soft_clipped_right=0,
+        locus=locus,
+    )
+    read_calls, _ = get_read_calls([read], locus)
+    return read_calls[0].obs_kmer_string.split("|")
+
+
+@pytest.mark.parametrize("read_type", ["spanning", "left", "right"])
+def test_read_that_does_not_fit_the_motif_has_no_empty_kmers(read_type: str):
+    """minigraph inserts the spacers and deletes whole GT copies; realigned, every copy holds read bases."""
+    spacer = "ATAAAATGGGAGTAAGCGTGAACAGACAGCAGAGGCCGCTATTACATATAC"
+    repeat = ("GT" * 5 + spacer) * 5
+
+    kmers = observed_kmers("GT", repeat, read_type)
+
+    assert "" not in kmers
+    assert "".join(kmers) == repeat
+    assert kmers[:5] == ["GT"] * 5
+
+
+def test_read_with_mismatches_in_every_copy_gets_one_unit_per_copy():
+    """minigraph deletes all 29 copies and inserts the read as one block; realigned, it's one unit per copy."""
+    kmers = observed_kmers("TTTTTTTTTC", "AAAAAAAAAC" * 29)
+
+    assert kmers == ["AAAAAAAAAC"] * 29
