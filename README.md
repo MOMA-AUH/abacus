@@ -129,10 +129,10 @@ Fine-tuning knobs for the analysis:
 - `--max-trim`: max bases trimmed from read ends. Default: `50`.
 
 #### Quality Control Parameters
-- `--min-str-qual`: minimum mean base quality in the STR region; lower is filtered out. Default: `20`.
-- `--tol-str-qual`: tolerance for mean base quality in the STR region. Default: `30`.
-- `--min-q10-str-quality`: minimum Q10 base quality in the STR region. Default: `15`.
-- `--tol-q10-str-quality`: tolerance for Q10 base quality in the STR region. Default: `30`.
+- `--min-str-qual`: minimum mean base quality in the STR region; lower is filtered out. Default: `17`.
+- `--tol-str-qual`: tolerance for mean base quality in the STR region. Default: `35`.
+- `--min-q10-str-quality`: minimum Q10 base quality in the STR region. Default: `7`.
+- `--tol-q10-str-quality`: tolerance for Q10 base quality in the STR region. Default: `25`.
 - `--max-error-rate`: max allowed error rate in the STR region; higher is filtered out. Default: `0.01`.
 - `--tol-error-rate`: tolerance for error rate in the STR region. Default: `0.005`.
 - `--tol-ref-divergence`: tolerance for reference divergence in the STR region; reads are only removed as divergence outliers above it. Default: `0.20`.
