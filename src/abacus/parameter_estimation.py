@@ -5,7 +5,7 @@ from itertools import product
 
 import numpy as np
 from scipy.optimize import brentq, minimize
-from scipy.special import log_ndtr
+from scipy.special import log_ndtr, ndtr
 from scipy.stats import chi2
 
 from abacus.config import config
@@ -119,8 +119,10 @@ def flanking_logpdf(x: np.ndarray, mean: np.ndarray, unit_var: np.ndarray, is_le
 
         # 0 to split_point: Use uniform distribution
         # split_point to upper bound: Use normal distribution
-        normal_support = np.arange(split_point, upper_bound + 1).reshape(-1, 1)
-        norm_const = np.sum(np.exp(discrete_multivariate_normal_logpdf(normal_support, m, v)))
+        # Sum count probabilities using the normal CDF at the interval edges (±0.5),
+        # avoiding a potentially huge array of individual count probabilities.
+        s = max(np.sqrt(m[0] * v[0]), config.min_sd)
+        norm_const = ndtr((upper_bound + 0.5 - m[0]) / s) - ndtr((split_point - 0.5 - m[0]) / s)
 
         # Add uniform part:
         norm_pdf_at_split = np.exp(discrete_multivariate_normal_logpdf(np.array([[split_point]]), m, v)).item()
