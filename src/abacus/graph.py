@@ -685,6 +685,9 @@ def create_linear_graph(locus: Locus, satellite_counts: list[int]) -> nx.DiGraph
 
 
 def get_graph_alignments(reads: list[Read], graph: nx.DiGraph, minimizer_window: int = 11) -> list[GraphAlignment]:
+    if not reads:
+        return []
+
     graph_str = graph_to_gfa(graph)
 
     fastq_str = "".join(read.to_fastq() for read in reads)

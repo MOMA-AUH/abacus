@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -14,14 +15,17 @@ class _Timer:
 
 @contextmanager
 def timed(label: str) -> Iterator[_Timer]:
-    """Log elapsed time for a block at DEBUG level, prefixed with [TIMING].
-
-    Set `.info` on the yielded handle to append extra context (e.g. counts) to the log line.
-    """
+    """Log stage entry and elapsed time at DEBUG level; `.info` adds counts or context."""
     t0 = time.perf_counter()
     timer = _Timer()
+    completed = False
+    logger.debug("[TIMING] %s start (pid=%d)", label, os.getpid())
     try:
         yield timer
+        completed = True
     finally:
         suffix = f"  ({timer.info})" if timer.info else ""
-        logger.debug(f"[TIMING] {label}: {time.perf_counter() - t0:.3f}s{suffix}")
+        logger.debug(
+            "[TIMING] %s: %.3fs%s [%s]",
+            label, time.perf_counter() - t0, suffix, "done" if completed else "failed",
+        )

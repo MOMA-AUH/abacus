@@ -19,6 +19,12 @@ from abacus.utils import AlignmentType
 from tests.helpers import make_locus, make_read
 
 
+def test_empty_reads_do_not_need_a_graph():
+    graph = create_repeat_graph(make_locus("(CAG)+"))
+    graph.clear()
+    assert get_graph_alignments([], graph) == []
+
+
 def test_read_ending_in_short_flank_is_spanning():
     locus = make_locus("(CTCC)+")
     repeat = "CTCC" * 3

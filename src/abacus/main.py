@@ -1,24 +1,17 @@
 from __future__ import annotations
 
 import faulthandler
-import functools
 import logging as _logging
 import subprocess
 
 faulthandler.enable()
 from collections import Counter
-from collections.abc import Generator
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from concurrent.futures.process import BrokenProcessPool
-from contextlib import contextmanager
 from importlib.resources import files
-from logging.handlers import QueueHandler, QueueListener
-from multiprocessing import Queue as MPQueue
-from multiprocessing import get_context
 from pathlib import Path
 from typing import Annotated
 
 import pandas as pd
+from pysam import AlignmentFile
 import typer
 
 from abacus import __version__
@@ -33,6 +26,7 @@ from abacus.group_summary import calculate_final_group_summaries
 from abacus.haplotyping import run_haplotyping, summarize_final_parameter_estimates, summarize_test_parameter_estimates
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
+from abacus.parallel import locus_results
 from abacus.preprocess import get_reads_in_locus
 from abacus.str_vcf import create_no_call_records, create_vcf_records, write_vcf
 from abacus.timing import timed
@@ -85,46 +79,9 @@ def show_catalog_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-_locus_context: dict[str, str] = {"id": ""}
-
-
-class _LocusFilter(_logging.Filter):
-    """Prepends [locus_id] to log records that don't already contain the locus ID."""
-
-    def filter(self, record: _logging.LogRecord) -> bool:
-        locus_id = _locus_context["id"]
-        if locus_id and locus_id not in str(record.msg):
-            record.msg = f"[{locus_id}] {record.msg}"
-        return True
-
-
-def _worker_init(config_dict: dict, log_queue: MPQueue, log_level: int) -> None:
-    """Initializer for worker processes: set up queue logging and restore config."""
-    from abacus.config import config as _config
-
-    root = _logging.getLogger()
-    root.handlers.clear()
-    root.addHandler(QueueHandler(log_queue))
-    root.setLevel(log_level)
-    logger.addFilter(_LocusFilter())
-    for k, v in config_dict.items():
-        setattr(_config, k, v)
-
-
-@contextmanager
-def _log_locus_failure() -> Generator[None, None, None]:
-    """With --threads > 1 the re-raised exception doesn't say which locus failed."""
-    try:
-        yield
-    except Exception:
-        logger.exception("Locus failed")
-        raise
-
-
-def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
+def _process_locus(locus, ref: Path, sex: Sex, *, bamfile: AlignmentFile) -> dict:
     """Process a single locus and return all results as a dict."""
-    _locus_context["id"] = locus.id
-    with timed("locus TOTAL"), _log_locus_failure():
+    with timed("locus TOTAL"):
         logger.info("Locus: %s  |  %s  |  %s:%d-%d", locus.id, locus.structure, locus.location.chrom, locus.location.start, locus.location.end)
 
         # Initialize list to keep track of removed read calls for final summary
@@ -132,7 +89,7 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
 
         # Get reads in locus
         with timed("get_reads_in_locus") as t:
-            reads = get_reads_in_locus(bam, locus, ref)
+            reads = get_reads_in_locus(bamfile, locus)
             t.info = f"{len(reads)} reads"
 
         # Handle ploidy
@@ -219,8 +176,7 @@ def _process_locus(locus, bam: Path, ref: Path, sex: Sex) -> dict:
             removal_reasons = [reason for rc in all_removed_read_calls for reason in rc.outlier_reasons] + [read.error_flags for read in unmapped_reads]
             logger.warning("No call, %d reads; removal reasons: %s", len(reads), dict(Counter(removal_reasons)))
             vcf_records = create_no_call_records(locus, ref, len(reads))
-        logger.info("Locus done")
-    _locus_context["id"] = ""
+        logger.info("Locus computed")
 
     return {
         "locus_id": locus.id,
@@ -590,9 +546,6 @@ def abacus(
     # Setup logging to file
     set_log_file_handler(logger, log_file)
 
-    # Add locus-context filter so parallel log lines can be identified/filtered
-    logger.addFilter(_LocusFilter())
-
     # Enable DEBUG output on console and file when verbose flag is set
     if verbose:
         logger.setLevel(_logging.DEBUG)
@@ -699,37 +652,13 @@ def abacus(
             for line in result["vcf_records"]:
                 if line:
                     f.write(line + "\n")
+        logger.debug("Locus %s written", result["locus_id"])
 
-    # Process each locus (in parallel if --threads > 1), writing results incrementally
     logger.info("Processing loci...")
-    process_fn = functools.partial(_process_locus, bam=bam, ref=ref, sex=sex)
-
-    with timed("All loci processed") as t:
-        if threads == 1:
-            for locus in loci:
-                _handle_result(process_fn(locus))
-        else:
-            # Required by max_tasks_per_child
-            mp_context = get_context("spawn")
-            log_queue: MPQueue = mp_context.Queue()
-            queue_listener = QueueListener(log_queue, *logger.handlers, respect_handler_level=True)
-            queue_listener.start()
-            try:
-                with ProcessPoolExecutor(
-                    max_workers=threads,
-                    mp_context=mp_context,
-                    initializer=_worker_init,
-                    initargs=(config.to_dict(), log_queue, logger.level),
-                    max_tasks_per_child=100,  # recycle workers to release fragmented heap
-                ) as pool:
-                    # A killed worker (e.g. out of memory) breaks the pool, so future.result() raises BrokenProcessPool
-                    for future in as_completed([pool.submit(process_fn, locus) for locus in loci]):
-                        _handle_result(future.result())
-            except BrokenProcessPool:
-                logger.error("Worker died during a locus without 'Locus done'")
-                raise
-            finally:
-                queue_listener.stop()
+    with timed("process loci") as t:
+        with locus_results(loci, _process_locus, bam=bam, ref=ref, settings=config.to_dict(), sex=sex, workers=threads) as results:
+            for result in results:
+                _handle_result(result)
         t.info = f"{len(loci)} loci, {threads} threads"
 
     # Write VCF output

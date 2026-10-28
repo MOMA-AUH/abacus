@@ -77,14 +77,9 @@ def contract_kmer_string(kmer_string: str) -> str:
 
 
 def build_consensus_for_locus(grouped_read_calls: list[ReadCall], final_params: dict[Haplotype, HomozygousParameters]) -> list[ConsensusCall]:
-    """Build final per-haplotype consensus calls for a locus.
+    """Build consensus, reassign flanking reads in place, and rebuild only if labels change.
 
-    Two passes are required: a raw consensus is built first and used to re-group flanking read
-    calls (a flanking read only ever moves positions its own alignment reaches, so grouping must
-    be settled against a real consensus before the final one is built). `grouped_read_calls` is
-    relabeled in place by the re-grouping step. Both passes use the haplotype lengths estimated
-    before the relabel: only flanking reads move, and the length estimate is dominated by
-    spanning reads.
+    Target lengths stay fixed: only flanking reads move, while spanning reads dominate length.
     """
     with timed("consensus"):
         expected_haplotypes = {r.haplotype for r in grouped_read_calls}
@@ -95,8 +90,12 @@ def build_consensus_for_locus(grouped_read_calls: list[ReadCall], final_params: 
         if {call.haplotype for call in raw_consensus_calls} != expected_haplotypes:
             logger.warning("Incomplete raw consensus; emitting NoCall for the whole locus.")
             return []
+        original_haplotypes = [r.haplotype for r in grouped_read_calls]
         update_flanking_labels_based_on_consensus(read_calls=grouped_read_calls, consensus_read_calls=raw_consensus_calls)
-        final_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls, target_lengths)
+        if original_haplotypes == [r.haplotype for r in grouped_read_calls]:
+            final_consensus_calls = raw_consensus_calls
+        else:
+            final_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls, target_lengths)
         if {call.haplotype for call in final_consensus_calls} != expected_haplotypes:
             logger.warning("Incomplete final consensus; emitting NoCall for the whole locus.")
             return []
