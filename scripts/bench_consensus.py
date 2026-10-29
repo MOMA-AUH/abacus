@@ -21,6 +21,7 @@ Suites:
   each covering 40-80% of the allele from its end).
 - complex: RFC1-style alleles - runs of different 5-mer motifs (3-60 units each) with occasional
   single-unit interruptions - with half the reads flanking.
+- high_depth: CAG alleles at depths 100-500, spanning reads only, for consensus runtime scaling.
 """
 import json
 import random
@@ -38,8 +39,11 @@ import abacus.consensus_search as consensus_search
 SUITES = {
     # allele kind, lengths, depths, bad fractions, reps, flanking
     "short": ("cag", [30, 100, 300], [5, 10, 30], [0.0, 0.2], 5, False),
-    "long": ("cag", [500, 1500], [3, 6], [0.0], 5, True),
+    "long": ("cag", [500, 1500], [3, 6, 30], [0.0], 5, True),
     "complex": ("rfc1", [200, 800], [5, 10], [0.0], 5, True),
+    # High depth, spanning reads only: matches the historical 150-unit benchmark
+    # (1.2s at 100 reads, 8s at 300, 28s at 500) and extends it.
+    "high_depth": ("cag", [150, 300], [100, 300, 500], [0.0], 3, False),
 }
 RFC1_MOTIFS = ["AAAAG", "AAAGG", "AAGGG", "ACAGG", "AAGAG", "AGAGG"]
 # (substitution, indel) rate per unit, and the rate at which a read places a motif boundary out of phase

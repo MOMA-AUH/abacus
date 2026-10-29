@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from math import exp, lgamma, log
+from math import ceil, exp, lgamma, log
 from statistics import median
 from typing import NamedTuple
 
@@ -36,6 +36,8 @@ from rapidfuzz.distance import Levenshtein as RFLevenshtein
 STRAND_MARGIN = 1
 # Reads a strong change needs
 MIN_READ_SUPPORT = 2
+# A weak candidate needs at least this fraction of covering reads proposing the same change
+MIN_SUPPORT_FRACTION = 0.05
 # A read is an outlier only above this consensus error rate: the fraction of its kmers that differ
 # from the consensus
 MIN_OUTLIER_CONSENSUS_ERROR_RATE = 0.15
@@ -419,7 +421,9 @@ def _candidate_moves(consensus: str, votes: _ColumnVotes) -> set[Move]:
 
     A position is disputed when any covering read differs from the consensus there: another kmer,
     a gap, or an insertion just before it. Substitutions try the other kmers the reads have there,
-    and the kmers they insert just before it, if seen on every strand there.
+    and the kmers they insert just before it, if seen on every strand there. At high coverage
+    (above ~40x), a substitution also needs at least MIN_SUPPORT_FRACTION of covering reads
+    proposing the same change — low-support candidates never improve the objective.
     """
     n = len(consensus)
     candidates: set[Move] = set()
@@ -429,7 +433,17 @@ def _candidate_moves(consensus: str, votes: _ColumnVotes) -> set[Move]:
             continue
         # Other kmers here ("" is a gap) and kmers inserted just before
         proposed = {k for k in votes.observed[pos] if k and k != consensus[pos]} | {k for block in votes.insertions[pos] for k in block}
-        candidates.update(Move("sub", pos, k) for k in proposed if k != consensus[pos] and votes.is_believable(pos, k))
+        # Filter only at high coverage; at low depth a single read can still improve the objective
+        fraction_support = ceil(MIN_SUPPORT_FRACTION * votes.n_covering[pos])
+        min_support = fraction_support if fraction_support > MIN_READ_SUPPORT else 0
+        for k in proposed:
+            if k == consensus[pos] or not votes.is_believable(pos, k):
+                continue
+            # Insertion-derived kmers have no observed count; keep them (rare, strand-checked)
+            observed = votes.observed[pos].get(k, 0)
+            if observed and observed < min_support:
+                continue
+            candidates.add(Move("sub", pos, k))
         # Swaps with either neighbour, if it differs
         if pos + 1 < n and consensus[pos] != consensus[pos + 1]:
             candidates.add(Move("swap", pos))
@@ -453,11 +467,22 @@ def _find_improving_moves(
     # For the composition change
     counts = Counter(consensus)
     moves = []
+    n_reads = len(alignments)
     for move in candidates:
-        new_distances = [
-            _distance_after_move(consensus, move, read, positions, distance)
-            for read, positions, distance in zip(alignments, consensus_to_read, read_distances, strict=True)
-        ]
+        # Early-terminate: each remaining read improves the sum by at most 1 (OSA
+        # distance), so if the partial delta exceeds the reads left, the move can't win
+        new_distances = []
+        delta = 0
+        can_improve = True
+        for i, (read, positions, distance) in enumerate(zip(alignments, consensus_to_read, read_distances, strict=True)):
+            new_d = _distance_after_move(consensus, move, read, positions, distance)
+            new_distances.append(new_d)
+            delta += new_d - distance
+            if delta > n_reads - i - 1:
+                can_improve = False
+                break
+        if not can_improve:
+            continue
         composition = current_score[1] + _composition_change(consensus, move, counts, target_counts)
         score = (sum(new_distances), composition, sum(d * d for d in new_distances))
         if score < current_score:
@@ -495,7 +520,12 @@ def _distance_after_move(consensus: str, move: Move, read: AlignedRead, consensu
     # A move only changes the alignment near it: rescore a window
     window_start, window_end = max(0, start - SCORE_WINDOW), min(n, end + SCORE_WINDOW)
     old_window = consensus[read.offset + window_start : read.offset + window_end]
-    new_window = _apply_move(old_window, move._replace(pos=start - window_start))
+    # Inline the move application: avoids NamedTuple creation and function call in the hot path
+    idx = start - window_start
+    if move.kind == "sub":
+        new_window = old_window[:idx] + move.kmer + old_window[idx + 1 :]
+    else:
+        new_window = old_window[:idx] + old_window[idx + 1] + old_window[idx] + old_window[idx + 2 :]
     read_window = read.kmers[consensus_to_read[window_start] : consensus_to_read[window_end]]
     return distance - OSA.distance(old_window, read_window) + OSA.distance(new_window, read_window)
 
