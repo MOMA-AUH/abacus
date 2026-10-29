@@ -39,11 +39,12 @@ def make_locus(structure: str) -> Locus:
 def make_read(
     name: str, sequence: str, locus: Locus, strand: str = "+", *,
     n_soft_clipped_left: int = 0, n_soft_clipped_right: int = 0,
+    qualities: list[int] | None = None,
 ) -> Read:
     return Read(
         name=name,
         sequence=sequence,
-        qualities=[30] * len(sequence),
+        qualities=qualities if qualities is not None else [30] * len(sequence),
         mod_5mc_probs="!" * len(sequence),
         strand=strand,
         locus=locus,

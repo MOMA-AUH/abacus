@@ -5,6 +5,9 @@ import pysam
 from abacus.locus import Locus
 from abacus.logging import logger
 
+# Maps a Phred score to its Phred+33 byte; exact for scores 0-222 (SAM qualities are 0-93).
+_PHRED_33_TABLE = bytes.maketrans(bytes(range(223)), bytes(range(33, 256)))
+
 
 @dataclass
 class Read:
@@ -12,16 +15,13 @@ class Read:
     sequence: str
     qualities: list[int]
     mod_5mc_probs: str
-
     strand: str
-
     n_soft_clipped_left: int
     n_soft_clipped_right: int
-
     locus: Locus
 
     def quality_string(self) -> str:
-        return "".join([chr(q + 33) for q in self.qualities])
+        return bytes(self.qualities).translate(_PHRED_33_TABLE).decode("latin-1")
 
     def to_fastq(self) -> str:
         return f"@{self.name}\n{self.sequence}\n+\n{self.quality_string()}\n"
@@ -31,7 +31,8 @@ class Read:
         # Get read information
         name = alignment.query_name or ""
         sequence = alignment.query_sequence or ""
-        qualities = [int(q) for q in alignment.query_qualities or []]
+        # query_qualities is an array of ints (or None); list() copies it directly
+        qualities = list(alignment.query_qualities or [])
         strand = "-" if alignment.is_reverse else "+"
 
         # Get soft-clipped bases
@@ -85,16 +86,16 @@ class FilteredRead(Read):
 
 def get_5mc_modification_probs(alignment: pysam.AlignedSegment) -> str:
     sequence = alignment.query_sequence or ""
-    mod_5mc_probs = "0" * len(sequence)
+    mod_5mc_probs = bytearray(b"0" * len(sequence))
 
     # Check if alignment has modified bases
     if alignment.modified_bases is None:
-        return mod_5mc_probs
+        return mod_5mc_probs.decode("latin-1")
 
     # Check if alignment has 5mC modifications
     mod_5mc_lists = [mod_list for mod_key, mod_list in alignment.modified_bases.items() if mod_key[0] == "C" and mod_key[2] == "m"]
     if not mod_5mc_lists:
-        return mod_5mc_probs
+        return mod_5mc_probs.decode("latin-1")
 
     if len(mod_5mc_lists) > 1:
         messege = f"Multiple 5mC modifications found in alignment {alignment.query_name}"
@@ -107,9 +108,7 @@ def get_5mc_modification_probs(alignment: pysam.AlignedSegment) -> str:
     for pos, scaled_prob in mod_5mc:
         # Scale the probability to 0-1 (0-255 -> 0-1)
         prob = scaled_prob / 255
-        # Convert methylation to string using 10 bins (printable ASCII characters, 33 and up)
-        prob_char = chr(int(prob * 10) + 33)
-        # Update the modification probabilities
-        mod_5mc_probs = mod_5mc_probs[:pos] + prob_char + mod_5mc_probs[pos + 1 :]
+        # Convert methylation to a byte using 10 bins (printable ASCII characters, 33 and up)
+        mod_5mc_probs[pos] = int(prob * 10) + 33
 
-    return mod_5mc_probs
+    return mod_5mc_probs.decode("latin-1")
