@@ -165,7 +165,7 @@ def test_allele_depths_follow_alt_order_regardless_of_call_order(ref_path: Path)
 
 
 def test_haplotype_without_consensus_has_no_repeat_sequences(ref_path: Path):
-    # A zero-length haplotype yields an empty consensus, so create_consensus_calls returns no call for it
+    # H2 has no consensus call (defensive path): no repeat sequences, depth 0, known-zero LPS count
     locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(5), Haplotype.H2: params(0)}
     calls = [build_consensus_call(locus, ["CAG"] * 5, [5], Haplotype.H1, 11, 2)]
@@ -178,11 +178,41 @@ def test_haplotype_without_consensus_has_no_repeat_sequences(ref_path: Path):
     assert info["RUC"] == "5"
     assert info["TRUC"] == "5.0,0.0"
     assert info["LPSRUS"] == "CAG,."
-    assert info["LPSRUC"] == "5,."
+    assert info["LPSRUC"] == "5,0"
     values = format_values(record)
     assert values["AD"] == "0,13,0"
     assert values["ADSP"] == "0,11,0"
     assert values["ADFL"] == "0,2,0"
+
+
+def test_zero_copy_allele_reports_known_zero_lps_count(ref_path: Path):
+    # Homozygous 0-copy: one called allele with no repeat sequences
+    locus = make_locus("(CAG)+")
+    final_params = {Haplotype.HOM: params(0)}
+    calls = [build_consensus_call(locus, [], [0], Haplotype.HOM, 3, 1)]
+
+    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=False)
+
+    info = info_values(record)
+    assert info["RN"] == "0"
+    assert info["TRUC"] == "0.0"
+    assert info["LPSRUS"] == "."
+    assert info["LPSRUC"] == "0"
+
+
+def test_zero_copy_first_allele_keeps_alt_order(ref_path: Path):
+    locus = make_locus("(CAG)+")
+    final_params = {Haplotype.H1: params(0), Haplotype.H2: params(5)}
+    calls = [
+        build_consensus_call(locus, [], [0], Haplotype.H1, 4, 1),
+        build_consensus_call(locus, ["CAG"] * 5, [5], Haplotype.H2, 11, 2),
+    ]
+
+    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+
+    info = info_values(record)
+    assert info["LPSRUS"] == ".,CAG"
+    assert info["LPSRUC"] == "0,5"
 
 
 def test_consensus_is_opt_in_info_field(ref_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -211,6 +241,8 @@ def test_consensus_is_missing_for_allele_without_units_in_satellite(ref_path: Pa
     info = info_values(ccg)
     assert info["RN"] == "0,1"
     assert info["CONS"] == ".,CCGCCGCCGCCG"
+    assert info["LPSRUS"] == ".,CCG"
+    assert info["LPSRUC"] == "0,4"
 
 
 def test_repeat_absent_from_reference_has_svlen_one(ref_path: Path):

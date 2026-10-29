@@ -139,8 +139,9 @@ def create_vcf_records(
         if any(runs_per_allele):
             info["RUS"] = _join(kmer for runs in runs_per_allele for kmer, _ in runs)
             info["RUC"] = _join(count for runs in runs_per_allele for _, count in runs)
-        # Longest pure segment: the longest run of any repeat unit, the first one on ties (max keeps the first)
-        lps_per_allele = [max(runs, key=lambda run: run[1]) if runs else (".", ".") for runs in runs_per_allele]
+        # Longest pure segment: the longest run of any repeat unit, the first one on ties (max keeps the first);
+        # an allele with no repeat sequences has a known-zero count and no unit
+        lps_per_allele = [max(runs, key=lambda run: run[1]) if runs else (".", 0) for runs in runs_per_allele]
         info["LPSRUS"] = _join(kmer for kmer, _ in lps_per_allele)
         info["LPSRUC"] = _join(count for _, count in lps_per_allele)
         info["TRUC"] = _join(round(est, 3) for est in truc)

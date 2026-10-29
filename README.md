@@ -169,9 +169,9 @@ chr4  3074876  Abacus.HTT.1  C  <CNV:TR>,<CNV:TR>  .  PASS  SVLEN=57,57;RN=3,1;R
 | `POS`, `REF` | The padding base immediately preceding the repeat. |
 | `ID` | `Abacus.<LocusId>.<satellite index>`. |
 | `INFO/SVLEN` | Reference length of the repeat (`1` for a repeat absent from the reference). |
-| `INFO/RN` | Number of repeat sequences in each allele. `0` for an allele without a consensus. |
+| `INFO/RN` | Number of repeat sequences in each allele. `0` for an allele without repeat sequences in this satellite. |
 | `INFO/RUS`, `INFO/RUC` | Repeat unit sequence and count of each repeat sequence, flattened in allele order. The consensus is split into runs of identical repeat units, so interruptions (e.g. `CAA`) and motif changes (e.g. RFC1 `AAAAG` to `AAGGG`) get their own entry. |
-| `INFO/LPSRUS`, `INFO/LPSRUC` | Repeat unit sequence and count of the longest pure segment of each allele (see [Longest pure segment](#longest-pure-segment)). `.` for an allele without a consensus. |
+| `INFO/LPSRUS`, `INFO/LPSRUC` | Repeat unit sequence and count of the longest pure segment of each allele (see [Longest pure segment](#longest-pure-segment)). `LPSRUC` is `0` for an allele without repeat sequences in this satellite; `LPSRUS` stays `.` — no segment, so no repeat unit. |
 | `INFO/TRUC` | Estimated total number of repeat units in each allele. |
 | `INFO/CITRUC` | Confidence interval around `TRUC`, as lower and upper offsets from it for each allele. |
 | `INFO/REFDIV` | Divergence (0–1) of each allele's consensus from the catalog locus structure. Informational: a high value means the allele doesn't look like the catalog motif (e.g. a different or interrupted repeat), so its repeat counts should be read with care. |
