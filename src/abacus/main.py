@@ -141,11 +141,26 @@ def _process_locus(locus, ref: Path, sex: Sex, *, bamfile: AlignmentFile) -> dic
         # TODO: Make this nicer
         locus_is_het = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2] if grouped_read_calls else False
 
-        final_parameter_summary_df = summarize_final_parameter_estimates(final_params)
-        test_parameter_summary_df = summarize_test_parameter_estimates(het_params, hom_params)
-
         # Build per-haplotype consensus (relabels flanking reads in grouped_read_calls against a raw consensus first)
         final_consensus_calls = build_consensus_for_locus(grouped_read_calls, final_params)
+
+        # Generate VCF records here while final_consensus_calls, final_params, and locus_is_het are in scope,
+        # so the main process never needs to accumulate the full ConsensusCall/params objects.
+        if final_consensus_calls:
+            vcf_records = create_vcf_records(final_consensus_calls, ref, final_params, locus_is_het)
+        else:
+            # Filtering or consensus mapping left no reliable call; keep the locus in the VCF.
+            removal_reasons = [reason for rc in all_removed_read_calls for reason in rc.outlier_reasons] + [read.error_flags for read in unmapped_reads]
+            logger.warning("No call, %d reads; removal reasons: %s", len(reads), dict(Counter(removal_reasons)))
+            vcf_records = create_no_call_records(locus, ref, len(reads))
+        logger.info("Locus computed")
+
+        # A VCF-only run needs neither the report tables nor the read/consensus payloads
+        if config.vcf_only_output:
+            return {"locus_id": locus.id, "vcf_records": vcf_records}
+
+        final_parameter_summary_df = summarize_final_parameter_estimates(final_params)
+        test_parameter_summary_df = summarize_test_parameter_estimates(het_params, hom_params)
 
         grouped_read_calls.extend(all_removed_read_calls)
         haplotyping_df = calculate_final_group_summaries(grouped_read_calls)
@@ -166,17 +181,6 @@ def _process_locus(locus, ref: Path, sex: Sex, *, bamfile: AlignmentFile) -> dic
         final_parameter_summary_df["pathogenic_min"] = pd.array([locus.satellites[i].pathogenic_min for i in final_parameter_summary_df["idx"]], dtype="Int64")
         final_parameter_summary_df["status"] = [locus.satellites[i].status(m) for i, m in zip(final_parameter_summary_df["idx"], final_parameter_summary_df["mean"])]
         test_parameter_summary_df = test_parameter_summary_df.merge(satellite_df, on="idx", how="left")
-
-        # Generate VCF records here while final_consensus_calls, final_params, and locus_is_het are in scope,
-        # so the main process never needs to accumulate the full ConsensusCall/params objects.
-        if final_consensus_calls:
-            vcf_records = create_vcf_records(final_consensus_calls, ref, final_params, locus_is_het)
-        else:
-            # Filtering or consensus mapping left no reliable call; keep the locus in the VCF.
-            removal_reasons = [reason for rc in all_removed_read_calls for reason in rc.outlier_reasons] + [read.error_flags for read in unmapped_reads]
-            logger.warning("No call, %d reads; removal reasons: %s", len(reads), dict(Counter(removal_reasons)))
-            vcf_records = create_no_call_records(locus, ref, len(reads))
-        logger.info("Locus computed")
 
     return {
         "locus_id": locus.id,
@@ -582,6 +586,8 @@ def abacus(
 
     # VCF options
     config.add_consensus_to_vcf = add_consensus_to_vcf
+    # Without a report or retained temp files, workers return VCF records only
+    config.vcf_only_output = report is None and not keep_temp_files
 
     # Welcome message
     logger.info(ascii_art)
@@ -641,13 +647,14 @@ def abacus(
     vcf_records_tmp.touch()
 
     def _handle_result(result: dict) -> None:
-        append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
-        append_to_csv(pd.DataFrame([r.to_dict() for r in result["unmapped_reads"]]), filtered_reads_csv)
-        append_to_csv(pd.DataFrame([c.to_dict() for c in result["final_consensus_calls"]]), consensus_csv)
-        append_to_csv(result["haplotyping_df"], haplotypes_csv)
-        append_to_csv(result["test_summary_res_df"], summary_csv)
-        append_to_csv(result["final_parameter_summary_df"], final_param_summary_csv)
-        append_to_csv(result["test_parameter_summary_df"], test_params_summary_csv)
+        if not config.vcf_only_output:
+            append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
+            append_to_csv(pd.DataFrame([r.to_dict() for r in result["unmapped_reads"]]), filtered_reads_csv)
+            append_to_csv(pd.DataFrame([c.to_dict() for c in result["final_consensus_calls"]]), consensus_csv)
+            append_to_csv(result["haplotyping_df"], haplotypes_csv)
+            append_to_csv(result["test_summary_res_df"], summary_csv)
+            append_to_csv(result["final_parameter_summary_df"], final_param_summary_csv)
+            append_to_csv(result["test_parameter_summary_df"], test_params_summary_csv)
         with vcf_records_tmp.open("a") as f:
             for line in result["vcf_records"]:
                 if line:

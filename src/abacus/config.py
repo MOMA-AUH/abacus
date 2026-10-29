@@ -36,6 +36,8 @@ class Config:
 
     # Output parameters
     add_consensus_to_vcf: bool = False
+    # VCF-only run: skip report-only tables, read/consensus payloads and CSV writes
+    vcf_only_output: bool = False
 
     # Haplotype parameters
     min_haplotyping_depth: int = 10
