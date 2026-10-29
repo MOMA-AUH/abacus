@@ -4,12 +4,12 @@ import numpy as np
 from Levenshtein import distance as levenshtein_distance
 
 from abacus.consensus_search import KmerRead, find_consensus
-from abacus.graph import AlignmentType, Read, ReadCall, get_read_calls
+from abacus.graph import AlignmentType, ConsensusAlignment, ReadCall, qual_to_char
 from abacus.locus import Locus
 from abacus.logging import logger
 from abacus.parameter_estimation import HomozygousParameters
 from abacus.timing import timed
-from abacus.utils import Haplotype, trim_sequences_for_comparison
+from abacus.utils import Haplotype, compute_levenshtein_rate, trim_sequences_for_comparison
 
 # A slot in a locus's structure: a break (index into locus.breaks) or a satellite (index into
 # locus.satellites). Consensus is built independently per slot - see create_consensus_calls.
@@ -33,36 +33,14 @@ class ConsensusCall(ReadCall):
             "flanking_reads": self.flanking_reads,
         }
 
-    @classmethod
-    def from_read_call(cls, read_call: ReadCall, spanning_reads: int, flanking_reads: int) -> "ConsensusCall":
-        return cls(
-            locus=read_call.locus,
-            alignment=read_call.alignment,
-            haplotype=read_call.haplotype,
-            outlier_reasons=read_call.outlier_reasons,
-            satellite_count=read_call.satellite_count,
-            obs_kmer_string=read_call.obs_kmer_string,
-            ref_kmer_string=read_call.ref_kmer_string,
-            mod_5mc_kmer_string=read_call.mod_5mc_kmer_string,
-            qual_kmer_string=read_call.qual_kmer_string,
-            spanning_reads=spanning_reads,
-            flanking_reads=flanking_reads,
-            str_error_rate=0.0,
-        )
-
 
 def contract_kmer_string(kmer_string: str) -> str:
-    # Split kmer string
+    if not kmer_string:
+        return ""
     kmer_list = kmer_string.split("|")
-
-    # Contract kmer string
     contracted_kmer = ""
-
-    # Initialize
     prev_kmer = kmer_list[0]
     count = 1
-
-    # Iterate
     for kmer in kmer_list[1:]:
         if kmer == prev_kmer:
             count += 1
@@ -70,9 +48,7 @@ def contract_kmer_string(kmer_string: str) -> str:
             contracted_kmer += f"{count}({prev_kmer})-"
             prev_kmer = kmer
             count = 1
-
     contracted_kmer += f"{count}({prev_kmer})"
-
     return contracted_kmer
 
 
@@ -209,11 +185,74 @@ def segment_reads_for_slot(read_calls: list[ReadCall], segmented: list[list[tupl
     return reads
 
 
+def build_consensus_call(
+    locus: Locus,
+    consensus_kmers: list[str],
+    target_lengths: list[int],
+    haplotype: Haplotype,
+    spanning_reads: int,
+    flanking_reads: int,
+) -> ConsensusCall:
+    """Construct a ConsensusCall directly from consensus kmers — no minigraph."""
+    consensus_sequence = "".join(consensus_kmers)
+    full_sequence = locus.left_anchor + consensus_sequence + locus.right_anchor
+    sequence_length = len(full_sequence)
+
+    # Build the graph path and reference kmers in one pass over the slot structure
+    path = ["left_anchor_overlap"]
+    ref_kmers: list[str] = []
+    for kind, idx in locus_slots(locus.breaks, len(target_lengths)):
+        if kind == "break":
+            path.append(f"break_{idx}")
+            ref_kmers.append(locus.breaks[idx])
+        else:
+            path.extend([f"satellite_{idx}"] * target_lengths[idx])
+            ref_kmers.extend([locus.satellites[idx].sequences[0]] * target_lengths[idx])
+    path.append("right_anchor_overlap")
+
+    str_ref_divergence = compute_levenshtein_rate(consensus_sequence, "".join(ref_kmers))
+
+    alignment = ConsensusAlignment(
+        name=f"consensus_{haplotype}",
+        sequence=full_sequence,
+        qualities=[60] * sequence_length,
+        mod_5mc_probs="0" * sequence_length,
+        strand="+",
+        locus=locus,
+        n_soft_clipped_left=0,
+        n_soft_clipped_right=0,
+        str_sequence=consensus_sequence,
+        type=AlignmentType.SPANNING,
+        path=path,
+        str_ref_divergence=str_ref_divergence,
+        str_qualities=[60] * len(consensus_sequence),
+        mean_str_quality=60.0,
+        q10_str_quality=60,
+    )
+
+    return ConsensusCall(
+        locus=locus,
+        alignment=alignment,
+        satellite_count=list(target_lengths),
+        str_error_rate=0.0,
+        obs_kmer_string="|".join(consensus_kmers),
+        ref_kmer_string="|".join(ref_kmers),
+        mod_5mc_kmer_string="|".join("0" * len(kmer) for kmer in consensus_kmers),
+        qual_kmer_string="|".join(qual_to_char(60) * len(kmer) for kmer in consensus_kmers),
+        haplotype=haplotype,
+        spanning_reads=spanning_reads,
+        flanking_reads=flanking_reads,
+    )
+
+
 def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype, target_lengths: list[int]) -> list[ConsensusCall]:
     """Build the haplotype's consensus by searching each satellite and break independently, then
     concatenating - each read is aligned against the slot the mapping actually placed its kmers
     in, not a flat position in the whole allele, so a satellite whose count differs between reads
     can't shift where a later satellite or break appears to sit.
+
+    The consensus is constructed directly from the kmers and slot structure — no minigraph
+    remapping. Slots with no read coverage default to the reference sequence.
 
     This also folds what used to be a separate flanking-only path into the same mechanism: with
     no spanning reads at all, left- and right-flanking reads simply contribute to whichever slots
@@ -235,69 +274,19 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype, tar
         kind, idx = slot
         length = 1 if kind == "break" else target_lengths[idx]
         reads_for_slot = segment_reads_for_slot(read_calls, segmented, slot)
-        consensus_kmers.extend(find_consensus(reads_for_slot, length, trim_boundaries=(kind == "satellite")))
+        slot_kmers = find_consensus(reads_for_slot, length, trim_boundaries=(kind == "satellite"))
+        # No reads covered this slot — fill with N's (unknown bases)
+        if len(slot_kmers) < length:
+            unit_len = len(locus.breaks[idx]) if kind == "break" else len(locus.satellites[idx].sequences[0])
+            slot_kmers.extend(["N" * unit_len] * (length - len(slot_kmers)))
+        consensus_kmers.extend(slot_kmers)
 
     consensus_sequence = "".join(consensus_kmers)
     # Empty is only a call for a 0-copy allele; otherwise no read covered the locus
     if not consensus_sequence and any(target_lengths):
         return []
 
-    consensus_read_call = get_consensus_read_call(locus, consensus_sequence, AlignmentType.SPANNING, haplotype)
-    if consensus_read_call is None:
-        return []
-    consensus_read_call.set_haplotype(haplotype)
-
-    return [
-        ConsensusCall.from_read_call(
-            read_call=consensus_read_call,
-            spanning_reads=spanning_count,
-            flanking_reads=flanking_count,
-        )
-    ]
-
-
-def get_consensus_read_call(locus: Locus, sequence: str, alignment_type: AlignmentType, haplotype: str) -> ReadCall | None:
-    """Retry an unusable consensus alignment with denser seeds before returning no call."""
-    if alignment_type == AlignmentType.SPANNING:
-        full_sequence = locus.left_anchor + sequence + locus.right_anchor
-    elif alignment_type == AlignmentType.LEFT_FLANKING:
-        full_sequence = locus.left_anchor + sequence
-    elif alignment_type == AlignmentType.RIGHT_FLANKING:
-        full_sequence = sequence + locus.right_anchor
-
-    # Create read name
-    consensus_read_name = f"consensus_{haplotype}"
-    # Add alignment type to name
-    if alignment_type == AlignmentType.LEFT_FLANKING:
-        consensus_read_name += "_left"
-    elif alignment_type == AlignmentType.RIGHT_FLANKING:
-        consensus_read_name += "_right"
-
-    # Create read
-    sequence_length = len(full_sequence)
-    consensus_read = Read(
-        name=consensus_read_name,
-        sequence=full_sequence,
-        qualities=[60] * sequence_length,
-        mod_5mc_probs="0" * sequence_length,
-        strand="+",
-        locus=locus,
-        n_soft_clipped_left=0,
-        n_soft_clipped_right=0,
-    )
-
-    for minimizer_window in (11, 3):
-        consensus_read_calls, filtered_reads = get_read_calls([consensus_read], locus, minimizer_window=minimizer_window)
-        for call in consensus_read_calls:
-            if call.alignment.type == alignment_type:
-                return call
-
-    reasons = [r.error_flags for r in filtered_reads] + [f"unexpected_{c.alignment.type}" for c in consensus_read_calls]
-    logger.warning(
-        "Locus %s, haplotype %s: consensus mapping failed after retry (%s).",
-        locus.id, haplotype, ";".join(reasons) or "no alignment returned",
-    )
-    return None
+    return [build_consensus_call(locus, consensus_kmers, target_lengths, haplotype, spanning_count, flanking_count)]
 
 
 def update_flanking_labels_based_on_consensus(
@@ -331,7 +320,7 @@ def update_flanking_labels_based_on_consensus(
                 dist_to_closest = dist_to_consensus
                 closest_consensus_haplotype = haplotype
 
-            read_call.set_haplotype(closest_consensus_haplotype)
+        read_call.set_haplotype(closest_consensus_haplotype)
 
 
 def calc_dist_to_consensus(

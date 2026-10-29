@@ -266,12 +266,8 @@ class GraphAlignment(Read):
     def __post_init__(self) -> None:
         # Overlap-only anchors require a query end within max_trim; otherwise require
         # the outer anchor. Use graph alignment coordinates, ignoring BAM soft clips.
-        self.has_left_anchor = "left_anchor_overlap" in self.path and (
-            "left_anchor" in self.path or self.query_start <= config.max_trim
-        )
-        self.has_right_anchor = "right_anchor_overlap" in self.path and (
-            "right_anchor" in self.path or self.query_length - self.query_end <= config.max_trim
-        )
+        self.has_left_anchor = "left_anchor_overlap" in self.path and ("left_anchor" in self.path or self.query_start <= config.max_trim)
+        self.has_right_anchor = "right_anchor_overlap" in self.path and ("right_anchor" in self.path or self.query_length - self.query_end <= config.max_trim)
 
         # Determine alignment type
         if self.has_left_anchor and self.has_right_anchor:
@@ -441,6 +437,35 @@ class GraphAlignment(Read):
         self.str_qualities_synced = respread_over_copies(self.str_qualities_synced, start, end, pieces, len(motif))
         self.str_mod_5mc_synced = respread_over_copies(self.str_mod_5mc_synced, start, end, pieces, len(motif))
         self.path[path_index : path_index + 1] = [node] * len(pieces)
+
+    def to_dict(self) -> dict:
+        return {
+            "query_name": self.name,
+            "strand": self.strand,
+            "read_str_sequence": self.str_sequence,
+            "read_str_qualities": self.str_qualities,
+            "alignment_type": self.type,
+            "mean_str_qual": self.mean_str_quality,
+            "q10_str_qual": self.q10_str_quality,
+            "str_ref_divergence": self.str_ref_divergence,
+        } | self.locus.to_dict()
+
+
+@dataclass
+class ConsensusAlignment(Read):
+    """A synthetic alignment for a consensus sequence, built directly from the consensus
+    kmers and slot structure — no minigraph remapping needed.
+
+    Provides the same interface as GraphAlignment for the fields downstream consumers use.
+    """
+
+    str_sequence: str
+    type: AlignmentType
+    path: list[str]
+    str_ref_divergence: float
+    str_qualities: list[int]
+    mean_str_quality: float
+    q10_str_quality: int
 
     def to_dict(self) -> dict:
         return {
@@ -799,7 +824,10 @@ def graph_align_reads_to_locus(
 
     # Remap flanking reads to locus
     remapped_flanking_alignments, unmapped_flanking_reads = remap_flanking_alignments_to_locus(
-        flanking_alignments, locus, graph=graph, minimizer_window=minimizer_window,
+        flanking_alignments,
+        locus,
+        graph=graph,
+        minimizer_window=minimizer_window,
     )
 
     # Add the remapped flanking alignments to the lists
@@ -927,7 +955,7 @@ def remap_flanking_alignments_to_locus(
 @dataclass
 class ReadCall:
     locus: Locus
-    alignment: GraphAlignment
+    alignment: GraphAlignment | ConsensusAlignment
     satellite_count: list[int]
 
     str_error_rate: float
