@@ -25,15 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `LC` is replaced by the reserved `DP`, and `AD`, `ADSP` and `ADFL` now include the reference allele (always `0`)
   - Fixed the `##reference` header line
 - Consensus built by hill-climbing search instead of spoa (new dependency: `rapidfuzz`); consensus length now matches the estimated repeat count ([#25](https://github.com/MOMA-AUH/abacus/issues/25))
+- Consensus built from kmers and slot structure; minigraph subprocess removed
+- Faster read quality and 5mC probability conversion (native `bytes.translate`, in-place `bytearray` mutation)
 - Faster parameter estimation and report
 - Faster consensus search when some reads are much noisier than the rest: reads far from the consensus no longer propose changes
 - Faster and more accurate consensus search for long alleles
+- Consensus search 15x faster at high depth (min-support filter, early-terminate scoring, inline moves)
+- Skip report payloads and CSV writes in VCF-only runs
+- Refactored locus execution in multiprocessing
 - A catalog entry whose `LocusStructure` has no repeat unit now raises an error instead of being skipped with a log message
 - **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
 - Consensus mapping failures now retry with denser seeds, then emit `NoCall` instead of crashing
 - Report handling and display of 0-copy alleles
+- `LPSRUC` is `0` (not `.`) for zero-copy alleles
 - VCF genotype and per-allele field ordering
 - Kmer chopping for mixed-length alternatives, e.g. `(GAA|GA)*`
 - Reading-frame slips: slipped satellite copies are split into short-copy stretches, not packed (e.g. `CG CG` in a `(CGG)*` repeat was counted as 1 `CGCG`, but is now counted as 2 `CG`)
