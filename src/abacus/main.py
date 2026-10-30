@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Annotated
 
 import pandas as pd
+from pyfaidx import Fasta
 from pysam import AlignmentFile
 import typer
 
@@ -79,7 +80,7 @@ def show_catalog_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-def _process_locus(locus, ref: Path, sex: Sex, *, bamfile: AlignmentFile) -> dict:
+def _process_locus(locus, ref: Fasta, sex: Sex, *, bamfile: AlignmentFile) -> dict:
     """Process a single locus and return all results as a dict."""
     with timed("locus TOTAL"):
         logger.info("Locus: %s  |  %s  |  %s:%d-%d", locus.id, locus.structure, locus.location.chrom, locus.location.start, locus.location.end)
@@ -643,8 +644,6 @@ def abacus(
     # Remove any existing temp files from previous runs with the same VCF to avoid appending to old results
     for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv, vcf_records_tmp]:
         _f.unlink(missing_ok=True)
-    # Created up front so write_vcf finds it even when no locus writes a record
-    vcf_records_tmp.touch()
 
     def _handle_result(result: dict) -> None:
         if not config.vcf_only_output:
@@ -655,14 +654,15 @@ def abacus(
             append_to_csv(result["test_summary_res_df"], summary_csv)
             append_to_csv(result["final_parameter_summary_df"], final_param_summary_csv)
             append_to_csv(result["test_parameter_summary_df"], test_params_summary_csv)
-        with vcf_records_tmp.open("a") as f:
-            for line in result["vcf_records"]:
-                if line:
-                    f.write(line + "\n")
+        for line in result["vcf_records"]:
+            if line:
+                vcf_stream.write(line + "\n")
+        # Preserve completed loci in the temporary file if processing fails later.
+        vcf_stream.flush()
         logger.debug("Locus %s written", result["locus_id"])
 
     logger.info("Processing loci...")
-    with timed("process loci") as t:
+    with vcf_records_tmp.open("w") as vcf_stream, timed("process loci") as t:
         with locus_results(loci, _process_locus, bam=bam, ref=ref, settings=config.to_dict(), sex=sex, workers=threads) as results:
             for result in results:
                 _handle_result(result)

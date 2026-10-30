@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Consensus search 15x faster at high depth (min-support filter, early-terminate scoring, inline moves)
 - Skip report payloads and CSV writes in VCF-only runs
 - Refactored locus execution in multiprocessing
+- Reduced I/O by reusing reference readers and keeping the temporary VCF stream open
 - A catalog entry whose `LocusStructure` has no repeat unit now raises an error instead of being skipped with a log message
 - **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption

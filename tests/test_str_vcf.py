@@ -19,8 +19,15 @@ from tests.helpers import make_locus
 def ref_path(tmp_path: Path) -> Path:
     path = tmp_path / "ref.fa"
     path.write_text(">chr1\n" + "A" * 999 + "T" + "C" * 1000 + "\n")
-    Fasta(path)  # writes the .fai index
+    with Fasta(path):  # writes the .fai index
+        pass
     return path
+
+
+@pytest.fixture
+def ref(ref_path: Path):
+    with Fasta(ref_path) as reference:
+        yield reference
 
 
 def params(*n_units: float) -> HomozygousParameters:
@@ -54,7 +61,7 @@ def test_header_follows_vcf_4_5(ref_path: Path):
     assert header.endswith("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample")
 
 
-def test_het_record_uses_cnv_tr_with_padding_base(ref_path: Path):
+def test_het_record_uses_cnv_tr_with_padding_base(ref: Fasta):
     locus = make_locus("(CAG)*CAACAG(CCG)*")
     final_params = {Haplotype.H1: params(5, 3), Haplotype.H2: params(8, 4)}
     calls = [
@@ -62,7 +69,7 @@ def test_het_record_uses_cnv_tr_with_padding_base(ref_path: Path):
         build_consensus_call(locus, ["CAG"] * 8 + ["CAACAG"] + ["CCG"] * 4, [8, 4], Haplotype.H2, 5, 3),
     ]
 
-    cag, ccg = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+    cag, ccg = create_vcf_records(calls, ref, final_params, locus_is_het=True)
 
     chrom, pos, id_, ref, alt, qual, filt, _, _, _ = cag.split("\t")
     # Satellite starts at 0-based 1000, so the padding base is 1-based 1000 (0-based 999, a "T")
@@ -88,7 +95,7 @@ def test_het_record_uses_cnv_tr_with_padding_base(ref_path: Path):
     assert format_values(ccg)["PS"] == "1000"
 
 
-def test_interrupted_allele_is_split_into_runs(ref_path: Path):
+def test_interrupted_allele_is_split_into_runs(ref: Fasta):
     locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(18), Haplotype.H2: params(12)}
     calls = [
@@ -96,7 +103,7 @@ def test_interrupted_allele_is_split_into_runs(ref_path: Path):
         build_consensus_call(locus, ["CAG"] * 12, [12], Haplotype.H2, 10, 0),
     ]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=True)
 
     info = info_values(record)
     assert info["RN"] == "3,1"
@@ -106,12 +113,12 @@ def test_interrupted_allele_is_split_into_runs(ref_path: Path):
     assert info["LPSRUC"] == "9,12"
 
 
-def test_multi_motif_satellite_reports_motif_runs(ref_path: Path):
+def test_multi_motif_satellite_reports_motif_runs(ref: Fasta):
     locus = make_locus("(AAAAG|AAGGG)+")
     final_params = {Haplotype.HOM: params(7)}
     calls = [build_consensus_call(locus, ["AAAAG"] * 3 + ["AAGGG"] * 4, [7], Haplotype.HOM, 10, 0)]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=False)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=False)
 
     info = info_values(record)
     assert info["RN"] == "2"
@@ -123,31 +130,31 @@ def test_multi_motif_satellite_reports_motif_runs(ref_path: Path):
     assert info["LPSRUC"] == "4"
 
 
-def test_longest_pure_segment_tie_keeps_first_run(ref_path: Path):
+def test_longest_pure_segment_tie_keeps_first_run(ref: Fasta):
     locus = make_locus("(CAG|CAA)+")
     final_params = {Haplotype.HOM: params(10)}
     calls = [build_consensus_call(locus, ["CAA"] * 5 + ["CAG"] * 5, [10], Haplotype.HOM, 10, 0)]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=False)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=False)
 
     info = info_values(record)
     assert info["LPSRUS"] == "CAA"
     assert info["LPSRUC"] == "5"
 
 
-def test_homozygous_record_has_one_alt_and_no_phase_set(ref_path: Path):
+def test_homozygous_record_has_one_alt_and_no_phase_set(ref: Fasta):
     locus = make_locus("(CAG)+")
     final_params = {Haplotype.HOM: params(5)}
     calls = [build_consensus_call(locus, ["CAG"] * 5, [5], Haplotype.HOM, 7, 1)]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=False)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=False)
 
     assert record.split("\t")[4] == "<CNV:TR>"
     assert info_values(record)["SVLEN"] == "3"
     assert format_values(record) == {"GT": "1/1", "DP": "8", "AD": "0,8", "ADSP": "0,7", "ADFL": "0,1"}
 
 
-def test_allele_depths_follow_alt_order_regardless_of_call_order(ref_path: Path):
+def test_allele_depths_follow_alt_order_regardless_of_call_order(ref: Fasta):
     locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(5), Haplotype.H2: params(10)}
     calls = [
@@ -155,7 +162,7 @@ def test_allele_depths_follow_alt_order_regardless_of_call_order(ref_path: Path)
         build_consensus_call(locus, ["CAG"] * 5, [5], Haplotype.H1, 11, 0),
     ]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=True)
 
     assert info_values(record)["RUC"] == "5,10"
     values = format_values(record)
@@ -164,13 +171,13 @@ def test_allele_depths_follow_alt_order_regardless_of_call_order(ref_path: Path)
     assert values["ADFL"] == "0,0,3"
 
 
-def test_haplotype_without_consensus_has_no_repeat_sequences(ref_path: Path):
+def test_haplotype_without_consensus_has_no_repeat_sequences(ref: Fasta):
     # H2 has no consensus call (defensive path): no repeat sequences, depth 0, known-zero LPS count
     locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(5), Haplotype.H2: params(0)}
     calls = [build_consensus_call(locus, ["CAG"] * 5, [5], Haplotype.H1, 11, 2)]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=True)
 
     info = info_values(record)
     assert info["RN"] == "1,0"
@@ -185,13 +192,13 @@ def test_haplotype_without_consensus_has_no_repeat_sequences(ref_path: Path):
     assert values["ADFL"] == "0,2,0"
 
 
-def test_zero_copy_allele_reports_known_zero_lps_count(ref_path: Path):
+def test_zero_copy_allele_reports_known_zero_lps_count(ref: Fasta):
     # Homozygous 0-copy: one called allele with no repeat sequences
     locus = make_locus("(CAG)+")
     final_params = {Haplotype.HOM: params(0)}
     calls = [build_consensus_call(locus, [], [0], Haplotype.HOM, 3, 1)]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=False)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=False)
 
     info = info_values(record)
     assert info["RN"] == "0"
@@ -200,7 +207,7 @@ def test_zero_copy_allele_reports_known_zero_lps_count(ref_path: Path):
     assert info["LPSRUC"] == "0"
 
 
-def test_zero_copy_first_allele_keeps_alt_order(ref_path: Path):
+def test_zero_copy_first_allele_keeps_alt_order(ref: Fasta):
     locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(0), Haplotype.H2: params(5)}
     calls = [
@@ -208,26 +215,26 @@ def test_zero_copy_first_allele_keeps_alt_order(ref_path: Path):
         build_consensus_call(locus, ["CAG"] * 5, [5], Haplotype.H2, 11, 2),
     ]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=True)
 
     info = info_values(record)
     assert info["LPSRUS"] == ".,CAG"
     assert info["LPSRUC"] == "0,5"
 
 
-def test_consensus_is_opt_in_info_field(ref_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_consensus_is_opt_in_info_field(ref: Fasta, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config, "add_consensus_to_vcf", True)
     locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(0), Haplotype.H2: params(5)}
     calls = [build_consensus_call(locus, ["CAG"] * 5, [5], Haplotype.H2, 11, 2)]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=True)
 
     assert info_values(record)["CONS"] == ".,CAGCAGCAGCAGCAG"
     assert "CONS" not in format_values(record)
 
 
-def test_consensus_is_missing_for_allele_without_units_in_satellite(ref_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_consensus_is_missing_for_allele_without_units_in_satellite(ref: Fasta, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config, "add_consensus_to_vcf", True)
     locus = make_locus("(CAG)*(CCG)*")
     final_params = {Haplotype.H1: params(5, 0), Haplotype.H2: params(8, 4)}
@@ -236,7 +243,7 @@ def test_consensus_is_missing_for_allele_without_units_in_satellite(ref_path: Pa
         build_consensus_call(locus, ["CAG"] * 8 + ["CCG"] * 4, [8, 4], Haplotype.H2, 10, 0),
     ]
 
-    _, ccg = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+    _, ccg = create_vcf_records(calls, ref, final_params, locus_is_het=True)
 
     info = info_values(ccg)
     assert info["RN"] == "0,1"
@@ -245,13 +252,13 @@ def test_consensus_is_missing_for_allele_without_units_in_satellite(ref_path: Pa
     assert info["LPSRUC"] == "0,4"
 
 
-def test_repeat_absent_from_reference_has_svlen_one(ref_path: Path):
+def test_repeat_absent_from_reference_has_svlen_one(ref: Fasta):
     locus = make_locus("(CAG)+")
     locus.satellites[0].location = Location("chr1", 1000, 1000)
     final_params = {Haplotype.HOM: params(5)}
     calls = [build_consensus_call(locus, ["CAG"] * 5, [5], Haplotype.HOM, 10, 0)]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=False)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=False)
 
     fields = record.split("\t")
     assert (fields[1], fields[3]) == ("1000", "T")
@@ -266,7 +273,7 @@ def test_header_declares_threshold_fields(ref_path: Path):
     assert "##INFO=<ID=PATHOGENICMIN,Number=1,Type=Integer," in header
 
 
-def test_thresholds_add_status_per_allele(ref_path: Path):
+def test_thresholds_add_status_per_allele(ref: Fasta):
     locus = make_locus("(CAG)*CAACAG(CCG)*")
     locus.satellites[0].benign_max = 26
     locus.satellites[0].pathogenic_min = 36
@@ -276,20 +283,20 @@ def test_thresholds_add_status_per_allele(ref_path: Path):
         build_consensus_call(locus, ["CAG"] * 45 + ["CAACAG"] + ["CCG"] * 10, [45, 10], Haplotype.H2, 10, 0),
     ]
 
-    cag, ccg = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+    cag, ccg = create_vcf_records(calls, ref, final_params, locus_is_het=True)
 
     info = info_values(cag)
     assert (info["STRSTATUS"], info["BENIGNMAX"], info["PATHOGENICMIN"]) == ("normal,pathogenic", "26", "36")
     assert not {"STRSTATUS", "BENIGNMAX", "PATHOGENICMIN"} & info_values(ccg).keys()
 
 
-def test_single_threshold_omits_the_other(ref_path: Path):
+def test_single_threshold_omits_the_other(ref: Fasta):
     locus = make_locus("(CAG)+")
     locus.satellites[0].pathogenic_min = 36
     final_params = {Haplotype.HOM: params(30)}
     calls = [build_consensus_call(locus, ["CAG"] * 30, [30], Haplotype.HOM, 10, 0)]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=False)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=False)
 
     info = info_values(record)
     assert (info["STRSTATUS"], info["PATHOGENICMIN"]) == ("normal", "36")
@@ -297,11 +304,11 @@ def test_single_threshold_omits_the_other(ref_path: Path):
 
 
 @pytest.mark.parametrize(("depth", "filter_id"), [(0, "NoReads"), (54, "NoCall")])
-def test_no_call_record(ref_path: Path, depth: int, filter_id: str):
+def test_no_call_record(ref_path: Path, ref: Fasta, depth: int, filter_id: str):
     locus = make_locus("(CAG)+")
     locus.satellites[0].benign_max = 26
 
-    (record,) = create_no_call_records(locus, ref_path, depth)
+    (record,) = create_no_call_records(locus, ref, depth)
 
     assert record.split("\t")[4:7] == [".", ".", filter_id]
     assert info_values(record) == {"LOCUSID": "test", "REPID": locus.satellites[0].id, "BENIGNMAX": "26"}
@@ -309,7 +316,7 @@ def test_no_call_record(ref_path: Path, depth: int, filter_id: str):
     assert f"##FILTER=<ID={filter_id}," in generate_vcf_header(ref_path, "sample")
 
 
-def test_refdiv_reports_consensus_divergence_per_allele(ref_path: Path):
+def test_refdiv_reports_consensus_divergence_per_allele(ref_path: Path, ref: Fasta):
     locus = make_locus("(CAG)+")
     final_params = {Haplotype.H1: params(10), Haplotype.H2: params(10)}
     calls = [
@@ -317,7 +324,7 @@ def test_refdiv_reports_consensus_divergence_per_allele(ref_path: Path):
         build_consensus_call(locus, ["CAG"] * 3 + ["TTT"] * 4 + ["CAG"] * 3, [10], Haplotype.H2, 10, 0),
     ]
 
-    (record,) = create_vcf_records(calls, ref_path, final_params, locus_is_het=True)
+    (record,) = create_vcf_records(calls, ref, final_params, locus_is_het=True)
 
     pure, divergent = (float(x) for x in info_values(record)["REFDIV"].split(","))
     assert pure == 0

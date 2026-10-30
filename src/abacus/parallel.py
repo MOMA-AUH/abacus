@@ -1,4 +1,4 @@
-"""Serial and bounded process-pool execution with process-local alignment inputs."""
+"""Serial and bounded process-pool execution with process-local alignment and reference inputs."""
 
 import os
 from collections.abc import Callable, Iterable, Iterator
@@ -13,6 +13,7 @@ from multiprocessing import get_context
 from multiprocessing.util import Finalize
 from pathlib import Path
 
+from pyfaidx import Fasta
 from pysam import AlignmentFile
 
 from abacus.config import config
@@ -22,6 +23,7 @@ from abacus.preprocess import open_alignment_file
 from abacus.utils import Sex
 
 _worker_bamfile: AlignmentFile | None = None
+_worker_reference: Fasta | None = None
 _locus_id = ""
 
 
@@ -38,7 +40,7 @@ def _apply_settings(settings: dict) -> None:
 
 
 def _worker_init(settings: dict, log_queue, log_level: int, bam: Path, ref: Path) -> None:
-    global _worker_bamfile
+    global _worker_bamfile, _worker_reference
 
     logger.handlers.clear()
     logger.addHandler(QueueHandler(log_queue))
@@ -47,10 +49,12 @@ def _worker_init(settings: dict, log_queue, log_level: int, bam: Path, ref: Path
     _apply_settings(settings)
     _worker_bamfile = open_alignment_file(bam, ref)
     Finalize(None, _worker_bamfile.close, exitpriority=10)
+    _worker_reference = Fasta(ref)
+    Finalize(None, _worker_reference.close, exitpriority=10)
     logger.debug("Worker %d ready", os.getpid())
 
 
-def _call_locus(process_locus: Callable, locus: Locus, ref: Path, sex: Sex, bamfile: AlignmentFile) -> dict:
+def _call_locus(process_locus: Callable, locus: Locus, ref: Fasta, sex: Sex, bamfile: AlignmentFile) -> dict:
     global _locus_id
 
     _locus_id = locus.id
@@ -63,9 +67,10 @@ def _call_locus(process_locus: Callable, locus: Locus, ref: Path, sex: Sex, bamf
         _locus_id = ""
 
 
-def _worker_call(process_locus: Callable, locus: Locus, ref: Path, sex: Sex) -> dict:
+def _worker_call(process_locus: Callable, locus: Locus, sex: Sex) -> dict:
     assert _worker_bamfile is not None
-    return _call_locus(process_locus, locus, ref, sex, _worker_bamfile)
+    assert _worker_reference is not None
+    return _call_locus(process_locus, locus, _worker_reference, sex, _worker_bamfile)
 
 
 def _completed_results(pool, process_locus, loci, pending: set[Future], limit: int) -> Iterator[dict]:
@@ -120,8 +125,8 @@ def locus_results(
         logger.addFilter(context_filter)
         try:
             _apply_settings(settings)
-            with open_alignment_file(bam, ref) as bamfile:
-                results = (_call_locus(process_locus, locus, ref, sex, bamfile) for locus in source)
+            with open_alignment_file(bam, ref) as bamfile, Fasta(ref) as reference:
+                results = (_call_locus(process_locus, locus, reference, sex, bamfile) for locus in source)
                 try:
                     yield results
                 finally:
@@ -149,7 +154,7 @@ def locus_results(
         )
         # Keep logging alive until workers have exited and flushed their records.
         cleanup.callback(pool.shutdown, wait=True, cancel_futures=True)
-        process_fn = partial(_worker_call, process_locus, ref=ref, sex=sex)
+        process_fn = partial(_worker_call, process_locus, sex=sex)
         results = _completed_results(pool, process_fn, source, pending, 2 * workers)
         try:
             yield results

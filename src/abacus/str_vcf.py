@@ -81,12 +81,11 @@ def _satellite_kmers(consensus_call: ConsensusCall, satellite_idx: int) -> list[
 
 def create_vcf_records(
     consensus_calls: list[ConsensusCall],
-    ref_path: Path,
+    ref: Fasta,
     final_params: dict[Haplotype, HomozygousParameters],
     locus_is_het: bool,
 ) -> list[str]:
-    """Create a VCF record for each satellite of a single STR locus."""
-    ref = Fasta(ref_path)
+    """Create a VCF record for each satellite using the caller-owned reference reader."""
     if not consensus_calls:
         return []
 
@@ -186,9 +185,8 @@ def create_vcf_records(
     return records
 
 
-def create_no_call_records(locus: Locus, ref_path: Path, depth: int) -> list[str]:
-    """Create a no-call VCF record for each satellite of a locus without a call."""
-    ref = Fasta(ref_path)
+def create_no_call_records(locus: Locus, ref: Fasta, depth: int) -> list[str]:
+    """Create no-call records using the caller-owned reference reader."""
     records = []
     for i, satellite in enumerate(locus.satellites):
         info = {"LOCUSID": locus.id, "REPID": satellite.id}
