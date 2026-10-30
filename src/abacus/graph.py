@@ -723,7 +723,7 @@ def get_graph_alignments(reads: list[Read], graph: nx.DiGraph, minimizer_window:
 
         with timed("minigraph alignment") as t:
             process = subprocess.run(
-                ["minigraph", "-c", "-j", "0.3", "-x", "lr", "-w", str(minimizer_window), str(input_graph_gfa), "-"],
+                ["minigraph", "-t", "1", "-c", "-j", "0.3", "-x", "lr", "-w", str(minimizer_window), str(input_graph_gfa), "-"],
                 input=fastq_str,
                 capture_output=True,
                 text=True,
