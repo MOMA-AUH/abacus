@@ -67,47 +67,6 @@ test_param_summary_csv <- params$test_param_summary_csv
 final_param_summary_csv <- params$final_param_summary_csv
 ```
 
-```{r Test example data, eval=FALSE}
-reads_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.read_info.csv"
-filtered_reads_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.filtered_reads_info.csv"
-clustering_summary_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.haplotype_info.csv"
-test_summary_csv <- "/faststorage/project/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/test.summary.csv"
-```
-
-```{r Test example data - local, eval=FALSE}
-# Variables
-abacus_version <- "dev"
-sample_id <- "test"
-input_bam <- "path/to/bam"
-str_catalog <- "path/to/str_catalog"
-
-# Data files
-reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/reads.csv"
-filtered_reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/filtered_reads.csv"
-consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/consensus.csv"
-clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/haplotypes.csv"
-test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/summary.csv"
-test_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/test_parameter_summary.csv"
-final_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/abacus_output/final_parameter_summary.csv"
-
-
-reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/reads.csv"
-filtered_reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/filtered_reads.csv"
-consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/consensus.csv"
-clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/haplotypes.csv"
-test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/summary.csv"
-test_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/test_parameter_summary.csv"
-final_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/BACKUP/devel/simond/abacus/testing/coriell_samples/coriell_sample_outputs/abacus_output/final_parameter_summary.csv"
-
-reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//reads.csv"
-filtered_reads_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//filtered_reads.csv"
-consensus_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//consensus.csv"
-clustering_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//haplotypes.csv"
-test_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//summary.csv"
-test_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//test_parameter_summary.csv"
-final_param_summary_csv <- "~/GenomeDK/MomaNanoporeDevelopment/NO_BACKUP/devel/simond/abacus/testing//new_coriell_samples/coriell_sample_outputs/tmp_abacus_NA03620_N430_0042//final_parameter_summary.csv"
-```
-
 ```{r Load data}
 reads_df <- read_csv(reads_csv)
 filtered_reads_df <- read_csv(filtered_reads_csv)
@@ -134,6 +93,7 @@ ATTENTION_COLOR <- "#FF5733"
 
 HAPLOTYPE_COLORS <- c("#308EFF", "#30CDFF", "#30FF60", "#C030FF", ATTENTION_COLOR)
 names(HAPLOTYPE_COLORS) <- c("h1", "h2", "hom", "outlier", "qc_filtered")
+STRAND_COLORS <- c("-" = "grey35", "+" = "grey70")
 ```
 
 ```{r Functions}
@@ -156,7 +116,7 @@ wrangle_reads_data <- function(reads_df) {
     mutate(
       # All-empty CSV columns may be logical; normalize to text.
       across(
-        c(obs_kmer_string, ref_kmer_string, mod_5mc_kmer_string, qual_kmer_string),
+        c(obs_kmer_string, ref_kmer_string, mod_5mc_kmer_string),
         ~ replace_na(as.character(.x), "")
       ),
       # Empty sequences have zero kmers.
@@ -176,9 +136,10 @@ wrangle_reads_data <- function(reads_df) {
         alignment_type == "spanning" ~ "Spanning"
       )
     ) %>%
-    # Arrange reads by haplotype, alignment_type, mapping_start, length and sequence
+    # Number reads once in group order, then by alignment type, length and sequence.
     arrange(
       haplotype,
+      factor(strand, levels = c("-", "+")),
       alignment_type_fct,
       if_else(
         alignment_type == "right_flanking",
@@ -215,22 +176,6 @@ mod_ascii_to_prob <- function(mod_ascii) {
   return(mod_prob)
 }
 
-ascii_to_qual <- function(ascii) {
-  # Check if ascii is empty
-  if (nchar(ascii) == 0) {
-    return(0)
-  }
-  # Convert to numeric
-  ascii_int <- ascii %>%
-    charToRaw() %>%
-    as.numeric()
-  # Correct for ASCII values
-  quals <- ascii_int - 33
-  # Return mean quality
-  qual <- mean(quals, na.rm = TRUE)
-  return(qual)
-}
-
 wrangle_reads_to_kmers <- function(reads_df) {
   reads_df %>%
     # Get one line per kmer
@@ -238,10 +183,9 @@ wrangle_reads_to_kmers <- function(reads_df) {
       kmer = str_split(obs_kmer_string, fixed("|")),
       ref_kmer = str_split(ref_kmer_string, fixed("|")),
       mod_kmer = str_split(mod_5mc_kmer_string, fixed("|")),
-      qual_kmer = str_split(qual_kmer_string, fixed("|")),
     ) %>%
     unnest_longer(
-      col = c(kmer, ref_kmer, mod_kmer, qual_kmer),
+      col = c(kmer, ref_kmer, mod_kmer),
       values_to = "{col}",
       indices_to = "{col}_idx"
     ) %>%
@@ -250,12 +194,10 @@ wrangle_reads_to_kmers <- function(reads_df) {
       kmer = if_else(is.na(kmer), "", kmer),
       ref_kmer = if_else(is.na(ref_kmer), "", ref_kmer),
       mod_kmer = if_else(is.na(mod_kmer), "", mod_kmer),
-      qual_kmer = if_else(is.na(qual_kmer), "", qual_kmer),
     ) %>%
     # Translated mod kmer to probability from ASCII value (33-43 -> 0,10,20,...,100)
     mutate(
-      mod_prob = vapply(mod_kmer, mod_ascii_to_prob, numeric(1), USE.NAMES = FALSE),
-      qual = vapply(qual_kmer, ascii_to_qual, numeric(1), USE.NAMES = FALSE)
+      mod_prob = vapply(mod_kmer, mod_ascii_to_prob, numeric(1), USE.NAMES = FALSE)
     )
 }
 
@@ -310,39 +252,29 @@ wrangle_kmer_plot_df <- function(kmer_df) {
 }
 
 # Function to create kmer plots from an already-wrangled kmer_plot_df (see wrangle_kmer_plot_df)
-create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_by_qual = FALSE, facet_by_strand = FALSE) {
-  if (facet_by_strand) {
-    kmer_plot_df <- kmer_plot_df %>%
-      mutate(haplotype_strand = factor(paste(haplotype, strand))) %>%
-      group_by(haplotype_strand) %>%
-      mutate(read_id = as.integer(factor(read_id))) %>%
-      ungroup()
-    facet_var <- "haplotype_strand"
-  } else {
-    facet_var <- "haplotype"
-  }
-
-  # Start plotting
-  plot <- ggplot()
-
-  # Add horizontal lines for each read
+create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, color_by_strand = TRUE) {
   hz_lines_df <- kmer_plot_df %>%
-    distinct(read_id, alignment_type_txt, start, end, .data[[facet_var]])
+    distinct(read_id, alignment_type_txt, start, end, strand, haplotype)
 
-  plot <- plot +
-    geom_segment(
-      aes(
-        x = start, xend = end,
-        y = read_id, yend = read_id,
-        # alpha = alignment_type_txt
-      ),
-      lwd = 1,
-      # Round ends
-      lineend = "round",
-      data = hz_lines_df
-    )
-  # scale_alpha_manual(values = c("Spanning" = 1, "Flanking" = 0.4)) +
-  # labs(alpha = "Alignment type")
+  plot <- ggplot()
+  if (color_by_strand) {
+    plot <- plot +
+      geom_segment(
+        aes(x = start, xend = end, y = read_id, yend = read_id, color = strand),
+        lwd = 0.7, lineend = "butt", data = hz_lines_df
+      ) +
+      scale_color_manual(
+        values = STRAND_COLORS,
+        breaks = names(STRAND_COLORS),
+        name = "Strand"
+      )
+  } else {
+    plot <- plot +
+      geom_segment(
+        aes(x = start, xend = end, y = read_id, yend = read_id),
+        lwd = 0.7, lineend = "butt", data = hz_lines_df
+      )
+  }
 
   # Get "dimensionality" of plot
   n_reads <- nrow(hz_lines_df)
@@ -375,16 +307,15 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
           aes(
             x = cor_kmer_idx,
             y = read_id,
-            col = kmer,
-            alpha = qual
+            fill = kmer
           ),
-          size = 5,
+          shape = 21, stroke = 0, size = 5,
           data = filter(kmer_plot_df, n_kmer > 0)
         ) +
         # Add color palette
-        scale_color_manual(
+        scale_fill_manual(
           values = kmer_color_palette,
-          name = "K-mer\n(ord. by ref., then freq.)"
+          name = "K-mer"
         )
     } else {
       plot <- plot +
@@ -392,47 +323,33 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
           aes(
             x = cor_kmer_idx,
             y = read_id,
-            fill = kmer,
-            alpha = qual
+            fill = kmer
           ),
           data = filter(kmer_plot_df, n_kmer > 0)
         ) +
         # Add color palette
         scale_fill_manual(
           values = kmer_color_palette,
-          name = "K-mer\n(ord. by ref., then freq.)"
+          name = "K-mer"
         )
-    }
-
-    # Handle if alpha is used
-    if (shade_by_qual) {
-      plot <- plot +
-        scale_alpha_continuous(
-          limits = c(20, 40),
-          name = "Quality"
-        )
-    } else {
-      plot <- plot +
-        scale_alpha_continuous(limits = c(-1, -1)) +
-        guides(alpha = "none")
     }
   } else if (color_by == "mod") {
     # Add points/tiles and color by mod probability
     if (n_reads < ABACUS_PLOT_MAX_POINT_READS && n_kmers < ABACUS_PLOT_MAX_POINT_KMERS) {
       plot <- plot +
         geom_point(
-          aes(x = cor_kmer_idx, y = read_id, col = mod_prob),
-          size = 5,
+          aes(x = cor_kmer_idx, y = read_id, fill = mod_prob),
+          shape = 21, stroke = 0, size = 5,
           data = filter(kmer_plot_df, n_kmer > 0)
         ) +
         # Add color gradient with low (0) = "blue", high (100) = "red", NA = "grey" (similar to IGV)
-        scale_color_gradient(
+        scale_fill_gradient(
           low = "blue",
           high = "red",
           na.value = "grey",
           limits = c(0, 100)
         ) +
-        labs(color = "5mC (prob.)")
+        labs(fill = "5mC")
     } else {
       plot <- plot +
         geom_tile(
@@ -446,7 +363,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
           na.value = "grey",
           limits = c(0, 100)
         ) +
-        labs(fill = "5mC (prob.)")
+        labs(fill = "5mC")
     }
   } else {
     # Error
@@ -454,47 +371,58 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, shade_b
   }
 
   # Add details to plot
-  min_kmer_idx <- min(kmer_plot_df$cor_kmer_idx)
+  # Choose one interval for the whole plot, so small facets do not get denser ticks.
+  read_id_range <- range(hz_lines_df$read_id)
+  read_tick_step <- max(1, round(diff(pretty(read_id_range, n = 15))[1]))
+  read_ticks <- seq(ceiling(read_id_range[1] / read_tick_step) * read_tick_step, read_id_range[2], by = read_tick_step)
 
   vertical_fixer_df <- kmer_plot_df %>%
-    distinct(read_id, .data[[facet_var]]) %>%
-    group_by(.data[[facet_var]]) %>%
+    distinct(read_id, haplotype) %>%
+    group_by(haplotype) %>%
     summarise(
       min_read_idx = min(read_id),
       max_read_idx = max(read_id),
-      # Group size
       group_size = n(),
+      .groups = "drop"
     ) %>%
-    ungroup() %>%
     mutate(
-      # Add space between groups
-      min_read_idx = if_else(group_size < 10, min_read_idx - 0.5, min_read_idx),
-      max_read_idx = if_else(group_size < 10, max_read_idx + 0.5, max_read_idx),
+      first_read_idx = min_read_idx,
+      last_read_idx = max_read_idx,
+      mid_read_idx = (min_read_idx + max_read_idx) / 2,
+      # Keep sparse panels readable as coverage grows, without changing read IDs.
+      padding = pmax(if_else(group_size < 10, 0.5, 0), (max(3, n_reads / 12) - (max_read_idx - min_read_idx)) / 2),
+      min_read_idx = min_read_idx - padding,
+      max_read_idx = max_read_idx + padding,
       x = 0.5
     )
 
+  # Padding should not introduce ticks belonging to a neighbouring read group.
+  read_breaks <- function(limits) {
+    group <- vertical_fixer_df[which.min(abs(vertical_fixer_df$mid_read_idx - mean(limits))), ]
+    read_ticks[read_ticks >= group$first_read_idx & read_ticks <= group$last_read_idx]
+  }
+
   plot <- plot +
     facet_grid(
-      rows = vars(.data[[facet_var]]),
+      rows = vars(haplotype),
+      labeller = labeller(.default = function(x) sub("^OUTLIERS?", "OUT", toupper(x))),
       scales = "free_y",
       space = "free_y"
     ) +
-    # Fix y axis with "fake" data, i.e. transparent lines
     geom_segment(
-      aes(
-        x = x, xend = x,
-        y = min_read_idx, yend = max_read_idx,
-      ),
+      aes(x = x, xend = x, y = min_read_idx, yend = max_read_idx),
       data = vertical_fixer_df,
-      alpha = 0,
+      alpha = 0
     ) +
     labs(
       x = "K-mer index",
       y = "Read ID",
     ) +
-    # Breaks for y: Every integer, pretty, start at 1
-    scale_y_reverse(breaks = function(x) unique(round(sort(pmax(min_kmer_idx, pretty(x)))))) +
-    # Remove "minor" ticks
+    scale_x_continuous(
+      breaks = function(x) unique(round(pretty(x))),
+      labels = function(x) formatC(x, format = "f", digits = 0)
+    ) +
+    scale_y_reverse(breaks = read_breaks, labels = function(x) formatC(x, format = "f", digits = 0)) +
     theme(
       panel.grid.minor = element_blank()
     )
@@ -877,7 +805,7 @@ for (i in seq_len(nrow(regions))) {
   cat("\n\n")
 
   cat("\n\n")
-  cat("A visual representation illustrating the distribution of individual $k$-mers as colored *beads* along a linear sequence, with each horizontal sequence representing individual reads. The reads are grouped into haplotypes called by an unsupervised clustering algorithm (EM). Additionally, a separate group is designated for outlier reads. A read can be classified as an outlier either based on an unusual $k$-mer count or nucleotide sequence. There are 3 versions of the plot where the beads are colored by the observed $k$-mer, the reference $k$-mer, and the methylation probability of the $k$-mer. Spanning and flanking reads are shown as black and grey lines, respectively.")
+  cat("Each row represents a read, with colored beads or tiles showing its $k$-mers. Panels are grouped by the haplotype inferred by Abacus, with outlier reads shown separately. Within each panel, reads are sorted by strand (- then +); line colors indicate strand. The tabs show observed sequence, reference sequence, and methylation probability. Flanking reads align to the left or right edge according to their covered anchor.")
   cat("\n\n")
 
   kmer_df <- wrangle_reads_to_kmers(reads_region_df)
@@ -916,7 +844,7 @@ for (i in seq_len(nrow(regions))) {
 
   kmer_color_palette <- generate_kmer_color_palette(top_kmers)
 
-  # Wrangle once, reuse across the Sequence/Sequence-detailed/Reference/Methylation tabs below
+  # Wrangle once, reuse across the Sequence/Reference/Methylation tabs below
   kmer_plot_df_haplotyped <- if (no_haplotype_reads) NULL else wrangle_kmer_plot_df(kmer_haplotyped_df)
 
   cat("\n\n")
@@ -927,17 +855,6 @@ for (i in seq_len(nrow(regions))) {
     cat("There are no haplotyped reads for this locus.")
   } else {
     kmer_plot <- create_kmer_plot(kmer_plot_df_haplotyped, "kmer", kmer_color_palette)
-    print(kmer_plot)
-  }
-
-  cat("\n\n")
-  cat("#### Sequence (detailed)")
-  cat("\n\n")
-
-  if (no_haplotype_reads) {
-    cat("There are no haplotyped reads for this locus.")
-  } else {
-    kmer_plot <- create_kmer_plot(kmer_plot_df_haplotyped, "kmer", kmer_color_palette, shade_by_qual = TRUE, facet_by_strand = TRUE)
     print(kmer_plot)
   }
 
@@ -1258,7 +1175,7 @@ for (i in seq_len(nrow(regions))) {
     consensus_kmer_df <- consensus_region_df %>%
       wrangle_reads_to_kmers()
 
-    consensus_kmer_plot <- create_kmer_plot(wrangle_kmer_plot_df(consensus_kmer_df), "kmer", kmer_color_palette)
+    consensus_kmer_plot <- create_kmer_plot(wrangle_kmer_plot_df(consensus_kmer_df), "kmer", kmer_color_palette, color_by_strand = FALSE)
     print(consensus_kmer_plot)
   } else {
     cat("There is no consensus sequence for this locus.")

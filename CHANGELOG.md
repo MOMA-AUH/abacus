@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 - `REFDIV` INFO field: each allele's divergence from the catalog locus structure, so alleles the catalog motif doesn't describe are visible
 ### Changed
+- Merged sequence plots with haplotype facets and grey strand lines; removed quality shading
 - **Breaking:** VCF output now follows VCFv4.5 and uses the `<CNV:TR>` tandem repeat representation (see the README for all fields):
   - `POS`/`REF` is the padding base before the repeat; `POS` was previously reported with a reference base it did not match
   - ALT alleles are `<CNV:TR>` instead of `<STRn>`
@@ -38,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
+- Kept sparse report headers readable and shortened outlier labels to `OUT`
 - Consensus mapping failures now retry with denser seeds, then emit `NoCall` instead of crashing
 - Report handling and display of 0-copy alleles
 - `LPSRUC` is `0` (not `.`) for zero-copy alleles
