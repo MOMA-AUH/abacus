@@ -1077,6 +1077,8 @@ for (i in seq_len(nrow(regions))) {
         background = HEADER_BACKGROUND
       ) %>%
       collapse_rows(columns = 1, valign = "middle") %>%
+      # Keep standalone strand signs from becoming Markdown list markers.
+      htmltools::htmlPreserve() %>%
       cat()
   }
 
@@ -1118,6 +1120,7 @@ for (i in seq_len(nrow(regions))) {
         0,
         background = HEADER_BACKGROUND
       ) %>%
+      htmltools::htmlPreserve() %>%
       cat()
   }
 
@@ -1140,6 +1143,7 @@ for (i in seq_len(nrow(regions))) {
         0,
         background = HEADER_BACKGROUND
       ) %>%
+      htmltools::htmlPreserve() %>%
       cat()
   } else {
     cat("There are no filtered reads for this locus.\n")
