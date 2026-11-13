@@ -43,30 +43,26 @@ Results are saved as an HTML report (STR loci, called alleles, and visualization
 
 ## Installation
 
-### Via conda (recommended)
+### From conda
 ```sh
 conda install bioconda::abacus-str
 ```
 
 ### From source
-To set up the environment for this project, follow these steps:
 
-1. Clone the repository:
-    ```sh
-    git clone https://github.com/MOMA-AUH/abacus
-    cd abacus
-    ```
+Use `env.yml` to install all dependencies; `pip` alone does not install external tools.
 
-2. Create and activate the conda environment using the provided `env.yml` file:
-    ```sh
-    conda env create -f env.yml -n abacus
-    conda activate abacus
-    ```
+```sh
+git clone https://github.com/MOMA-AUH/abacus
+cd abacus
+conda env create -f env.yml -n abacus
+conda activate abacus
+python -m pip install --no-deps .
+```
 
-3. Install Abacus using `pip`:
-    ```sh
-    pip install .
-    ```
+For development, clone with `--branch develop` and add `-e` to the pip command for an editable installation.
+
+To update, activate the environment, run `git pull --ff-only` and `conda env update -f env.yml -n abacus`, then repeat the pip command.
 
 ## Basic usage
 Core arguments:

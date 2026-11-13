@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import itertools
 import re
-import subprocess
 import tempfile
 from collections import Counter
 from dataclasses import dataclass, field, replace
@@ -15,6 +14,7 @@ from Bio.Align import PairwiseAligner
 from Levenshtein import distance as levenshtein_distance
 
 from abacus.config import config
+from abacus.external_tools import run_tool
 from abacus.locus import Locus
 from abacus.logging import logger
 from abacus.read import FilteredRead, Read
@@ -722,20 +722,11 @@ def get_graph_alignments(reads: list[Read], graph: nx.DiGraph, minimizer_window:
         input_graph_gfa.write_text(graph_str)
 
         with timed("minigraph alignment") as t:
-            process = subprocess.run(
+            process = run_tool(
                 ["minigraph", "-t", "1", "-c", "-j", "0.3", "-x", "lr", "-w", str(minimizer_window), str(input_graph_gfa), "-"],
                 input=fastq_str,
-                capture_output=True,
-                text=True,
-                check=False,
             )
             t.info = f"{len(reads)} reads"
-        if process.returncode != 0:
-            logger.error("minigraph stdout:\n%s", process.stdout)
-            logger.debug("minigraph stderr:\n%s", process.stderr)
-            msg = f"minigraph failed with return code {process.returncode}"
-            raise RuntimeError(msg)
-
         output_string = process.stdout
 
     gaf_lines_by_read_name = {line.split("\t", 1)[0]: line for line in output_string.split("\n") if line}

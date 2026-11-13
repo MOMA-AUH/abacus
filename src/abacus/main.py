@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import faulthandler
 import logging as _logging
-import subprocess
+import shutil
 
 faulthandler.enable()
 from collections import Counter
@@ -18,6 +18,7 @@ import typer
 from abacus import __version__
 from abacus.config import config
 from abacus.consensus import build_consensus_for_locus
+from abacus.external_tools import run_tool
 from abacus.filtering import filter_low_qual_read_calls, filter_outlier_qual_read_calls
 from abacus.graph import (
     ReadCall,
@@ -627,6 +628,13 @@ def abacus(
     if not loci:
         logger.warning("No loci to process; writing a header-only VCF and no report")
 
+    if loci:
+        tools = ["minigraph", "Rscript"] if report is not None else ["minigraph"]
+        missing = [tool for tool in tools if shutil.which(tool) is None]
+        if missing:
+            logger.error("Missing required executable(s) on PATH: %s", ", ".join(missing))
+            raise typer.Exit(code=1)
+
     # Create tmp directory before processing so partial results are written on failure
     # Named after the VCF, not the sample ID, so parallel runs of one sample (e.g. catalog chunks) don't share it
     tmp_dir = vcf.parent / f"tmp_abacus_{vcf.name.removesuffix('.gz').removesuffix('.vcf')}"
@@ -683,47 +691,42 @@ def abacus(
         report_template = Path(__file__).parent / "scripts" / "report_template.Rmd"
         logo_path = Path(__file__).parent.parent.parent / "img" / "logo.png"
 
-        with timed("Rscript render"):
-            process = subprocess.run(
-                [
-                    "Rscript",
-                    "-e",
-                    f"""
-                            rmarkdown::render('{report_template}', \
-                                output_file='{report.name}', \
-                                output_dir='{report.parent}', \
-                                intermediates_dir='{tmp_dir}', \
-                                params=list( \
-                                    abacus_version = '{__version__}', \
-                                    sample_id = '{sample_id}', \
-                                    input_bam = '{bam}', \
-                                    str_catalog = '{str_catalog}', \
-                                    reads_csv = '{reads_csv}', \
-                                    filtered_reads_csv = '{filtered_reads_csv}', \
-                                    consensus_csv = '{consensus_csv}', \
-                                    clustering_summary_csv = '{haplotypes_csv}', \
-                                    test_summary_csv = '{summary_csv}', \
-                                    final_param_summary_csv = '{final_param_summary_csv}', \
-                                    test_param_summary_csv = '{test_params_summary_csv}', \
-                                    min_mean_str_quality = {config.min_mean_str_quality}, \
-                                    min_q10_str_quality = {config.min_q10_str_quality}, \
-                                    max_error_rate = {config.max_error_rate}, \
-                                    tol_ref_divergence = {config.tol_ref_divergence}, \
-                                    logo_path = '{logo_path}' \
+        try:
+            with timed("Rscript render"):
+                run_tool(
+                    [
+                        "Rscript",
+                        "-e",
+                        f"""
+                                rmarkdown::render('{report_template}', \
+                                    output_file='{report.name}', \
+                                    output_dir='{report.parent}', \
+                                    intermediates_dir='{tmp_dir}', \
+                                    params=list( \
+                                        abacus_version = '{__version__}', \
+                                        sample_id = '{sample_id}', \
+                                        input_bam = '{bam}', \
+                                        str_catalog = '{str_catalog}', \
+                                        reads_csv = '{reads_csv}', \
+                                        filtered_reads_csv = '{filtered_reads_csv}', \
+                                        consensus_csv = '{consensus_csv}', \
+                                        clustering_summary_csv = '{haplotypes_csv}', \
+                                        test_summary_csv = '{summary_csv}', \
+                                        final_param_summary_csv = '{final_param_summary_csv}', \
+                                        test_param_summary_csv = '{test_params_summary_csv}', \
+                                        min_mean_str_quality = {config.min_mean_str_quality}, \
+                                        min_q10_str_quality = {config.min_q10_str_quality}, \
+                                        max_error_rate = {config.max_error_rate}, \
+                                        tol_ref_divergence = {config.tol_ref_divergence}, \
+                                        logo_path = '{logo_path}' \
+                                    ) \
                                 ) \
-                            ) \
-                            """,
-                ],
-                text=True,
-                check=False,
-                capture_output=True,
-            )
-
-        if process.returncode != 0:
-            logger.debug("Rscript stdout:\n%s", process.stdout)
-            logger.debug("Rscript stderr:\n%s", process.stderr)
-            logger.error("Rscript failed with error code %d", process.returncode)
-            raise typer.Exit(code=1)
+                                """,
+                    ],
+                )
+        except RuntimeError:
+            logger.error("Report generation failed. VCF saved at %s; report inputs retained at %s", vcf, tmp_dir)
+            raise typer.Exit(code=1) from None
 
     if not keep_temp_files:
         logger.info("Cleaning up temporary files...")

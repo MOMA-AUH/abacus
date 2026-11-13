@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
+- External-tool errors now show the command and captured output without verbose mode; required executables are checked before processing loci
+- Documented development environment installation and updates, including minigraph and explicit Pandoc dependency
 - Report strand signs (`+` and `-`) displaying as bullet points in read information tables
 - Kept sparse report headers readable and shortened outlier labels to `OUT`
 - Consensus mapping failures now retry with denser seeds, then emit `NoCall` instead of crashing
