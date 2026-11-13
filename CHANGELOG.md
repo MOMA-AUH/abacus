@@ -30,8 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Faster read quality and 5mC probability conversion (native `bytes.translate`, in-place `bytearray` mutation)
 - Faster parameter estimation and report
 - Faster consensus search when some reads are much noisier than the rest: reads far from the consensus no longer propose changes
-- Faster and more accurate consensus search for long alleles
-- Consensus search 15x faster at high depth (min-support filter, early-terminate scoring, inline moves)
+- Improved consensus search accuracy and speed, up to 15x faster at high depth
 - Skip report payloads and CSV writes in VCF-only runs
 - Refactored locus execution in multiprocessing
 - Reduced I/O by reusing reference readers and keeping the temporary VCF stream open

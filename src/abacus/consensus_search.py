@@ -6,7 +6,7 @@
 #
 # 1. Initial consensus: a per-position vote at the target length (_initial_consensus).
 # 2. Each iteration aligns every read to the consensus and counts what the reads have at each
-#    position (_ColumnVotes). Reads far from the consensus (_voting_reads) don't vote, but are
+#    position (_ColumnVotes). Reads far from the consensus (_non_outlier_alignments) don't vote, but are
 #    still scored.
 #    a. Strong changes - more than half of the covering reads, on every strand, agree on a change -
 #       are applied all at once: substitutions, deletions and insertions, fitted back to the
@@ -14,7 +14,8 @@
 #       is kept if it improves the objective.
 #    b. Otherwise, disputed positions get scored substitutions and adjacent swaps. Each move is
 #       rescored only within SCORE_WINDOW units of it, and all improving moves at least two
-#       windows apart are applied together.
+#       windows apart are applied together. If the batch doesn't improve the full objective,
+#       fall back to the best individually improving move.
 #
 # Objective, compared in order: (summed OSA distance, composition penalty, summed squared
 # distance). OSA counts a shifted interruption as one transposition, the same as flattening it
@@ -24,6 +25,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from math import ceil, exp, lgamma, log
 from statistics import median
@@ -36,7 +38,7 @@ from rapidfuzz.distance import Levenshtein as RFLevenshtein
 STRAND_MARGIN = 1
 # Reads a strong change needs
 MIN_READ_SUPPORT = 2
-# A weak candidate needs at least this fraction of covering reads proposing the same change
+# Read-support fraction required by the strand-supported weak-candidate branch
 MIN_SUPPORT_FRACTION = 0.05
 # A read is an outlier only above this consensus error rate: the fraction of its kmers that differ
 # from the consensus
@@ -81,27 +83,23 @@ ScoredMove = tuple[Score, Move]
 _USABLE_CHARS = [chr(i) for i in range(33, 0x110000) if chr(i).isprintable()][:20000]
 
 
-def find_consensus(reads: list[KmerRead], length: int, max_iters: int = 100, trim_boundaries: bool = True) -> list[str]:
+def find_consensus(reads: list[KmerRead], length: int, max_iters: int = 100) -> list[str]:
     """Return the consensus kmer list of exactly `length` kmers for `reads`.
 
     Reads are (kmer list, "spanning"|"left"|"right" type, strand). Trims partial boundary kmers,
     encodes, runs the search, decodes.
-
-    `trim_boundaries=False` skips the trim, for a locus break: it is one full kmer whenever a read
-    reaches it, and with one read the trim would drop that kmer as uncorroborated.
     """
-    if trim_boundaries:
-        reads = _trim_partial_boundary_kmers(reads)
+    reads = _trim_partial_boundary_kmers(reads)
     encoded_reads, char_to_kmer = _encode_reads(reads)
-    result = _find_consensus_encoded(encoded_reads, length, max_iters=max_iters)
-    return [char_to_kmer[c] for c in result]
+    encoded_consensus = _find_consensus_encoded(encoded_reads, length, max_iters=max_iters)
+    return _decode_consensus(encoded_consensus, char_to_kmer)
 
 
 def _find_consensus_encoded(reads: list[EncodedRead], length: int, max_iters: int = 100) -> str:
     """Search for the consensus in single-char-per-kmer space; see find_consensus for the public API."""
     if length <= 0 or not reads:
         return ""
-    target_counts = _target_composition(reads)
+    expected_counts = _expected_composition(reads)
 
     # Each read's OSA distance to the part of the consensus it covers
     def distances_to(consensus: str) -> list[int]:
@@ -109,17 +107,16 @@ def _find_consensus_encoded(reads: list[EncodedRead], length: int, max_iters: in
 
     # Compared in order: see the module comment
     def objective(consensus: str, read_distances: list[int]) -> Score:
-        return (sum(read_distances), _composition_penalty(consensus, target_counts), sum(d * d for d in read_distances))
+        return (sum(read_distances), _composition_penalty(consensus, expected_counts), sum(d * d for d in read_distances))
 
     consensus = _initial_consensus(reads, length)
     for _ in range(max_iters):
         read_distances = distances_to(consensus)
         current_score = objective(consensus, read_distances)
         alignments = _align_reads(consensus, reads)
-        # Outlier reads don't vote but are scored; by id, as reads can be equal
-        voter_ids = {id(read) for read in _voting_reads(reads, read_distances)}
-        voter_alignments = [alignment for alignment, read in zip(alignments, reads, strict=True) if id(read) in voter_ids]
-        votes = _count_column_votes(consensus, voter_alignments)
+        # All reads are scored; only non-outliers propose changes.
+        voting_alignments = _non_outlier_alignments(alignments, read_distances)
+        votes = _count_column_votes(consensus, voting_alignments)
 
         # 1. Every strong change at once, kept if it improves the objective
         update = _apply_strong_changes(consensus, votes, length)
@@ -133,7 +130,7 @@ def _find_consensus_encoded(reads: list[EncodedRead], length: int, max_iters: in
             votes,
             alignments=alignments,
             read_distances=read_distances,
-            target_counts=target_counts,
+            expected_counts=expected_counts,
             current_score=current_score,
         )
         if update != consensus:
@@ -146,13 +143,15 @@ def _find_consensus_encoded(reads: list[EncodedRead], length: int, max_iters: in
 
 
 def _trim_partial_boundary_kmers(reads: list[KmerRead]) -> list[KmerRead]:
-    """Drop a flanking read's boundary kmer unless another read has it as an interior kmer.
+    """Trim uncorroborated flanking boundary kmers when interior evidence exists.
 
     The boundary kmer (last of a left-flanking read, first of a right-flanking one) may be a
-    partial unit, cut where the read ends. Only interior kmers corroborate it, so two reads cut at
-    the same point can't validate each other.
+    partial unit, cut where the read ends. Only interior kmers corroborate it.
+    With no interior kmers, keep nonempty reads rather than discard all evidence.
     """
     interior_kmers = {kmer for kmers, read_type, _ in reads for kmer in _interior(kmers, read_type)}
+    if not interior_kmers:
+        return [read for read in reads if read[0]]
     trimmed = []
     for kmers, read_type, strand in reads:
         kept = kmers
@@ -186,60 +185,71 @@ def _encode_reads(reads: list[KmerRead]) -> tuple[list[EncodedRead], dict[str, s
     return encoded, {v: k for k, v in kmer_to_char.items()}
 
 
+def _decode_consensus(encoded_consensus: str, char_to_kmer: dict[str, str]) -> list[str]:
+    """Convert the single-character consensus back to kmers."""
+    return [char_to_kmer[c] for c in encoded_consensus]
+
+
 def _initial_consensus(reads: list[EncodedRead], length: int) -> str:
-    """Return the initial consensus: a weighted vote per position at the target length.
+    """Seed the consensus with weighted position votes at the requested length.
 
-    A flanking read votes by offset from its anchored end. A spanning read k units off the target
-    has k length errors somewhere along it, so consensus position p maps to its position p + m
-    (p - m if short), with m ~ Binomial(k, p / (length - 1)) errors before p: its vote is spread
-    over k + 1 positions, sliding from its left end to its right end along the consensus. Ties, and
-    positions no read reaches, go to the most common kmer overall.
-
-    A kmer only wins a position if every strand present voted for it there (within STRAND_MARGIN),
-    so a strand-specific ONT error can't enter the consensus by majority.
+    Flanking reads vote from their anchored end. Spanning reads spread their votes over possible
+    offsets using binomial weights for the length difference. Prefer kmers supported on every
+    strand within STRAND_MARGIN; fall back to all votes if none qualify. Overall kmer frequency
+    breaks ties and fills positions with no votes.
     """
     kmer_totals = Counter(c for kmers, _, _ in reads for c in kmers)
     strands_present = {strand for _, _, strand in reads}
     position_votes: list[dict[str, float]] = [defaultdict(float) for _ in range(length)]
     strands_seen: dict[tuple[int, str], set[str]] = defaultdict(set)
+
+    # 1. Accumulate position votes, allowing for uncertainty in spanning-read offsets.
     for kmers, read_type, strand in reads:
-        n = len(kmers)
-        # A spanning read's length error, in units
-        k = abs(n - length)
-        # Log-factorials up to k, shared by every position
-        log_factorials = [lgamma(i + 1) for i in range(k + 1)] if read_type == "spanning" else []
-        for pos in range(length):
-            if read_type == "left":
-                read_votes = [(kmers[pos], 1.0)] if pos < n else []
-            elif read_type == "right":
-                # Anchored at the far end: count back from it
-                i = n - 1 - (length - 1 - pos)
-                read_votes = [(kmers[i], 1.0)] if 0 <= i < n else []
-            else:
-                # Expected share of the k length errors before pos
-                q = pos / (length - 1) if length > 1 else 0.5
-                read_votes = []
-                for m, weight in enumerate(_binomial_pmfs(k, q, log_factorials)):
-                    # Errors before pos (m) shift the read position by m
-                    i = pos + m if n >= length else pos - m
-                    if 0 <= i < n:
-                        read_votes.append((kmers[i], weight))
-            # One vote per read per position, split over its possible kmers
-            norm = sum(w for _, w in read_votes)
-            for kmer, w in read_votes:
-                position_votes[pos][kmer] += w / norm
-                strands_seen[pos, kmer].add(strand)
+        for pos, kmer, weight in _read_position_votes(kmers, read_type, length):
+            position_votes[pos][kmer] += weight
+            strands_seen[pos, kmer].add(strand)
+
+    # 2. Pick each position's winner, preferring support from every strand.
     consensus = []
-    for pos in range(length):
-        # Only kmers seen on every strand may win, if any are
-        eligible = {k: v for k, v in position_votes[pos].items() if _on_every_strand(strands_seen, pos, k, strands_present)} or position_votes[pos]
-        if not eligible:
+    for pos, votes in enumerate(position_votes):
+        eligible = {
+            k: w for k, w in votes.items() if _on_every_strand(strands_seen, pos, k, strands_present)
+        } or votes
+        if eligible:
+            # Rank by position vote first, then overall frequency to break ties.
+            consensus.append(max(eligible, key=lambda k: (eligible[k], kmer_totals[k])))
+        else:
             consensus.append(kmer_totals.most_common(1)[0][0])
-            continue
-        # Ties go to the kmer most common overall
-        best = max(eligible.values())
-        consensus.append(max((k for k, v in eligible.items() if v == best), key=lambda k: kmer_totals[k]))
     return "".join(consensus)
+
+
+def _read_position_votes(kmers: str, read_type: str, length: int) -> Iterator[tuple[int, str, float]]:
+    """Yield (consensus position, kmer, weight), with one total vote per covered position."""
+    n = len(kmers)
+    if read_type in ("left", "right") or n == length:
+        offset = length - n if read_type == "right" else 0
+        for i, kmer in enumerate(kmers):
+            pos = i + offset
+            if 0 <= pos < length:
+                yield pos, kmer, 1.0
+        return
+
+    k = abs(n - length)
+    # Reuse log-factorials across positions when computing binomial weights.
+    log_factorials = [lgamma(i + 1) for i in range(k + 1)]
+    direction = 1 if n > length else -1
+    for pos in range(length):
+        # Model errors before pos as Binomial(k, q), anchoring both ends.
+        q = pos / (length - 1) if length > 1 else 0.5
+        votes = []
+        for m, weight in enumerate(_binomial_pmfs(k, q, log_factorials)):
+            i = pos + direction * m
+            if 0 <= i < n:
+                votes.append((kmers[i], weight))
+        # Renormalize after excluding offsets outside a shorter read.
+        norm = sum(weight for _, weight in votes)
+        for kmer, weight in votes:
+            yield pos, kmer, weight / norm
 
 
 def _binomial_pmfs(k: int, q: float, log_factorials: list[float]) -> list[float]:
@@ -271,14 +281,14 @@ def _align_reads(consensus: str, reads: list[EncodedRead]) -> list[AlignedRead]:
     return alignments
 
 
-def _voting_reads(reads: list[EncodedRead], read_distances: list[int]) -> list[EncodedRead]:
-    """Return the reads that aren't outliers (median + 3.5 MAD) in consensus error rate."""
-    consensus_error_rates = [distance / max(len(kmers), 1) for distance, (kmers, _, _) in zip(read_distances, reads, strict=True)]
-    med = median(consensus_error_rates)
-    mad = median(abs(rate - med) for rate in consensus_error_rates)
+def _non_outlier_alignments(alignments: list[AlignedRead], read_distances: list[int]) -> list[AlignedRead]:
+    """Return alignments within the consensus error-rate threshold (median + 3.5 MAD)."""
+    error_rates = [distance / max(len(read.kmers), 1) for read, distance in zip(alignments, read_distances, strict=True)]
+    median_error_rate = median(error_rates)
+    mad = median(abs(rate - median_error_rate) for rate in error_rates)
     # Floor, so a MAD of 0 doesn't make every imperfect read an outlier
-    max_consensus_error_rate = max(med + 3.5 * mad, MIN_OUTLIER_CONSENSUS_ERROR_RATE)
-    return [read for read, rate in zip(reads, consensus_error_rates, strict=True) if rate <= max_consensus_error_rate]
+    max_error_rate = max(median_error_rate + 3.5 * mad, MIN_OUTLIER_CONSENSUS_ERROR_RATE)
+    return [read for read, rate in zip(alignments, error_rates, strict=True) if rate <= max_error_rate]
 
 
 @dataclass
@@ -291,9 +301,13 @@ class _ColumnVotes:
     insertions: list[Counter[str]]  # What they insert there
     strands_seen: dict[tuple[int, str], set[str]]  # Strands showing each (position, kmer), or (position, "+" + insertion)
     strands_present: set[str]
+    read_support: list[dict[str, int]]  # Bit set of supporting reads per position/token
+    next_read_bit: int = 1
 
     def add_read(self, read: AlignedRead) -> None:
         kmers, offset, opcodes, strand = read
+        read_bit = self.next_read_bit
+        self.next_read_bit <<= 1
         for op in opcodes:
             # One read kmer per consensus position
             if op.tag in ("equal", "replace"):
@@ -301,6 +315,8 @@ class _ColumnVotes:
                     pos, kmer = offset + op.src_start + d, kmers[op.dest_start + d]
                     self.observed[pos][kmer] += 1
                     self.strands_seen[pos, kmer].add(strand)
+                    support = self.read_support[pos]
+                    support[kmer] = support.get(kmer, 0) | read_bit
             # Positions the read lacks
             elif op.tag == "delete":
                 for pos in range(offset + op.src_start, offset + op.src_end):
@@ -315,6 +331,8 @@ class _ColumnVotes:
                 self.strands_seen[pos, "+" + block].add(strand)
                 for kmer in block:
                     self.strands_seen[pos, kmer].add(strand)
+                    support = self.read_support[pos]
+                    support[kmer] = support.get(kmer, 0) | read_bit
         # The position after the read's span counts too: an insertion at its far end lands there
         for pos in range(offset, offset + read.covered_len + 1):
             self.n_covering[pos] += 1
@@ -325,8 +343,20 @@ class _ColumnVotes:
         return majority and _on_every_strand(self.strands_seen, pos, key, self.strands_present)
 
     def is_believable(self, pos: int, kmer: str) -> bool:
-        """Whether `kmer` can be proposed at `pos`: seen there on every strand."""
+        """Whether `kmer` is supported on every strand within STRAND_MARGIN."""
         return _on_every_strand(self.strands_seen, pos, kmer, self.strands_present)
+
+    def has_relative_support(self, pos: int, kmer: str, current: str) -> bool:
+        """Compare windowed proposal support with exact-position current support."""
+        # Union read identities only when a disputed proposal needs relative support.
+        nearby = 0
+        for index in range(max(0, pos - STRAND_MARGIN), min(len(self.read_support), pos + STRAND_MARGIN + 1)):
+            nearby |= self.read_support[index].get(kmer, 0)
+        exact = self.read_support[pos].get(current, 0)
+        if nearby.bit_count() < exact.bit_count():
+            return False
+        proposed_strands = {strand for offset in range(-STRAND_MARGIN, STRAND_MARGIN + 1) for strand in self.strands_seen.get((pos + offset, kmer), ())}
+        return len(proposed_strands) >= len(self.strands_seen.get((pos, current), ()))
 
 
 def _count_column_votes(consensus: str, alignments: list[AlignedRead]) -> _ColumnVotes:
@@ -339,6 +369,7 @@ def _count_column_votes(consensus: str, alignments: list[AlignedRead]) -> _Colum
         insertions=[Counter() for _ in range(n + 1)],
         strands_seen=defaultdict(set),
         strands_present={strand for *_, strand in alignments},
+        read_support=[{} for _ in range(n + 1)],
     )
     for read in alignments:
         votes.add_read(read)
@@ -346,52 +377,47 @@ def _count_column_votes(consensus: str, alignments: list[AlignedRead]) -> _Colum
 
 
 def _apply_strong_changes(consensus: str, votes: _ColumnVotes, length: int) -> str:
-    """Apply every strong change at once and fit the result back to `length`; the consensus if it can't be."""
-    segments, spare_insertions = _strong_change_segments(consensus, votes)
-    return _fit_to_length(segments, spare_insertions, length) or consensus
-
-
-def _strong_change_segments(consensus: str, votes: _ColumnVotes) -> tuple[list[tuple[str, int]], list[tuple[int, int, str]]]:
-    """Return the new consensus as (kmers, support) segments, and the insertions that weren't strong as (support, index, kmers)."""
-    segments: list[tuple[str, int]] = []
+    """Build one strong-edit batch and fit it to `length`; keep the consensus if fitting fails."""
+    blocks: list[tuple[str, int]] = []  # Encoded kmers and their read support
     spare_insertions: list[tuple[int, int, str]] = []
-    # Insertion before each position, then the position; the extra round is the end
+
+    # 1. Build the candidate, including insertions before each position and at the end.
     for pos in range(len(consensus) + 1):
         if votes.n_inserting[pos]:
             block, count = votes.insertions[pos].most_common(1)[0]
-            if votes.is_strong(pos, votes.n_inserting[pos], "+" + block):
-                segments.append((block, count))
+            if votes.is_strong(pos, count, "+" + block):
+                blocks.append((block, count))
             else:
-                spare_insertions.append((votes.n_inserting[pos], len(segments), block))
-        if pos < len(consensus):
-            # Keep the consensus kmer unless a strong majority has something else
-            kmer, count = votes.observed[pos].most_common(1)[0] if votes.observed[pos] else (consensus[pos], 0)
-            if kmer == consensus[pos] or not votes.is_strong(pos, count, kmer):
-                segments.append((consensus[pos], votes.observed[pos][consensus[pos]]))
-            elif kmer:  # A strong gap deletes the position
-                segments.append((kmer, count))
-    return segments, spare_insertions
+                spare_insertions.append((count, len(blocks), block))
+        if pos == len(consensus):
+            continue
 
+        # Keep the current token unless the winner has strong support; a strong gap deletes it.
+        current = consensus[pos]
+        kmer, count = votes.observed[pos].most_common(1)[0] if votes.observed[pos] else (current, 0)
+        if kmer != current and not votes.is_strong(pos, count, kmer):
+            kmer, count = current, votes.observed[pos][current]
+        if kmer:
+            blocks.append((kmer, count))
 
-def _fit_to_length(segments: list[tuple[str, int]], spare_insertions: list[tuple[int, int, str]], length: int) -> str | None:
-    """Join the segments into `length` kmers: drop the least supported single kmers, or add the best supported spare insertions."""
-    sequence = "".join(kmers for kmers, _ in segments)
+    # 2. Restore the requested length using the weakest singles or spare insertions.
+    sequence = "".join(kmers for kmers, _ in blocks)
     if len(sequence) > length:
-        # Drop only single kmers, never part of an inserted block
-        singles = sorted((i for i, (kmers, _) in enumerate(segments) if len(kmers) == 1), key=lambda i: segments[i][1])
+        # Drop single kmers before cutting into an inserted block.
+        singles = sorted((i for i, (kmers, _) in enumerate(blocks) if len(kmers) == 1), key=lambda i: blocks[i][1])
         drop = set(singles[: len(sequence) - length])
-        sequence = "".join(kmers for i, (kmers, _) in enumerate(segments) if i not in drop)
+        sequence = "".join(kmers for i, (kmers, _) in enumerate(blocks) if i not in drop)
     while len(sequence) < length:
         if not spare_insertions:
-            return None
+            return consensus
         # Best supported spare insertion, cut to what's missing
         spare_insertions.sort()
         _, i, block = spare_insertions.pop()
-        segments.insert(i, (block[: length - len(sequence)], 0))
+        blocks.insert(i, (block[: length - len(sequence)], 0))
         # Later indices shift by one
         spare_insertions = [(support, j + (j >= i), b) for support, j, b in spare_insertions]
-        sequence = "".join(kmers for kmers, _ in segments)
-    return sequence[:length]
+        sequence = "".join(kmers for kmers, _ in blocks)
+    return sequence[:length] or consensus
 
 
 def _apply_weak_changes(
@@ -400,20 +426,36 @@ def _apply_weak_changes(
     *,
     alignments: list[AlignedRead],
     read_distances: list[int],
-    target_counts: dict[str, int],
+    expected_counts: dict[str, int],
     current_score: Score,
 ) -> str:
-    """Apply the improving moves at disputed positions, each scored on its own; the consensus if there are none."""
+    """Apply an improving batch, or fall back to the best individually improving move."""
     candidates = _candidate_moves(consensus, votes)
     moves = _find_improving_moves(
         consensus,
         candidates,
         alignments=alignments,
         read_distances=read_distances,
-        target_counts=target_counts,
+        expected_counts=expected_counts,
         current_score=current_score,
     )
-    return _apply_spaced_moves(consensus, moves)
+    if not moves:
+        return consensus
+
+    def improves(update: str) -> bool:
+        # Local windows don't capture interactions in the global objective.
+        distances = [OSA.distance(update[read.offset : read.offset + read.covered_len], read.kmers) for read in alignments]
+        score = (sum(distances), _composition_penalty(update, expected_counts), sum(d * d for d in distances))
+        return score < current_score
+
+    update = _apply_spaced_moves(consensus, moves)
+    if improves(update):
+        return update
+    for _, move in sorted(moves, key=lambda scored: (scored[0], scored[1].pos, scored[1])):
+        update = _apply_move(consensus, move)
+        if improves(update):
+            return update
+    return consensus
 
 
 def _candidate_moves(consensus: str, votes: _ColumnVotes) -> set[Move]:
@@ -421,9 +463,10 @@ def _candidate_moves(consensus: str, votes: _ColumnVotes) -> set[Move]:
 
     A position is disputed when any covering read differs from the consensus there: another kmer,
     a gap, or an insertion just before it. Substitutions try the other kmers the reads have there,
-    and the kmers they insert just before it, if seen on every strand there. At high coverage
-    (above ~40x), a substitution also needs at least MIN_SUPPORT_FRACTION of covering reads
-    proposing the same change — low-support candidates never improve the objective.
+    and the kmers they insert just before it. A substitution may pass the strand and
+    support-fraction checks, or have at least as many supporting reads and strands as the current
+    kmer. The latter compares proposal support within STRAND_MARGIN with exact current support,
+    without an additional minimum-read or percentage cutoff.
     """
     n = len(consensus)
     candidates: set[Move] = set()
@@ -433,15 +476,16 @@ def _candidate_moves(consensus: str, votes: _ColumnVotes) -> set[Move]:
             continue
         # Other kmers here ("" is a gap) and kmers inserted just before
         proposed = {k for k in votes.observed[pos] if k and k != consensus[pos]} | {k for block in votes.insertions[pos] for k in block}
-        # Filter only at high coverage; at low depth a single read can still improve the objective
+        # Apply the fractional cutoff to strand-supported proposals only at high coverage.
         fraction_support = ceil(MIN_SUPPORT_FRACTION * votes.n_covering[pos])
         min_support = fraction_support if fraction_support > MIN_READ_SUPPORT else 0
         for k in proposed:
-            if k == consensus[pos] or not votes.is_believable(pos, k):
+            if k == consensus[pos]:
                 continue
-            # Insertion-derived kmers have no observed count; keep them (rare, strand-checked)
+            # Insertion-only proposals bypass the observed-read cutoff.
             observed = votes.observed[pos].get(k, 0)
-            if observed and observed < min_support:
+            passes_strand_and_read_filters = votes.is_believable(pos, k) and (not observed or observed >= min_support)
+            if not passes_strand_and_read_filters and not votes.has_relative_support(pos, k, consensus[pos]):
                 continue
             candidates.add(Move("sub", pos, k))
         # Swaps with either neighbour, if it differs
@@ -458,7 +502,7 @@ def _find_improving_moves(
     *,
     alignments: list[AlignedRead],
     read_distances: list[int],
-    target_counts: dict[str, int],
+    expected_counts: dict[str, int],
     current_score: Score,
 ) -> list[ScoredMove]:
     """Return the candidates that lower the objective."""
@@ -469,8 +513,9 @@ def _find_improving_moves(
     moves = []
     n_reads = len(alignments)
     for move in candidates:
-        # Early-terminate: each remaining read improves the sum by at most 1 (OSA
-        # distance), so if the partial delta exceeds the reads left, the move can't win
+        # A substitution improves OSA distance by at most one; a swap can improve it
+        # by two. Stop only when the remaining reads cannot offset the partial delta.
+        max_improvement = 2 if move.kind == "swap" else 1
         new_distances = []
         delta = 0
         can_improve = True
@@ -478,12 +523,12 @@ def _find_improving_moves(
             new_d = _distance_after_move(consensus, move, read, positions, distance)
             new_distances.append(new_d)
             delta += new_d - distance
-            if delta > n_reads - i - 1:
+            if delta > max_improvement * (n_reads - i - 1):
                 can_improve = False
                 break
         if not can_improve:
             continue
-        composition = current_score[1] + _composition_change(consensus, move, counts, target_counts)
+        composition = current_score[1] + _composition_change(consensus, move, counts, expected_counts)
         score = (sum(new_distances), composition, sum(d * d for d in new_distances))
         if score < current_score:
             moves.append((score, move))
@@ -530,13 +575,13 @@ def _distance_after_move(consensus: str, move: Move, read: AlignedRead, consensu
     return distance - OSA.distance(old_window, read_window) + OSA.distance(new_window, read_window)
 
 
-def _composition_change(consensus: str, move: Move, counts: Counter[str], target_counts: dict[str, int]) -> int:
+def _composition_change(consensus: str, move: Move, counts: Counter[str], expected_counts: dict[str, int]) -> int:
     """Return the change in composition penalty from `move`; a swap doesn't change the composition."""
     if move.kind != "sub":
         return 0
     old, new = consensus[move.pos], move.kmer
-    before = abs(counts[old] - target_counts.get(old, 0)) + abs(counts[new] - target_counts.get(new, 0))
-    after = abs(counts[old] - 1 - target_counts.get(old, 0)) + abs(counts[new] + 1 - target_counts.get(new, 0))
+    before = abs(counts[old] - expected_counts.get(old, 0)) + abs(counts[new] - expected_counts.get(new, 0))
+    after = abs(counts[old] - 1 - expected_counts.get(old, 0)) + abs(counts[new] + 1 - expected_counts.get(new, 0))
     return after - before
 
 
@@ -544,7 +589,7 @@ def _apply_spaced_moves(consensus: str, moves: list[ScoredMove]) -> str:
     """Apply the moves best first (ties: leftmost), skipping any within two windows of one already applied."""
     applied: list[int] = []
     for _score, move in sorted(moves, key=lambda scored: (scored[0], scored[1].pos, scored[1])):
-        # Windows don't overlap, so the scores still hold
+        # Keep locally rescored windows apart.
         if all(abs(move.pos - applied_pos) >= 2 * SCORE_WINDOW + 2 for applied_pos in applied):
             applied.append(move.pos)
             consensus = _apply_move(consensus, move)
@@ -577,25 +622,25 @@ def _apply_move(consensus: str, move: Move) -> str:
     raise ValueError(move)
 
 
-def _target_composition(reads: list[EncodedRead]) -> dict[str, int]:
-    """Per-kmer median count over the spanning reads.
+def _expected_composition(reads: list[EncodedRead]) -> dict[str, int]:
+    """Spanning medians, or the tokenwise maximum of left and right medians.
 
-    Zero-filled, so a kmer most reads lack gets median 0 and is dropped. Empty when nothing spans:
-    a flank read's composition says nothing about the allele as a whole.
+    Counts are zero-filled within each pool. Without spanning reads, preserve
+    evidence from either anchored end without adding overlapping observations.
     """
-    pool = [kmers for kmers, read_type, _ in reads if read_type == "spanning"]
-    if not pool:
-        return {}
-    target_counts = {}
-    for k in {c for kmers in pool for c in kmers}:
-        # Median count (the upper one for an even number of reads)
-        counts = sorted(kmers.count(k) for kmers in pool)
-        target_counts[k] = counts[len(counts) // 2]
-    return {k: c for k, c in target_counts.items() if c > 0}
+    spanning = [kmers for kmers, read_type, _ in reads if read_type == "spanning"]
+    pools = [spanning] if spanning else [[kmers for kmers, read_type, _ in reads if read_type == side] for side in ("left", "right")]
+    expected_counts = {}
+    for pool in pools:
+        for k in {c for kmers in pool for c in kmers}:
+            # Median count (the upper one for an even number of reads)
+            counts = sorted(kmers.count(k) for kmers in pool)
+            expected_counts[k] = max(expected_counts.get(k, 0), counts[len(counts) // 2])
+    return {k: c for k, c in expected_counts.items() if c > 0}
 
 
-def _composition_penalty(consensus: str, target_counts: dict[str, int]) -> int:
-    if not target_counts:
+def _composition_penalty(consensus: str, expected_counts: dict[str, int]) -> int:
+    if not expected_counts:
         return 0
     counts = Counter(consensus)
-    return sum(abs(counts[k] - target_counts.get(k, 0)) for k in set(target_counts) | set(counts))
+    return sum(abs(counts[k] - expected_counts.get(k, 0)) for k in set(expected_counts) | set(counts))

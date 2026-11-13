@@ -274,7 +274,7 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype, tar
         kind, idx = slot
         length = 1 if kind == "break" else target_lengths[idx]
         reads_for_slot = segment_reads_for_slot(read_calls, segmented, slot)
-        slot_kmers = find_consensus(reads_for_slot, length, trim_boundaries=(kind == "satellite"))
+        slot_kmers = find_consensus(reads_for_slot, length)
         # No reads covered this slot — fill with N's (unknown bases)
         if len(slot_kmers) < length:
             unit_len = len(locus.breaks[idx]) if kind == "break" else len(locus.satellites[idx].sequences[0])

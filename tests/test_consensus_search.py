@@ -8,273 +8,705 @@ import pytest
 
 from abacus import consensus_search
 
+# Each character labels one distinct repeat unit; its DNA sequence is irrelevant here.
 
-def units(s: str) -> list[str]:
-    return [s[i : i + 3] for i in range(0, len(s), 3)]
+
+ReadSpec = tuple[str, str, str, int]
+
+
+def repeat_reads_by_coverage(reads: list[ReadSpec]) -> list[consensus_search.EncodedRead]:
+    """Repeat each (tokens, type, strand) read by its specified coverage."""
+    repeated: list[consensus_search.EncodedRead] = []
+    for tokens, read_type, strand, coverage in reads:
+        repeated.extend([(tokens, read_type, strand)] * coverage)
+    return repeated
+
+
+# Boundary trimming and flanking reads
 
 
 @pytest.mark.parametrize(
     ("reads", "expected"),
     [
         pytest.param(
-            [(["CAG", "CAG", "CAG", "CAG"], "spanning", "+")] + [(["AAA", "AAA", "AAA"], "right", "+")] * 2,
-            ["CAG", "AAA", "AAA", "AAA"],
-            id="right",
+            [
+                ("ABA", "spanning", "+"),
+                ("AB", "left", "+"),
+            ],
+            [
+                ("ABA", "spanning", "+"),
+                ("AB", "left", "+"),
+            ],
+            id="keep-interior-corroborated-boundary",
         ),
         pytest.param(
-            [(["CAG", "CAG", "CAG", "CAG"], "spanning", "+")] + [(["AAA", "AAA", "AAA"], "left", "+")] * 2,
-            ["AAA", "AAA", "AAA", "CAG"],
-            id="left",
+            repeat_reads_by_coverage(
+                [
+                    ("BAA", "right", "+", 2),
+                ],
+            ),
+            repeat_reads_by_coverage(
+                [
+                    ("AA", "right", "+", 2),
+                ],
+            ),
+            id="truncated-boundaries-do-not-corroborate-each-other",
+        ),
+        pytest.param(
+            [
+                ("AA", "spanning", "+"),
+                ("B", "right", "+"),
+            ],
+            [("AA", "spanning", "+")],
+            id="drop-read-trimmed-to-empty",
+        ),
+        pytest.param(
+            [
+                ("A", "spanning", "+"),
+                ("A", "left", "+"),
+                ("B", "right", "-"),
+            ],
+            [
+                ("A", "spanning", "+"),
+                ("A", "left", "+"),
+            ],
+            id="single-spanning-token-corroborates-complete-break-only",
+        ),
+        pytest.param(
+            [("A", "left", "+"), ("B", "right", "-")],
+            [("A", "left", "+"), ("B", "right", "-")],
+            id="no-interior-evidence-keeps-flanking-tokens",
+        ),
+        pytest.param(
+            [("", "left", "+")],
+            [],
+            id="no-interior-evidence-still-drops-empty-reads",
         ),
     ],
 )
-def test_find_consensus_does_not_let_flanking_reads_corrupt_a_lone_spanning_read(reads, expected):
-    """Regression test: a majority-vote initial consensus built without spanning priority picks the
-    flanking reads' motif outright, corrupting the whole consensus rather than just the tail/head
-    the flanking reads actually cover.
-    """
-    assert consensus_search.find_consensus(reads, len(expected)) == expected
+def test_trim_partial_boundary_kmers(
+    reads: list[consensus_search.EncodedRead],
+    expected: list[consensus_search.EncodedRead],
+) -> None:
+    """Use interior evidence to trim boundaries when available."""
+    kmer_reads = [(list(tokens), read_type, strand) for tokens, read_type, strand in reads]
+    expected_reads = [(list(tokens), read_type, strand) for tokens, read_type, strand in expected]
+    assert consensus_search._trim_partial_boundary_kmers(kmer_reads) == expected_reads
 
 
-def test_trim_partial_boundary_kmers_drops_uncorroborated_boundary():
-    """A left-flanking read's last kmer, or a right-flanking read's first kmer, is dropped when it
-    never appears anywhere else as an interior kmer - the signature of a read simply running out
-    mid-unit, not a real short motif.
-    """
-    reads = [
-        (["CAG", "CAG", "CAG"], "spanning", "+"),
-        (["CAG", "CAG", "CA"], "left", "+"),
-        (["AG", "CAG", "CAG"], "right", "+"),
+# Final consensus: input reads, target length, and expected output
+
+
+@pytest.mark.parametrize(
+    ("reads", "length", "expected"),
+    [
+        # Empty output: no usable reads or a zero target length.
+        pytest.param(
+            [],
+            5,
+            "",
+            id="no-reads-positive-target",
+        ),
+        pytest.param(
+            [
+                ("", "spanning", "+"),
+                ("", "left", "+"),
+                ("", "right", "-"),
+            ],
+            5,
+            "",
+            id="all-empty-reads-positive-target",
+        ),
+        pytest.param(
+            [
+                ("AB", "spanning", "+"),
+            ],
+            0,
+            "",
+            id="nonempty-read-zero-target",
+        ),
+        pytest.param(
+            [],
+            0,
+            "",
+            id="no-reads-zero-target",
+        ),
+        # Target length: fit pure repeats and preserve distinct end tokens when shortening.
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("AAAAA", "spanning", "+", 1),
+                    ("AAAAAA", "spanning", "+", 1),
+                    ("AAAAAAA", "spanning", "+", 2),
+                    ("AAAAAAAA", "spanning", "+", 1),
+                ],
+            ),
+            7,
+            "AAAAAAA",
+            id="pure-repeat-target-7",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("AAAAA", "spanning", "+", 1),
+                    ("AAAAAA", "spanning", "+", 1),
+                    ("AAAAAAA", "spanning", "+", 2),
+                    ("AAAAAAAA", "spanning", "+", 1),
+                ],
+            ),
+            4,
+            "AAAA",
+            id="pure-repeat-target-4",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("BAAACC", "spanning", "+", 1),
+                ],
+            ),
+            5,
+            "BAACC",
+            id="longer-read-preserves-endpoints",
+        ),
+        # Boundary trimming: partial flanking tokens must not outvote complete units.
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("AAAA", "spanning", "+", 1),
+                    ("AAAB", "left", "+", 2),
+                ],
+            ),
+            4,
+            "AAAA",
+            id="partial-boundary-left-partial",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("AAAA", "spanning", "+", 1),
+                    ("BAAA", "right", "+", 2),
+                ],
+            ),
+            4,
+            "AAAA",
+            id="partial-boundary-right-partial",
+        ),
+        # Flanking coverage: preserve uncovered ends and combine reads anchored at opposite ends.
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("AAAA", "spanning", "+", 1),
+                    ("BBB", "right", "+", 2),
+                ],
+            ),
+            4,
+            "ABBB",
+            id="flanking-coverage-right",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("AAAA", "spanning", "+", 1),
+                    ("BBB", "left", "+", 2),
+                ],
+            ),
+            4,
+            "BBBA",
+            id="flanking-coverage-left",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("BAAA", "left", "+", 1),
+                    ("AAAC", "right", "+", 1),
+                ],
+            ),
+            4,
+            "BAAC",
+            id="flanking-only-anchored-ends-right-strand-+",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("BAAA", "left", "+", 1),
+                    ("AAAC", "right", "-", 1),
+                ],
+            ),
+            4,
+            "BAAC",
+            id="flanking-only-anchored-ends-right-strand--",
+        ),
+        # Strand bias: require support across strands at the disputed position.
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("A", "spanning", "+", 1),
+                    ("B", "spanning", "+", 10),
+                    ("A", "spanning", "-", 3),
+                ],
+            ),
+            1,
+            "A",
+            id="strand-bias-spanning only",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("A", "spanning", "+", 1),
+                    ("B", "spanning", "+", 10),
+                    ("A", "spanning", "-", 1),
+                    ("A", "left", "-", 1),
+                    ("A", "right", "-", 1),
+                ],
+            ),
+            1,
+            "A",
+            id="strand-bias-minus-strand support split across spanning and flanking reads",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("ABABA", "spanning", "+", 10),
+                    ("AAABA", "spanning", "+", 1),
+                    ("AAABA", "spanning", "-", 3),
+                ],
+            ),
+            5,
+            "AAABA",
+            id="strand-bias-is-position-specific",
+        ),
+        # Error suppression: reject isolated tokens and tolerate an opposite-strand outlier.
+        pytest.param(
+            [
+                ("AAAAAAAAAA", "spanning", "+"),
+                ("AAAAABAAAA", "spanning", "+"),
+            ],
+            10,
+            "AAAAAAAAAA",
+            id="isolated-error-depth 2, one strand",
+        ),
+        pytest.param(
+            [
+                ("AAAAAAAAAA", "spanning", "+"),
+                ("AAAAABAAAA", "spanning", "-"),
+            ],
+            10,
+            "AAAAAAAAAA",
+            id="isolated-error-depth 2, both strands",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("AAABAAAA", "spanning", "+", 2),
+                    ("AAAABAAAA", "spanning", "+", 1),
+                    ("CCCAAAAA", "spanning", "-", 1),
+                ],
+            ),
+            8,
+            "AAABAAAA",
+            id="outlier-does-not-block-shared-interruption",
+        ),
+        # Shifted interruptions: preserve shared tokens and resolve their positions.
+        pytest.param(
+            [
+                ("AABAAA", "spanning", "+"),
+                ("AAABAA", "spanning", "-"),
+            ],
+            6,
+            # The all-A seed has equally scoring B substitutions at indices 2 and 3.
+            # Weak moves break score ties by leftmost position, so B belongs at index 2.
+            "AABAAA",
+            id="one-column-shift-same length, interruption one column apart",
+        ),
+        pytest.param(
+            [
+                ("AABAAA", "spanning", "+"),
+                ("AAABAAA", "spanning", "-"),
+            ],
+            7,
+            "AAABAAA",
+            id="one-column-shift-differing total length, interruption one column apart",
+        ),
+        pytest.param(
+            [
+                ("AABAAA", "spanning", "+"),
+                ("AAABAA", "spanning", "+"),
+                ("AAAABA", "spanning", "+"),
+            ],
+            6,
+            "AAABAA",
+            id="shared-middle-same strand, out of phase by one each",
+        ),
+        pytest.param(
+            [
+                ("AABAAA", "spanning", "+"),
+                ("AAABAA", "spanning", "-"),
+                ("AAAABA", "spanning", "+"),
+            ],
+            6,
+            "AAABAA",
+            id="shared-middle-cross strand, minus-strand read is the middle one",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("BAA", "spanning", "+", 1),
+                    ("AAB", "spanning", "+", 1),
+                ],
+            ),
+            3,
+            "ABA",
+            id="two-column-separation-depth-1",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("BAA", "spanning", "+", 2),
+                    ("AAB", "spanning", "+", 2),
+                ],
+            ),
+            3,
+            "ABA",
+            id="two-column-separation-depth-2",
+        ),
+        # Unit indels: preserve shared interruptions and distinct runs across unequal read lengths.
+        pytest.param(
+            [
+                ("AAAABAAAAAAA", "spanning", "+"),
+                ("AAAAAABAAAAAAA", "spanning", "+"),
+                ("AABAAAAAAA", "spanning", "+"),
+            ],
+            12,
+            "AAAABAAAAAAA",
+            id="shared-interruptions-two-unit-indels-length-12-same-strand",
+        ),
+        pytest.param(
+            [
+                ("AAAABAAAAAAA", "spanning", "+"),
+                ("AAAAAABAAAAAAA", "spanning", "+"),
+                ("AABAAAAAAA", "spanning", "-"),
+            ],
+            12,
+            "AAAABAAAAAAA",
+            id="shared-interruptions-two-unit-indels-length-12-both-strands",
+        ),
+        pytest.param(
+            [
+                ("AAAA" + "BAAAAAA" * 25 + "A", "spanning", "+"),
+                ("AAAAAA" + "BAAAAAA" * 25 + "A", "spanning", "+"),
+                ("AA" + "BAAAAAA" * 25 + "A", "spanning", "+"),
+            ],
+            180,
+            "AAAA" + "BAAAAAA" * 25 + "A",
+            id="shared-interruptions-two-unit-indels-length-180-same-strand",
+        ),
+        pytest.param(
+            [
+                ("AAAA" + "BAAAAAA" * 25 + "A", "spanning", "+"),
+                ("AAAAAA" + "BAAAAAA" * 25 + "A", "spanning", "+"),
+                ("AA" + "BAAAAAA" * 25 + "A", "spanning", "-"),
+            ],
+            180,
+            "AAAA" + "BAAAAAA" * 25 + "A",
+            id="shared-interruptions-two-unit-indels-length-180-both-strands",
+        ),
+        pytest.param(
+            [
+                ("AABABAAA", "spanning", "+"),
+                ("AAAABABAAA", "spanning", "+"),
+                ("BABAAA", "spanning", "-"),
+            ],
+            8,
+            "AABABAAA",
+            id="nearby-interruptions-remain-distinct",
+        ),
+        # Missing C/B runs must not make genuine BAB/ACA look like errors.
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("ADABCABC", "spanning", "+", 1),
+                    ("AABABC", "spanning", "-", 1),
+                    ("AABCAC", "spanning", "+", 1),
+                ],
+            ),
+            7,
+            "AABCABC",
+            id="missing-runs-must-not-be-merged-as-interruptions",
+        ),
+        # End interruptions: preserve the first or last token across unequal read lengths.
+        pytest.param(
+            [
+                ("BAAAA", "spanning", "+"),
+                ("BAAAAAA", "spanning", "+"),
+                ("BAAA", "spanning", "-"),
+            ],
+            5,
+            "BAAAA",
+            id="shared-interruption-at-first-unit",
+        ),
+        pytest.param(
+            [
+                ("AAAAB", "spanning", "+"),
+                ("AAAAAAB", "spanning", "+"),
+                ("AAAB", "spanning", "-"),
+            ],
+            5,
+            "AAAAB",
+            id="shared-interruption-at-last-unit",
+        ),
+        # Majority interruptions: recover a shared token absent from the longer opposite-strand read.
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("AAAABAAAAA", "spanning", "+", 2),
+                    ("AAAAAAAAAAAAA", "spanning", "-", 1),
+                ],
+            ),
+            10,
+            "AAAABAAAAA",
+            id="majority-interruption-target-10",
+        ),
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("AAAABAAAAA", "spanning", "+", 2),
+                    ("AAAAAAAAAAAAA", "spanning", "-", 1),
+                ],
+            ),
+            11,
+            # The all-A seed has equally scoring B substitutions at indices 4 and 5.
+            # Weak moves break score ties by leftmost position, so B belongs at index 4.
+            "AAAABAAAAAA",
+            id="majority-interruption-target-11",
+        ),
+        # CA -> AC reduces distance to ABC by two; pruning must allow that gain.
+        # Shared padding keeps the ABC read below the outlier threshold.
+        pytest.param(
+            repeat_reads_by_coverage(
+                [
+                    ("CA" + "D" * 20, "spanning", "+", 2),
+                    ("ABC" + "D" * 20, "spanning", "+", 1),
+                ],
+            ),
+            22,
+            "AC" + "D" * 20,
+            id="swap-pruning-allows-two-unit-distance-improvement",
+        ),
+    ],
+)
+def test_find_consensus(
+    reads: list[consensus_search.EncodedRead],
+    length: int,
+    expected: str,
+) -> None:
+    kmer_reads = [(list(tokens), read_type, strand) for tokens, read_type, strand in reads]
+    result = consensus_search.find_consensus(kmer_reads, length)
+    assert result == list(expected)
+
+
+@pytest.mark.parametrize(
+    ("reads", "expected"),
+    [
+        ([], {}),
+        ([("BAAA", "left", "+"), ("AAAC", "right", "-")], {"A": 3, "B": 1, "C": 1}),
+        # A noisy expansion and singleton token must not set the side's median.
+        ([("AB", "left", "+"), ("AB", "left", "-"), ("AAAAABX", "left", "+")], {"A": 1, "B": 1}),
+        ([("AAAC", "right", "-")], {"A": 3, "C": 1}),
+        # Spanning evidence takes precedence even over numerous longer flanks.
+        ([("AB", "spanning", "+")] + [("AAAAAC", "left", "-")] * 3, {"A": 1, "B": 1}),
+        # Preserve the existing upper-median convention for even spanning depth.
+        ([("A", "spanning", "+"), ("AAB", "spanning", "-")], {"A": 2, "B": 1}),
+    ],
+)
+def test_expected_composition(reads: list[consensus_search.EncodedRead], expected: dict[str, int]) -> None:
+    assert consensus_search._expected_composition(reads) == expected
+
+
+# Weak proposal eligibility
+
+
+@pytest.mark.parametrize(
+    ("consensus", "pos", "read_tokens", "expected"),
+    [
+        pytest.param(
+            "a",
+            0,
+            [
+                ("a", "+"),
+                ("b", "-"),
+            ],
+            True,
+            id="equal-reads-and-strand-count",
+        ),
+        pytest.param(
+            "a",
+            0,
+            [("a", "+")] * 3 + [("b", "-")],
+            False,
+            id="fewer-reads-equal-strand-count",
+        ),
+        pytest.param(
+            "a",
+            0,
+            [
+                ("a", "+"),
+                ("b", "-"),
+                ("b", "-"),
+            ],
+            True,
+            id="more-reads-equal-strand-count",
+        ),
+        pytest.param(
+            "a",
+            0,
+            [
+                ("a", "+"),
+                ("b", "+"),
+                ("b", "-"),
+            ],
+            True,
+            id="one-strand-to-both-strands",
+        ),
+        pytest.param(
+            "aaa",
+            1,
+            [
+                ("aba", "+"),
+                ("aba", "+"),
+                ("aaa", "-"),
+            ],
+            True,
+            id="neighbours-do-not-upgrade-current-strand-support",
+        ),
+        pytest.param(
+            "aaa",
+            1,
+            [
+                ("aba", "+"),
+                ("aaa", "+"),
+                ("baa", "-"),
+            ],
+            True,
+            id="proposal-can-gain-opposite-strand-from-neighbour",
+        ),
+        pytest.param(
+            "aaa",
+            1,
+            [
+                ("aba", "+"),
+                ("aba", "+"),
+                ("aaa", "+"),
+                ("aaa", "-"),
+            ],
+            False,
+            id="protect-current-with-exact-both-strand-support",
+        ),
+        pytest.param(
+            "a",
+            0,
+            [("a", "+")] * 3 + [("b", "+")],
+            True,
+            id="strand-supported-single-read-proposal",
+        ),
+        pytest.param(
+            "a",
+            0,
+            [
+                ("a", "+"),
+                ("a", "-"),
+            ]
+            + [("b", "+")] * 3,
+            False,
+            id="more-reads-cannot-lose-strand-support",
+        ),
+        pytest.param(
+            "a",
+            0,
+            [("a", "+")] + [("b", "-")] * 2 + [("c", "-")] * 97,
+            True,
+            id="relative-support-bypasses-percentage-cutoff",
+        ),
+        pytest.param(
+            "a",
+            0,
+            [("b", "+")] + [("c", "-")] * 99,
+            True,
+            id="unsupported-current-needs-no-two-read-floor",
+        ),
+        pytest.param(
+            "a",
+            0,
+            [("a", "+")] * 99 + [("bba", "+")],
+            True,
+            id="insertion-only-proposal-bypasses-observed-read-cutoff",
+        ),
+        # Three nearby occurrences in one read cannot outweigh two supporting reads.
+        pytest.param(
+            "aaa",
+            1,
+            [("aaa", "+"), ("aaa", "+"), ("bbb", "-")],
+            False,
+            id="nearby-token-occurrences-count-each-read-once",
+        ),
+        pytest.param(
+            "aaa",
+            1,
+            [("aaa", "+"), ("aaa", "+"), ("bbb", "-"), ("bbb", "-")],
+            True,
+            id="nearby-token-occurrences-in-two-reads-meet-relative-support",
+        ),
+    ],
+)
+def test_weak_substitution_proposal_eligibility(
+    consensus: str,
+    pos: int,
+    read_tokens: list[tuple[str, str]],
+    expected: bool,
+) -> None:
+    """Allow strand-filtered proposals or equal-or-better relative read and strand support."""
+    reads: list[consensus_search.EncodedRead] = [(tokens, "spanning", strand) for tokens, strand in read_tokens]
+    votes = consensus_search._count_column_votes(consensus, consensus_search._align_reads(consensus, reads))
+
+    candidates = consensus_search._candidate_moves(consensus, votes)
+
+    assert (consensus_search.Move("sub", pos, "b") in candidates) == expected
+
+
+@pytest.mark.parametrize("max_iters", [1, 2, 100])
+def test_regression_weak_batch_must_improve_full_objective(max_iters: int) -> None:
+    """Distant substitutions still interact through the composition penalty."""
+    reads: list[consensus_search.EncodedRead] = [
+        ("B" + "A" * 99, "spanning", "+"),
+        ("A" * 99 + "B", "spanning", "+"),
     ]
+    kmer_reads = [(list(tokens), kind, strand) for tokens, kind, strand in reads]
+    result = "".join(consensus_search.find_consensus(kmer_reads, 100, max_iters=max_iters))
+    distances = [consensus_search.OSA.distance(result, tokens) for tokens, _, _ in reads]
+    score = (
+        sum(distances),
+        consensus_search._composition_penalty(result, consensus_search._expected_composition(reads)),
+        sum(distance * distance for distance in distances),
+    )
 
-    trimmed = consensus_search._trim_partial_boundary_kmers(reads)
-
-    assert trimmed == [
-        (["CAG", "CAG", "CAG"], "spanning", "+"),
-        (["CAG", "CAG"], "left", "+"),
-        (["CAG", "CAG"], "right", "+"),
-    ]
-
-
-def test_trim_partial_boundary_kmers_keeps_corroborated_boundary():
-    """A boundary kmer that also shows up as an interior kmer elsewhere is real vocabulary, not a
-    truncation artifact, and must not be dropped.
-    """
-    reads = [
-        (["CAG", "AAA", "CAG"], "spanning", "+"),
-        (["CAG", "AAA"], "left", "+"),  # boundary kmer "AAA" is corroborated by the spanning read
-    ]
-
-    assert consensus_search._trim_partial_boundary_kmers(reads) == reads
+    # Initially both reads have distance 1, and composition is off by one A and one B.
+    # Either substitution alone improves composition; applying both cancels that gain.
+    assert score < (2, 2, 2)
+    assert result == "B" + "A" * 99
 
 
-def test_trim_partial_boundary_kmers_does_not_let_two_truncated_reads_corroborate_each_other():
-    """Two reads independently truncated at the same point still share a boundary kmer, but
-    neither occurrence is interior - read support alone must not be enough to keep it.
-    """
-    reads = [(["AG", "CAG", "CAG"], "right", "+")] * 2
+def test_regression_strong_insertions_require_a_majority_for_the_same_block() -> None:
+    """Different inserted blocks must not pool their votes into a false majority."""
+    consensus = "ABC"
+    reads = repeat_reads_by_coverage(
+        [
+            ("AXYBC", "spanning", "+", 2),
+            ("AZWBC", "spanning", "+", 2),
+            ("AUVBC", "spanning", "+", 2),
+            (consensus, "spanning", "+", 4),
+        ]
+    )
+    votes = consensus_search._count_column_votes(consensus, consensus_search._align_reads(consensus, reads))
 
-    trimmed = consensus_search._trim_partial_boundary_kmers(reads)
-
-    assert trimmed == [(["CAG", "CAG"], "right", "+")] * 2
-
-
-def test_trim_partial_boundary_kmers_drops_a_flanking_read_left_with_nothing():
-    """A flanking read that is only ever its own boundary kmer trims down to empty, not a crash."""
-    reads = [(["CAG", "CAG"], "spanning", "+"), (["AG"], "right", "+")]
-
-    trimmed = consensus_search._trim_partial_boundary_kmers(reads)
-
-    assert trimmed == [(["CAG", "CAG"], "spanning", "+")]
-
-
-@pytest.mark.parametrize(
-    ("reads", "expected"),
-    [
-        pytest.param(
-            [(["CAG", "CAG", "CAG", "CAG"], "spanning", "+")] + [(["CAG", "CAG", "CAG", "CA"], "left", "+")] * 2,
-            ["CAG", "CAG", "CAG", "CAG"],
-            id="left-partial",
-        ),
-        pytest.param(
-            [(["CAG", "CAG", "CAG", "CAG"], "spanning", "+")] + [(["AG", "CAG", "CAG", "CAG"], "right", "+")] * 2,
-            ["CAG", "CAG", "CAG", "CAG"],
-            id="right-partial",
-        ),
-    ],
-)
-def test_find_consensus_does_not_let_a_partial_boundary_kmer_outvote_a_full_unit(reads, expected):
-    """Regression test for the two mid-unit-boundary cases in test_consensus.py."""
-    assert consensus_search.find_consensus(reads, len(expected)) == expected
-
-
-@pytest.mark.parametrize(
-    ("reads", "expected"),
-    [
-        pytest.param(
-            [(["CGG"], "spanning", "+")] * 1 + [(["GGG"], "spanning", "+")] * 10 + [(["CGG"], "spanning", "-")] * 3,
-            ["CGG"],
-            id="spanning only",
-        ),
-        pytest.param(
-            [(["CGG"], "spanning", "+")] * 1
-            + [(["GGG"], "spanning", "+")] * 10
-            + [(["CGG"], "spanning", "-")] * 1
-            + [(["CGG"], "left", "-")] * 1
-            + [(["CGG"], "right", "-")] * 1,
-            ["CGG"],
-            id="minus-strand support split across spanning and flanking reads",
-        ),
-    ],
-)
-def test_find_consensus_requires_cross_strand_support_before_trusting_the_majority_token(reads, expected):
-    """GGG is the pooled majority (10 reads) but plus-strand-only; CGG is the minority yet the
-    only motif seen on both strands. Zero support on one strand must lose to both-strand support,
-    regardless of vote count.
-    """
-    assert consensus_search.find_consensus(reads, len(expected)) == expected
-
-
-def test_find_consensus_disqualifies_a_kmer_by_position_not_just_globally():
-    """AAA is a plus-strand-only error at unit 1, but a genuine both-strand-confirmed interruption
-    at unit 3. Eligibility elsewhere must not make it eligible at unit 1 too.
-    """
-    error_read: consensus_search.KmerRead = (["CAG", "AAA", "CAG", "AAA", "CAG"], "spanning", "+")
-    correct_read_plus: consensus_search.KmerRead = (["CAG", "CAG", "CAG", "AAA", "CAG"], "spanning", "+")
-    correct_read_minus: consensus_search.KmerRead = (["CAG", "CAG", "CAG", "AAA", "CAG"], "spanning", "-")
-    reads = [error_read for _ in range(10)] + [correct_read_plus] + [correct_read_minus for _ in range(3)]
-
-    assert consensus_search.find_consensus(reads, 5) == ["CAG", "CAG", "CAG", "AAA", "CAG"]
-
-
-@pytest.mark.parametrize(
-    ("reads", "expected"),
-    [
-        pytest.param(
-            [
-                (["CAG", "CAG", "AAA", "CAG", "CAG", "CAG"], "spanning", "+"),
-                (["CAG", "CAG", "CAG", "AAA", "CAG", "CAG"], "spanning", "-"),
-            ],
-            ["CAG", "CAG", "AAA", "CAG", "CAG", "CAG"],
-            id="same length, interruption one column apart",
-        ),
-        pytest.param(
-            [
-                (["CAG", "CAG", "AAA", "CAG", "CAG", "CAG"], "spanning", "+"),
-                (["CAG", "CAG", "CAG", "AAA", "CAG", "CAG", "CAG"], "spanning", "-"),
-            ],
-            ["CAG", "CAG", "CAG", "AAA", "CAG", "CAG", "CAG"],
-            id="differing total length, interruption one column apart",
-        ),
-    ],
-)
-def test_find_consensus_tolerates_a_one_column_registration_offset_between_strands(reads, expected):
-    """Upstream length variation can shift a real interruption one column between strands; exact
-    cross-strand agreement would wrongly drop it. A one-column window recognizes these as the
-    same interruption without bridging genuinely distinct positions (contrast the disqualification
-    test above, two units apart).
-    """
-    assert consensus_search.find_consensus(reads, len(expected)) == expected
-
-
-@pytest.mark.parametrize(
-    ("reads", "expected"),
-    [
-        pytest.param(
-            [
-                (["CAG", "CAG", "AAA", "CAG", "CAG", "CAG"], "spanning", "+"),
-                (["CAG", "CAG", "CAG", "AAA", "CAG", "CAG"], "spanning", "+"),
-                (["CAG", "CAG", "CAG", "CAG", "AAA", "CAG"], "spanning", "+"),
-            ],
-            ["CAG", "CAG", "CAG", "AAA", "CAG", "CAG"],
-            id="same strand, out of phase by one each",
-        ),
-        pytest.param(
-            [
-                (["CAG", "CAG", "AAA", "CAG", "CAG", "CAG"], "spanning", "+"),
-                (["CAG", "CAG", "CAG", "AAA", "CAG", "CAG"], "spanning", "-"),
-                (["CAG", "CAG", "CAG", "CAG", "AAA", "CAG"], "spanning", "+"),
-            ],
-            ["CAG", "CAG", "CAG", "AAA", "CAG", "CAG"],
-            id="cross strand, minus-strand read is the middle one",
-        ),
-    ],
-)
-def test_find_consensus_resolves_out_of_phase_interruptions_to_the_shared_middle_position(reads, expected):
-    """Three reads place the same interruption one column apart (idx 2, 3, 4); none agree exactly,
-    but distance minimization already resolves this to the middle position without any
-    strand-eligibility logic. The cross-strand variant checks that eligibility doesn't interfere:
-    the lone minus-strand read at the middle shouldn't need a second minus-strand read to count.
-    """
-    assert consensus_search.find_consensus(reads, len(expected)) == expected
-
-
-@pytest.mark.parametrize("depth", [1, 2, 5])
-def test_find_consensus_keeps_an_interruption_the_reads_place_two_columns_apart(depth):
-    """Half the reads put the interruption first, half put it last. Flattening it (CGG-CGG-CGG)
-    and centring it (CGG-AAA-CGG) are both one edit from every read - a substitution and a
-    transposition cost the same - so distance alone can't choose. Composition must: every read
-    carries exactly one AAA, so the consensus should too. Parametrised over depth because the
-    substitution only becomes a candidate once enough reads vote for it.
-    """
-    reads = [(["AAA", "CGG", "CGG"], "spanning", "+")] * depth + [(["CGG", "CGG", "AAA"], "spanning", "+")] * depth
-
-    assert consensus_search.find_consensus(reads, 3) == ["CGG", "AAA", "CGG"]
-
-
-def test_initial_consensus_slides_a_long_reads_vote_from_its_left_end_to_its_right_end():
-    """A read one unit longer than the target has its extra unit somewhere; at consensus position 0
-    none of it can have gone by (vote read[0]), at the last position all of it has (vote
-    read[n-1]). So a lone long read puts its own first and last kmers at the ends, not a
-    smeared mixture.
-    """
-    read = ["AAA", "CGG", "CGG", "CGG", "TTT", "TTT"]  # target 5: extra unit somewhere inside
-    encoded, char_to_kmer = consensus_search._encode_reads([(read, "spanning", "+")])
-
-    consensus = [char_to_kmer[c] for c in consensus_search._initial_consensus(encoded, 5)]
-
-    assert consensus[0] == "AAA"
-    assert consensus[-1] == "TTT"
-
-
-def test_initial_consensus_does_not_let_a_strand_specific_majority_in():
-    """GGG outvotes CGG 10:4, but only plus-strand reads show it. The proposal filter already
-    rejects strand-specific kmers; the initial consensus must apply the same rule, or the error enters by
-    majority and survives because the objective genuinely prefers it.
-    """
-    reads = [(["GGG"], "spanning", "+")] * 10 + [(["CGG"], "spanning", "+")] + [(["CGG"], "spanning", "-")] * 3
-    encoded, char_to_kmer = consensus_search._encode_reads(reads)
-
-    assert [char_to_kmer[c] for c in consensus_search._initial_consensus(encoded, 1)] == ["CGG"]
-
-
-def test_find_consensus_returns_exactly_the_requested_length():
-    """The search never inserts or deletes: the consensus is the target length whatever the reads are."""
-    reads = [(["CAG"] * n, "spanning", "+") for n in (5, 6, 7, 7, 8)]
-
-    assert len(consensus_search.find_consensus(reads, 7)) == 7
-    assert len(consensus_search.find_consensus(reads, 4)) == 4
-
-
-def test_voting_reads_drops_a_read_far_from_the_consensus():
-    """A read far from a consensus the others agree with doesn't vote; reads within the floor always do."""
-    reads = [("a" * 20, "spanning", "+")] * 5 + [("b" * 20, "spanning", "-")]
-    dists = [0, 1, 0, 2, 1, 12]  # consensus error rates 0-0.1 for the agreeing reads, 0.6 for the last
-
-    assert consensus_search._voting_reads(reads, dists) == reads[:5]
-    assert consensus_search._voting_reads(reads, [0, 0, 0, 0, 0, 3]) == reads  # 0.15: at the floor
-
-
-@pytest.mark.parametrize(
-    "reads",
-    [
-        pytest.param([(units("CAG" * 10), "spanning", "+"), (units("CAG" * 5 + "CTG" + "CAG" * 4), "spanning", "+")], id="depth 2, one strand"),
-        pytest.param([(units("CAG" * 10), "spanning", "+")] * 2 + [(units("CAG" * 5 + "CTG" + "CAG" * 4), "spanning", "+")], id="depth 3, one strand"),
-        pytest.param([(units("CAG" * 10), "spanning", "+"), (units("CAG" * 5 + "CTG" + "CAG" * 4), "spanning", "-")], id="depth 2, both strands"),
-    ],
-)
-def test_find_consensus_does_not_adopt_a_kmer_only_one_read_has(reads):
-    """A kmer in a single read is most likely that read's error. With one other read it ties on
-    every key of the objective, and a move must be strictly better, so the consensus stays clean.
-    """
-    assert consensus_search.find_consensus(reads, 10) == units("CAG" * 10)
+    # Six of ten reads insert something, but each particular block has only two votes.
+    # All original tokens have unanimous support, so there is no strong edit to apply.
+    assert consensus_search._apply_strong_changes(consensus, votes, length=3) == consensus
