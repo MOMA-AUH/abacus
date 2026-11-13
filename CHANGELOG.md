@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 - `REFDIV` INFO field: each allele's divergence from the catalog locus structure, so alleles the catalog motif doesn't describe are visible
 ### Changed
+- **Breaking:** replaced `--keep-temp-files` with `--keep-summaries` and `--keep-read-summaries`; skip unrequested tables unless needed for a report
+- Reduced I/O operations: keep CSVs open, buffer writes, and flush CSVs and intermediate VCF records every 100 completed loci
 - Merged sequence plots with haplotype facets and grey strand lines; removed quality shading
 - **Breaking:** VCF output now follows VCFv4.5 and uses the `<CNV:TR>` tandem repeat representation (see the README for all fields):
   - `POS`/`REF` is the padding base before the repeat; `POS` was previously reported with a reference base it did not match

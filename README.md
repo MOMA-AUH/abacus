@@ -147,8 +147,13 @@ Fine-tuning knobs for the analysis:
 
 #### Output Options
 - `--log-file`: path to the log file. Default: `abacus.log`.
-- `--keep-temp-files`: keep temporary analysis files. Default: `False`.
+- `--keep-summaries`: keep consensus, haplotype, heterozygosity test, and final/test parameter summary CSVs. Default: `False`.
+- `--keep-read-summaries`: keep the read-level tables `reads.csv` and `filtered_reads.csv`. Default: `False`.
 - `--add-consensus-to-vcf`: add the consensus sequence of each allele (`CONS`) to the VCF output. Default: `False`.
+
+Retained tables are saved in `tmp_abacus_<vcf-stem>/` beside the VCF. Combine both flags to keep all tables. Reports generate all tables temporarily; otherwise, only requested tables are generated. Intermediate files are preserved on failure.
+
+Outputs use buffered writes, flushed every 100 completed loci and on closure. Forced termination may lose buffered results.
 
 ## VCF output
 

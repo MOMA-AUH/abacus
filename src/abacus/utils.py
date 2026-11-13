@@ -1,5 +1,6 @@
 from enum import StrEnum, auto
 from pathlib import Path
+from typing import TextIO
 
 import Levenshtein
 import pandas as pd
@@ -152,10 +153,14 @@ def compute_ref_divergence(cigar: str, indel_cost: float = 1, replace_cost: floa
     return cost / len(cigar)
 
 
-def append_to_csv(df: pd.DataFrame, path: Path) -> None:
-    if df.empty:
-        if not path.exists():
-            path.touch()
-        return
-    needs_header = not path.exists() or path.stat().st_size == 0
-    df.to_csv(path, mode="a", header=needs_header, index=False)
+class CsvWriter:
+    """Append locus tables to a caller-owned buffered stream, with one header."""
+
+    def __init__(self, stream: TextIO):
+        self.stream = stream
+        self.needs_header = True
+
+    def write(self, df: pd.DataFrame) -> None:
+        if not df.empty:
+            df.to_csv(self.stream, header=self.needs_header, index=False)
+            self.needs_header = False

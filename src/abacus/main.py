@@ -6,6 +6,7 @@ import shutil
 
 faulthandler.enable()
 from collections import Counter
+from contextlib import ExitStack
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated
@@ -32,7 +33,7 @@ from abacus.parallel import locus_results
 from abacus.preprocess import get_reads_in_locus
 from abacus.str_vcf import create_no_call_records, create_vcf_records, write_vcf
 from abacus.timing import timed
-from abacus.utils import Haplotype, Sex, append_to_csv
+from abacus.utils import CsvWriter, Haplotype, Sex
 
 ascii_art = r"""
 ╔═════════════════════════════════════════════════════════════════════════╗
@@ -161,10 +162,16 @@ def _process_locus(locus, ref: Fasta, sex: Sex, *, bamfile: AlignmentFile) -> di
         if config.vcf_only_output:
             return {"locus_id": locus.id, "vcf_records": vcf_records}
 
+        grouped_read_calls.extend(all_removed_read_calls)
+        result = {"locus_id": locus.id, "vcf_records": vcf_records}
+        if config.read_summary_output:
+            result.update(grouped_read_calls=grouped_read_calls, unmapped_reads=unmapped_reads)
+        if not config.summary_output:
+            return result
+
         final_parameter_summary_df = summarize_final_parameter_estimates(final_params)
         test_parameter_summary_df = summarize_test_parameter_estimates(het_params, hom_params)
 
-        grouped_read_calls.extend(all_removed_read_calls)
         haplotyping_df = calculate_final_group_summaries(grouped_read_calls)
         test_summary_res_df["locus_id"] = locus.id
 
@@ -184,17 +191,14 @@ def _process_locus(locus, ref: Fasta, sex: Sex, *, bamfile: AlignmentFile) -> di
         final_parameter_summary_df["status"] = [locus.satellites[i].status(m) for i, m in zip(final_parameter_summary_df["idx"], final_parameter_summary_df["mean"])]
         test_parameter_summary_df = test_parameter_summary_df.merge(satellite_df, on="idx", how="left")
 
-    return {
-        "locus_id": locus.id,
-        "grouped_read_calls": grouped_read_calls,
-        "unmapped_reads": unmapped_reads,
+    result.update({
         "final_consensus_calls": final_consensus_calls,
         "haplotyping_df": haplotyping_df,
         "test_summary_res_df": test_summary_res_df,
         "final_parameter_summary_df": final_parameter_summary_df,
         "test_parameter_summary_df": test_parameter_summary_df,
-        "vcf_records": vcf_records,
-    }
+    })
+    return result
 
 
 @app.command(
@@ -326,12 +330,20 @@ def abacus(
             resolve_path=True,
         ),
     ] = config.log_file,
-    keep_temp_files: Annotated[
+    keep_summaries: Annotated[
         bool,
         typer.Option(
-            "--keep-temp-files",
-            help="Keep temporary files after report generation",
-            rich_help_panel=OPTIONS,
+            "--keep-summaries",
+            help="Keep consensus, haplotype, test and parameter summary CSVs beside the VCF",
+            rich_help_panel=OUTPUTS,
+        ),
+    ] = False,
+    keep_read_summaries: Annotated[
+        bool,
+        typer.Option(
+            "--keep-read-summaries",
+            help="Keep reads.csv and filtered_reads.csv beside the VCF",
+            rich_help_panel=OUTPUTS,
         ),
     ] = False,
     add_consensus_to_vcf: Annotated[
@@ -588,8 +600,9 @@ def abacus(
 
     # VCF options
     config.add_consensus_to_vcf = add_consensus_to_vcf
-    # Without a report or retained temp files, workers return VCF records only
-    config.vcf_only_output = report is None and not keep_temp_files
+    config.summary_output = report is not None or keep_summaries
+    config.read_summary_output = report is not None or keep_read_summaries
+    config.vcf_only_output = not (config.summary_output or config.read_summary_output)
 
     # Welcome message
     logger.info(ascii_art)
@@ -653,27 +666,47 @@ def abacus(
     for _f in [reads_csv, filtered_reads_csv, consensus_csv, haplotypes_csv, summary_csv, final_param_summary_csv, test_params_summary_csv, vcf_records_tmp]:
         _f.unlink(missing_ok=True)
 
-    def _handle_result(result: dict) -> None:
-        if not config.vcf_only_output:
-            append_to_csv(pd.DataFrame([r.to_dict() for r in result["grouped_read_calls"]]), reads_csv)
-            append_to_csv(pd.DataFrame([r.to_dict() for r in result["unmapped_reads"]]), filtered_reads_csv)
-            append_to_csv(pd.DataFrame([c.to_dict() for c in result["final_consensus_calls"]]), consensus_csv)
-            append_to_csv(result["haplotyping_df"], haplotypes_csv)
-            append_to_csv(result["test_summary_res_df"], summary_csv)
-            append_to_csv(result["final_parameter_summary_df"], final_param_summary_csv)
-            append_to_csv(result["test_parameter_summary_df"], test_params_summary_csv)
-        for line in result["vcf_records"]:
-            if line:
-                vcf_stream.write(line + "\n")
-        # Preserve completed loci in the temporary file if processing fails later.
-        vcf_stream.flush()
-        logger.debug("Locus %s written", result["locus_id"])
+    summary_paths = {
+        "final_consensus_calls": consensus_csv,
+        "haplotyping_df": haplotypes_csv,
+        "test_summary_res_df": summary_csv,
+        "final_parameter_summary_df": final_param_summary_csv,
+        "test_parameter_summary_df": test_params_summary_csv,
+    }
+    read_paths = {"grouped_read_calls": reads_csv, "unmapped_reads": filtered_reads_csv}
+    output_paths = {}
+    if config.summary_output:
+        output_paths.update(summary_paths)
+    if config.read_summary_output:
+        output_paths.update(read_paths)
 
     logger.info("Processing loci...")
-    with vcf_records_tmp.open("w") as vcf_stream, timed("process loci") as t:
-        with locus_results(loci, _process_locus, bam=bam, ref=ref, settings=config.to_dict(), sex=sex, workers=threads) as results:
-            for result in results:
-                _handle_result(result)
+    with ExitStack() as streams, timed("process loci") as t:
+        writers = {
+            key: CsvWriter(streams.enter_context(path.open("w", newline="")))
+            for key, path in output_paths.items()
+        }
+        vcf_stream = streams.enter_context(vcf_records_tmp.open("w"))
+        try:
+            with locus_results(loci, _process_locus, bam=bam, ref=ref, settings=config.to_dict(), sex=sex, workers=threads) as results:
+                for completed, result in enumerate(results, start=1):
+                    for key, writer in writers.items():
+                        table = result[key]
+                        if key in {"grouped_read_calls", "unmapped_reads", "final_consensus_calls"}:
+                            table = pd.DataFrame([row.to_dict() for row in table])
+                        writer.write(table)
+                    for line in result["vcf_records"]:
+                        if line:
+                            vcf_stream.write(line + "\n")
+                    # Bound buffered progress loss on forced termination without flushing every locus.
+                    if completed % 100 == 0:
+                        for writer in writers.values():
+                            writer.stream.flush()
+                        vcf_stream.flush()
+                    logger.debug("Locus %s written", result["locus_id"])
+        except BaseException:
+            logger.error("Processing failed; partial results retained at %s", tmp_dir)
+            raise
         t.info = f"{len(loci)} loci, {threads} threads"
 
     # Write VCF output
@@ -728,11 +761,19 @@ def abacus(
             logger.error("Report generation failed. VCF saved at %s; report inputs retained at %s", vcf, tmp_dir)
             raise typer.Exit(code=1) from None
 
-    if not keep_temp_files:
-        logger.info("Cleaning up temporary files...")
-        for file in tmp_dir.iterdir():
+    retained_paths = set()
+    if keep_summaries:
+        retained_paths.update(summary_paths.values())
+    if keep_read_summaries:
+        retained_paths.update(read_paths.values())
+    logger.info("Cleaning up temporary files...")
+    for file in tmp_dir.iterdir():
+        if file not in retained_paths:
             file.unlink(missing_ok=True)
+    if not retained_paths:
         tmp_dir.rmdir()
+    else:
+        logger.info("Retained analysis tables at %s", tmp_dir)
 
     logger.info("Finished!")
 
