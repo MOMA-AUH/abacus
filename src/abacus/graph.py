@@ -16,7 +16,6 @@ from Levenshtein import distance as levenshtein_distance
 from abacus.config import config
 from abacus.external_tools import run_tool
 from abacus.locus import Locus
-from abacus.logging import logger
 from abacus.read import FilteredRead, Read
 from abacus.timing import timed
 from abacus.utils import AMBIGUOUS_BASES_DICT, AlignmentType, Haplotype, compute_ref_divergence
@@ -729,7 +728,19 @@ def get_graph_alignments(reads: list[Read], graph: nx.DiGraph, minimizer_window:
             t.info = f"{len(reads)} reads"
         output_string = process.stdout
 
-    gaf_lines_by_read_name = {line.split("\t", 1)[0]: line for line in output_string.split("\n") if line}
+    def anchor_count(gaf_line: str) -> int:
+        path = gaf_line.split("\t")[5]
+        return len(set(re.findall(r"[><]([^><]+)", path)) & ANCHOR_NODES)
+
+    gaf_lines_by_read_name = {}
+    for line in output_string.splitlines():
+        if not line:
+            continue
+        name = line.split("\t", 1)[0]
+        previous = gaf_lines_by_read_name.get(name)
+        # Prefer more anchor nodes; keep the first hit on ties.
+        if previous is None or anchor_count(line) > anchor_count(previous):
+            gaf_lines_by_read_name[name] = line
 
     graph_alignments: list[GraphAlignment] = []
     for read in reads:

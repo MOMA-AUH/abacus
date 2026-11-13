@@ -62,18 +62,26 @@ def test_read_reaching_outer_anchors_is_spanning_despite_unaligned_ends():
     locus = make_locus("(CTCC)+")
     repeat = "CTCC" * 3
     spanning = locus.left_anchor + repeat + locus.right_anchor
-    unaligned = "G" * 1000
+    unaligned_length = 1000
+    unaligned = "G" * unaligned_length
+    outer_right_flank = create_repeat_graph(locus).nodes["right_anchor"]["sequence"]
     reads = [
-        make_read("unaligned_left", unaligned + spanning, locus, n_soft_clipped_left=1000),
-        make_read("unaligned_right", spanning + unaligned, locus, n_soft_clipped_right=1000),
+        make_read("unaligned_left", unaligned + spanning, locus, n_soft_clipped_left=unaligned_length),
+        make_read("unaligned_right", spanning + unaligned, locus, n_soft_clipped_right=unaligned_length),
+        # Left anchor -> 3 repeats -> right anchor -> spacer -> duplicate outer right flank.
+        # Minigraph reports the spanning hit first, then a flank-only hit that must not replace it.
+        make_read("extra_flank_hit", spanning + unaligned + outer_right_flank, locus),
     ]
 
-    alignments = get_graph_alignments(reads, create_repeat_graph(locus))
+    calls, filtered = get_read_calls(reads, locus)
 
-    assert {a.name: a.type for a in alignments} == {
-        "unaligned_left": AlignmentType.SPANNING,
-        "unaligned_right": AlignmentType.SPANNING,
+    assert {call.alignment.name: call.satellite_count for call in calls} == {
+        "unaligned_left": [3],
+        "unaligned_right": [3],
+        "extra_flank_hit": [3],
     }
+    assert all(call.is_spanning() for call in calls)
+    assert not filtered
 
 
 @pytest.mark.parametrize(
@@ -662,7 +670,7 @@ def observed_kmers(motif: str, repeat: str, read_type: str = "spanning") -> list
 
 @pytest.mark.parametrize("read_type", ["spanning", "left", "right"])
 def test_read_that_does_not_fit_the_motif_has_no_empty_kmers(read_type: str):
-    """minigraph inserts the spacers and deletes whole GT copies; realigned, every copy holds read bases."""
+    """Minigraph inserts the spacers and deletes whole GT copies; realigned, every copy holds read bases."""
     spacer = "ATAAAATGGGAGTAAGCGTGAACAGACAGCAGAGGCCGCTATTACATATAC"
     repeat = ("GT" * 5 + spacer) * 5
 
@@ -674,7 +682,7 @@ def test_read_that_does_not_fit_the_motif_has_no_empty_kmers(read_type: str):
 
 
 def test_read_with_mismatches_in_every_copy_gets_one_unit_per_copy():
-    """minigraph deletes all 29 copies and inserts the read as one block; realigned, it's one unit per copy."""
+    """Minigraph deletes all 29 copies and inserts the read as one block; realigned, it's one unit per copy."""
     kmers = observed_kmers("TTTTTTTTTC", "AAAAAAAAAC" * 29)
 
     assert kmers == ["AAAAAAAAAC"] * 29
