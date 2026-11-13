@@ -816,12 +816,14 @@ def graph_align_reads_to_locus(
             )
             continue
 
-        # Flanking reads
-        if aln.type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING]:
+        # Rescue only flanking reads missing an inner anchor.
+        if aln.type in [AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING] and not (
+            "left_anchor_overlap" in aln.path and "right_anchor_overlap" in aln.path
+        ):
             flanking_alignments.append(aln)
             continue
 
-        # Spanning reads
+        # Keep alignments reaching both inner anchors without changing their classification.
         alignments.append(aln)
 
     # Remap flanking reads to locus

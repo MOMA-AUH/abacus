@@ -44,8 +44,10 @@ def test_read_ending_in_short_flank_is_spanning():
 def test_read_continuing_beyond_short_flank_is_flanking():
     locus = make_locus("(CTCC)+")
     repeat = "CTCC" * 3
-    unaligned = "G" * 1000
+    unaligned_length = 1000
+    unaligned = "G" * unaligned_length
     reads = [
+        # Genomic tail -> short left anchor -> 3 repeats -> full right anchor; mirrored below.
         make_read("unaligned_left", unaligned + locus.left_anchor[-60:] + repeat + locus.right_anchor, locus),
         make_read("unaligned_right", locus.left_anchor + repeat + locus.right_anchor[:60] + unaligned, locus),
     ]
@@ -56,6 +58,16 @@ def test_read_continuing_beyond_short_flank_is_flanking():
         "unaligned_left": AlignmentType.RIGHT_FLANKING,
         "unaligned_right": AlignmentType.LEFT_FLANKING,
     }
+
+    calls, filtered = get_read_calls(reads, locus)
+
+    # Both inner anchors are mapped: keep the original count and flanking classification.
+    assert {call.alignment.name: call.satellite_count for call in calls} == {
+        "unaligned_left": [3],
+        "unaligned_right": [3],
+    }
+    assert all(not call.is_spanning() for call in calls)
+    assert not filtered
 
 
 def test_read_reaching_outer_anchors_is_spanning_despite_unaligned_ends():
