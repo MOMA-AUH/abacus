@@ -11,13 +11,13 @@
 
 Abacus analyzes STR (Short Tandem Repeat) data from Long-Read Sequencing. It targets Oxford Nanopore (ONT) data and has also been tested on Pacific Biosciences (PacBio) data. The main goal of Abacus is to provide a user-friendly interface for analyzing STR data and to provide a comprehensive report of the analysis results.
 
-Abacus converts each entry of an STR catalog (JSON) into a graph, then re-maps relevant reads from an aligned BAM/CRAM file onto that graph using [minigraph](https://github.com/lh3/minigraph). Repeat counts per read are derived from the resulting path, and used to cluster reads into haplotypes, and STR alleles are called from these groups.
+Abacus converts each entry of an STR catalog (JSON) into a graph, then re-maps relevant reads from an aligned BAM/CRAM file onto that graph using [minigraph](https://github.com/lh3/minigraph). Haplotyping uses the resulting repeat counts and sequences to infer allele groups, refine their consensus sequences, and call STR alleles.
 
 ### Haplotyping algorithm
 
 Each haplotype requires `--min-reads-per-haplotype` usable reads (default: `2`). Diploid loci with fewer than twice this minimum are fitted as one homozygous (HOM) group; fewer than the minimum produce no call. At the default, two or three reads support HOM; four can support two haplotypes. Chromosome and sex determine biological ploidy.
 
-1. **Grouping and filtering:** a Gaussian mixture model groups reads by repeat count. Unsupported groups and length outliers are removed, then groups are refitted. Length outliers fall outside robust bounds and the wider window: `median × (1 ± tolerance)` (`--length-outlier-tolerance`) or `median ± bases` (`--length-outlier-tolerance-bases`). Filtering requires more than `--min-n-length-outlier-detection` spanning reads per group and removes at most one spanning and one overly long flanking read per iteration.
+1. **Allele grouping and filtering:** a Gaussian mixture model groups reads by repeat count. Groups and estimates remain provisional until consensus refinement finishes. Unsupported groups and length outliers are removed, then groups are refitted. Length outliers fall outside robust bounds and the wider window: `median × (1 ± tolerance)` (`--length-outlier-tolerance`) or `median ± bases` (`--length-outlier-tolerance-bases`). Filtering requires more than `--min-n-length-outlier-detection` spanning reads per group and removes at most one spanning and one overly long flanking read per iteration.
 
 2. **Heterozygosity test:**
 
@@ -31,7 +31,7 @@ Each haplotype requires `--min-reads-per-haplotype` usable reads (default: `2`).
 
 ### Reporting results
 
-Results are saved as an HTML report (STR loci, called alleles, and visualizations) and a VCF file with the genotyping calls (see [VCF output](#vcf-output)). `--add-consensus-to-vcf` adds the consensus sequences to the VCF output. For large catalogs, report generation can be skipped by omitting the `--report` argument.
+Results are saved as an HTML report (STR loci, called alleles, and visualizations) and a VCF file with the haplotyping calls (see [VCF output](#vcf-output)). `--add-consensus-to-vcf` adds the consensus sequences to the VCF output. For large catalogs, report generation can be skipped by omitting the `--report` argument.
 
 ## Installation
 
@@ -62,7 +62,7 @@ Core arguments:
 - `--bam`: BAM or CRAM file with aligned reads.
 - `--ref`: reference FASTA used to align the reads.
 - `--report` *(optional)*: HTML output path. Omit to skip report generation (useful for large catalogs).
-- `--vcf`: VCF output path for the STR genotyping results.
+- `--vcf`: VCF output path for the STR haplotyping results.
 - `--sample-id`: sample identifier.
 - `--sex`: sample sex, `XX` or `XY` (default: `XX`).
 - `--loci-subset`: restrict to a subset of loci. Repeat for multiple loci.

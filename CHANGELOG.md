@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 - `REFDIV` INFO field: each allele's divergence from the catalog locus structure, so alleles the catalog motif doesn't describe are visible
 ### Changed
-- Centralized genotyping in `genotype_locus`, preserving input read calls
+- Centralized haplotyping in `haplotype_locus`, preserving input read calls
 - `--min-haplotyping-depth` applies only to equal-length sequence splitting; low coverage no longer overrides biological ploidy
 - **Breaking:** replaced `--keep-temp-files` with `--keep-summaries` and `--keep-read-summaries`; skip unrequested tables unless needed for a report
 - Reduced I/O operations: keep CSVs open, buffer writes, and flush CSVs and intermediate VCF records every 100 completed loci
@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
 - Consensus refinement reassigns spanning reads and refits group parameters and lengths; ties preserve assignments
-- Enforce minimum haplotype support throughout genotyping, retaining supported low-depth diploid splits
+- Enforce minimum haplotype support throughout haplotyping, retaining supported low-depth diploid splits
 - Flanking reads reaching both inner anchors now retain their original alignment instead of synthetic-anchor rescue inflating their repeat counts
 - Minigraph alignment selection now prefers the hit touching the most anchor nodes, preventing flank-only hits from replacing spanning alignments
 - External-tool errors now show the command and captured output without verbose mode; required executables are checked before processing loci

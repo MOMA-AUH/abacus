@@ -17,12 +17,12 @@ from pyfaidx import Fasta
 from pysam import AlignmentFile
 
 from abacus import __version__
+from abacus.allele_grouping import summarize_final_parameter_estimates, summarize_test_parameter_estimates
 from abacus.config import config
 from abacus.external_tools import run_tool
-from abacus.genotyping import genotype_locus
 from abacus.graph import get_read_calls
 from abacus.group_summary import calculate_final_group_summaries
-from abacus.haplotyping import summarize_final_parameter_estimates, summarize_test_parameter_estimates
+from abacus.haplotyping import haplotype_locus
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 from abacus.parallel import locus_results
@@ -101,13 +101,13 @@ def _process_locus(locus, ref: Fasta, sex: Sex, *, bamfile: AlignmentFile) -> di
             read_calls, unmapped_reads = get_read_calls(reads, locus)
             t.info = f"{len(read_calls)} calls, {len(unmapped_reads)} unmapped"
 
-        genotyping = genotype_locus(read_calls, ploidy)
-        grouped_read_calls = genotyping.grouped_read_calls
-        all_removed_read_calls = genotyping.removed_read_calls
-        final_consensus_calls = genotyping.consensus_calls
-        final_params = genotyping.final_params
-        het_params, hom_params = genotyping.het_params, genotyping.hom_params
-        test_summary_res_df = genotyping.test_summary
+        haplotyping = haplotype_locus(read_calls, ploidy)
+        grouped_read_calls = haplotyping.grouped_read_calls
+        all_removed_read_calls = haplotyping.removed_read_calls
+        final_consensus_calls = haplotyping.consensus_calls
+        final_params = haplotyping.final_params
+        het_params, hom_params = haplotyping.het_params, haplotyping.hom_params
+        test_summary_res_df = haplotyping.test_summary
         locus_is_het = any(read.haplotype in (Haplotype.H1, Haplotype.H2) for read in grouped_read_calls)
 
         # Generate VCF records here while final_consensus_calls, final_params, and locus_is_het are in scope,
@@ -169,7 +169,7 @@ def _process_locus(locus, ref: Fasta, sex: Sex, *, bamfile: AlignmentFile) -> di
 
 
 @app.command(
-    help="[bold]Abacus[/bold]: A tool for STR genotyping, haplotyping and visualization 🧬",
+    help="[bold]Abacus[/bold]: A tool for STR haplotyping and visualization 🧬",
     no_args_is_help=True,
 )
 def abacus(

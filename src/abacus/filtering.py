@@ -139,7 +139,7 @@ def mark_qc_outliers(read_calls: list[ReadCall]) -> None:
 
 
 def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]:
-    """Per-haplotype length outlier detection after first round of haplotyping.
+    """Length outlier detection within candidate allele groups.
 
     For each haplotype group (h1, h2, hom), computes the median total base pair count
     (sum of satellite_count[i] * len(satellite.sequences[0]) for each satellite i)
@@ -160,8 +160,8 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
         spanning = [rc for rc in group if rc.is_spanning()]
         non_spanning = [rc for rc in group if not rc.is_spanning()]
 
-        # Remove at most one outlier per haplotype per call; the caller re-estimates and
-        # re-groups before calling again, mirroring the singleton removal loop
+        # Remove at most one spanning and one long flanking outlier per group;
+        # the caller re-estimates and re-groups before calling again.
         if len(spanning) > config.min_n_length_outlier_detection:
             lengths = [float(len(rc.alignment.str_sequence)) for rc in spanning]
             median_length = float(median(lengths))
