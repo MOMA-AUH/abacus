@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import array
+import multiprocessing
+from pathlib import Path
 
 import pysam
 import pytest
@@ -138,3 +140,47 @@ def test_5mc_probs_from_mm_tags(
             alignment.set_tag("ML", array.array("B", ml_tag))
 
     assert get_5mc_modification_probs(alignment) == expected_mod_probs
+
+
+@pytest.mark.parametrize("mm_tag", ["MM", "Mm"])
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("empty", "0000"),
+        ("mixed", '00#$"#****)(#!"#(+*+**"!!$#"!$\'000'),
+    ],
+)
+def test_5mc_probs_with_empty_mm_blocks(case: str, expected: str, mm_tag: str) -> None:
+    """Empty MM blocks must not crash decoding or change the caller's record."""
+    fixture = Path(__file__).parent / "data" / "empty_mm" / f"{case}.sam"
+    # Isolate native crashes while keeping the assertions in ordinary Python.
+    process = multiprocessing.get_context("spawn").Process(
+        target=check_5mc_probs, args=(fixture, mm_tag, expected),
+    )
+    process.start()
+    try:
+        process.join(timeout=30)
+        assert not process.is_alive(), "decoder timed out"
+        assert process.exitcode == 0, f"decoder exited {process.exitcode}"
+    finally:
+        if process.is_alive():
+            process.kill()
+            process.join()
+        process.close()
+
+
+def check_5mc_probs(fixture: Path, mm_tag: str, expected: str) -> None:
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    # Minimized from real reads: qualities are needed to reproduce the crash.
+    # The mixed record retains all 29 5mC probabilities on consecutive bases.
+    with pysam.AlignmentFile(fixture, "r") as handle:
+        alignment = next(handle)
+    if mm_tag == "Mm":
+        mm = alignment.get_tag("MM")
+        alignment.set_tag("MM", None)
+        alignment.set_tag("Mm", mm)
+    before = alignment.to_string()
+    assert get_5mc_modification_probs(alignment) == expected
+    assert alignment.to_string() == before, "decoding changed the input record"

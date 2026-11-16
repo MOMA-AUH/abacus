@@ -1,3 +1,4 @@
+from copy import copy
 from dataclasses import dataclass
 
 import pysam
@@ -87,6 +88,19 @@ class FilteredRead(Read):
 def get_5mc_modification_probs(alignment: pysam.AlignedSegment) -> str:
     sequence = alignment.query_sequence or ""
     mod_5mc_probs = bytearray(b"0" * len(sequence))
+
+    # Empty MM blocks can crash the native decoder; they consume no ML entries.
+    tag = next((tag for tag in ("MM", "Mm") if alignment.has_tag(tag)), None)
+    if tag is None:
+        return mod_5mc_probs.decode("latin-1")
+    mm = alignment.get_tag(tag)
+    blocks = [block for block in mm.split(";") if "," in block]
+    if not blocks:
+        return mod_5mc_probs.decode("latin-1")
+    normalized = ";".join(blocks) + ";"
+    if normalized != mm:
+        alignment = copy(alignment)
+        alignment.set_tag(tag, normalized)
 
     # Check if alignment has modified bases
     if alignment.modified_bases is None:
