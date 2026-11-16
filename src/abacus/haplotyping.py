@@ -6,7 +6,7 @@ from scipy.stats import chi2
 
 from abacus.config import config
 from abacus.equal_length_split import _make_empty_backup_summary, run_equal_length_backup_test
-from abacus.filtering import detect_length_outliers
+from abacus.filtering import detect_length_outliers, filter_unsupported_haplotypes
 from abacus.graph import ReadCall
 from abacus.logging import logger
 from abacus.parameter_estimation import (
@@ -39,6 +39,10 @@ def run_haplotyping(
     # PHASE 1 + 2: Initial grouping, then iterative outlier detection and re-grouping
     grouped_read_calls, outlier_read_calls, het_params_test = group_and_remove_outliers(read_calls, ploidy)
 
+    if not grouped_read_calls:
+        _, _, het_params, hom_params, final_params, summary = create_empty_results()
+        return [], outlier_read_calls, het_params, hom_params, final_params, summary
+
     # PHASE 2b: If more reads were removed than the smaller haplotype holds (e.g. it is a few contaminating reads),
     # regroup without it
     smaller_haplotype_read_calls = get_smaller_haplotype(grouped_read_calls) if ploidy == 2 else []
@@ -61,8 +65,8 @@ def run_haplotyping(
     with timed("haplotyping estimate_homozygous_parameters"):
         hom_params_test = estimate_homozygous_parameters(grouped_read_calls)
 
-    # If ploidy=1, skip heterozygosity test, estimate final parameters using homozygous model, and return
-    if ploidy == 1:
+    # Too few surviving reads cannot support every chromosome copy independently.
+    if ploidy == 1 or len(grouped_read_calls) < config.min_reads_per_haplotype * ploidy:
         test_summary_df = summarize_test_statistics(
             log_lik_hetero=np.float64(np.nan),
             log_lik_hom=np.float64(np.nan),
@@ -108,6 +112,9 @@ def run_haplotyping(
         backup_summary_df = _make_empty_backup_summary(run=False)
 
     # Phase 4: Final parameter estimation and summarization
+
+    grouped_read_calls, unsupported = filter_unsupported_haplotypes(grouped_read_calls)
+    outlier_read_calls.extend(unsupported)
 
     # Always use homozygous model per group for final estimates, regardless of how grouping was determined
     final_params = _estimate_final_parameters(grouped_read_calls)
@@ -187,58 +194,33 @@ def group_and_remove_outliers(
     read_calls: list[ReadCall],
     ploidy: int,
 ) -> tuple[list[ReadCall], list[ReadCall], HeterozygousParameters]:
-    # Work on copies, so the input read calls can be grouped again
-    read_calls = [rc.copy() for rc in read_calls]
+    # Work on copies, so the minority-group retry can reconsider the original reads.
+    remaining = [read.copy() for read in read_calls]
+    removed: list[ReadCall] = []
+    dim = len(read_calls[0].satellite_count) if read_calls else 1
+    het_params = _make_empty_het_par_estimate(dim)
 
-    # Initialize
-    outlier_read_calls: list[ReadCall] = []
+    while remaining:
+        fit_ploidy = ploidy if len(remaining) >= config.min_reads_per_haplotype * ploidy else 1
+        if fit_ploidy == 2:
+            with timed("haplotyping estimate_heterozygous_parameters"):
+                het_params = estimate_heterozygous_parameters(remaining)
+        else:
+            het_params = _make_empty_het_par_estimate(dim)
+        grouped = group_read_calls(remaining, het_params, fit_ploidy)
+        remaining, unsupported = filter_unsupported_haplotypes(grouped)
+        if unsupported:
+            removed.extend(unsupported)
+            continue
 
-    # PHASE 1: Initial grouping
-
-    with timed("haplotyping estimate_heterozygous_parameters (initial)"):
-        het_params_test = estimate_heterozygous_parameters(read_calls)
-
-    # Initialize grouping
-    with timed("haplotyping group_read_calls (initial)"):
-        grouped_read_calls = group_read_calls(read_calls, het_params_test, ploidy)
-
-    # PHASE 2: Iterative outlier detection and re-grouping
-
-    # Initialize parameters
-    _outlier_iter = 0
-    new_outliers_found = True
-    while new_outliers_found and len(grouped_read_calls) > config.min_n_qc_filtering:
-        _outlier_iter += 1
-
-        # Detect outliers
-        singleton_read_calls = detect_singleton_clusters(grouped_read_calls)
-        length_outlier_read_calls = detect_length_outliers(grouped_read_calls)
-
-        # De-duplicate outliers
-        outliers = list({rc.alignment.name: rc for rc in singleton_read_calls + length_outlier_read_calls}.values())
-
-        # If no new outliers found, break loop
-        new_outliers_found = bool(outliers)
-        if not new_outliers_found:
+        # Length filtering retains its own per-group sample-size requirement.
+        outliers = detect_length_outliers(remaining)
+        if not outliers:
             break
+        removed.extend(outliers)
+        remaining = [read for read in remaining if read not in outliers]
 
-        # Update outlier and good read call lists
-        for outlier in outliers:
-            outlier_read_calls.append(outlier)
-            grouped_read_calls.remove(outlier)
-
-        # Re-estimate heterozygous parameters
-        with timed(f"haplotyping re-estimate het parameters (outlier iter {_outlier_iter})"):
-            het_params_test = estimate_heterozygous_parameters(grouped_read_calls)
-
-        # Re-group reads based on new estimates
-        with timed(f"haplotyping group_read_calls (outlier iter {_outlier_iter})"):
-            grouped_read_calls = group_read_calls(grouped_read_calls, het_params_test, ploidy)
-
-    if _outlier_iter > 0:
-        logger.debug(f"[TIMING] haplotyping outlier detection: {_outlier_iter} iteration(s), {len(outlier_read_calls)} outliers removed")
-
-    return grouped_read_calls, outlier_read_calls, het_params_test
+    return remaining, removed, het_params
 
 
 def get_smaller_haplotype(grouped_read_calls: list[ReadCall]) -> list[ReadCall]:
@@ -301,32 +283,6 @@ def group_read_calls(
         read.set_haplotype(Haplotype.H1 if p_group_h1_flanking[i] > p_group_h2_flanking[i] else Haplotype.H2)
 
     return spanning_reads + flanking_reads
-
-
-def detect_singleton_clusters(
-    grouped_read_calls: list[ReadCall],
-) -> list[ReadCall]:
-    if not len(grouped_read_calls):
-        return []
-
-    # Initialize lists
-    outlier_read_calls: list[ReadCall] = []
-
-    # Evaluate haplotypes
-    # Get unique haplotypes
-    haplotypes = {rc.haplotype for rc in grouped_read_calls}
-    for haplotype in haplotypes:
-        # Get read calls for haplotype
-        haplotype_read_calls = [rc for rc in grouped_read_calls if rc.haplotype == haplotype]
-
-        # If haplotype has only one read call, mark as outlier and continue
-        if len(haplotype_read_calls) == 1:
-            rc = haplotype_read_calls[0]
-            rc.add_outlier_reason("caused_singleton_in_haplotyping")
-            outlier_read_calls.append(rc)
-            continue
-
-    return outlier_read_calls
 
 
 def test_heterozygosity(
@@ -394,17 +350,11 @@ def _run_sequence_split_test_and_update_params(
 
 
 def _estimate_final_parameters(grouped_read_calls: list[ReadCall]) -> dict[Haplotype, HomozygousParameters]:
-    """Estimate final parameters using the homozygous model on each group.
+    """Fit a homozygous model independently to each H1, H2, and HOM group.
 
-    For heterozygous loci (H1 and H2 reads exist): runs the homozygous model
-    independently on each group. The shared unit_var in HeterozygousParameters
-    is the average of the two per-group unit_vars.
-
-    For homozygous loci: returns NaN het_params and the supplied hom_params unchanged.
-
-    This is the single source of truth for final parameter estimation and is
-    called at the end of run_haplotyping() regardless of the path taken
-    (length-based split, sequence-based split, or homozygous call).
+    Return a parameter dictionary containing all three haplotypes, with NaN
+    estimates for groups without reads. Each populated group has its own mean,
+    unit variance, and confidence intervals.
     """
     # Grouped reads go on to consensus, which only handles H1, H2 and HOM
     invalid_labels = {r.haplotype for r in grouped_read_calls} - {Haplotype.H1, Haplotype.H2, Haplotype.HOM}

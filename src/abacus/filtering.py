@@ -1,8 +1,26 @@
+from collections import Counter
+
 from numpy import median
 
 from abacus.config import config
 from abacus.graph import ReadCall
 from abacus.utils import Haplotype
+
+
+def filter_unsupported_haplotypes(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:
+    """Remove groups below minimum support and label a sole surviving group HOM."""
+    counts = Counter(read.haplotype for read in read_calls)
+    supported, removed = [], []
+    for read in read_calls:
+        if counts[read.haplotype] < config.min_reads_per_haplotype:
+            read.add_outlier_reason("insufficient_haplotype_support")
+            removed.append(read)
+        else:
+            supported.append(read)
+    if len({read.haplotype for read in supported}) == 1:
+        for read in supported:
+            read.set_haplotype(Haplotype.HOM)
+    return supported, removed
 
 
 def filter_low_qual_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:

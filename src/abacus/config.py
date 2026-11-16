@@ -42,6 +42,7 @@ class Config:
     read_summary_output: bool = True
 
     # Haplotype parameters
+    min_reads_per_haplotype: int = 2
     min_haplotyping_depth: int = 10
     min_sd: float = 0.05
     min_var: float = field(init=False)

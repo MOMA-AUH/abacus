@@ -187,11 +187,12 @@ def run_equal_length_backup_test(
     position and runs a binomial test (H0: p = 0.5) on the counts of the two
     most common kmers at that position.
 
-    A NOT significant result (p >= alpha) means the observed split is
-    consistent with a 50/50 ratio, indicating two alleles with the same length
-    but different sequences — in that case reads are tagged H1/H2.
-    A significant result (p < alpha) means the ratio deviates from 50/50, so
-    no split is made.
+    A nonsignificant result (p >= alpha) is consistent with a 50/50 ratio.
+    Reads are tagged H1/H2 only if both candidate groups also meet
+    config.min_reads_per_haplotype; reads carrying neither split kmer are
+    then filtered with reason "not_split_base". If either group lacks support
+    or the result is significant (p < alpha), all original HOM reads are
+    retained without filtering by this test.
 
     Returns (updated_read_calls, new_outliers, backup_summary_df).
 
@@ -201,8 +202,8 @@ def run_equal_length_backup_test(
       backup_test_kmer_h1, backup_test_kmer_h2,
       backup_test_n_h1, backup_test_n_h2
 
-    Note: backup_test_significant=True means p < alpha (split NOT 50/50, no
-    split made). Split is made when backup_test_significant=False (p >= alpha).
+    backup_test_significant records the binomial test result, not whether a
+    split was accepted. A nonsignificant result alone does not guarantee a split.
     """
     _empty = _make_empty_backup_summary(run=False)
 
@@ -290,8 +291,8 @@ def run_equal_length_backup_test(
         index=[0],
     )
 
-    # If significant, the ratio is NOT approximately 50/50 and the split is likely due to noise
-    if is_significant:
+    # Keep the original HOM group unless both split groups have enough support.
+    if is_significant or min(count_h1, count_h2) < config.min_reads_per_haplotype:
         return read_calls, [], summary_df
 
     # Re-tag reads based on which kmer they carry at best_col
@@ -310,22 +311,9 @@ def run_equal_length_backup_test(
         elif c == char_h2:
             read_call.set_haplotype(Haplotype.H2)
             updated_reads.append(read_call)
-        # If character is missing_end_char or something else, mark as qc_filtered (could not be classified based on sequence)
+        # The split is supported; reads without either split base are outliers.
         else:
             read_call.add_qc_filter_reason("not_split_base")
             new_outliers.append(read_call)
-
-    # Cancel the split if any haplotype cluster would be a singleton — a singleton after a
-    # sequence split indicates noise rather than a real second allele.
-    haplotype_counts = {h: sum(1 for r in updated_reads if r.haplotype == h) for h in (Haplotype.H1, Haplotype.H2)}
-    if any(count == 1 for count in haplotype_counts.values()):
-        # Split is not valid: the locus is homozygous and every read, including those the
-        # split couldn't classify, goes back into the HOM group
-        for read_call in new_outliers:
-            read_call.outlier_reasons.remove("not_split_base")
-        updated_reads.extend(new_outliers)
-        new_outliers = []
-        for read_call in updated_reads:
-            read_call.set_haplotype(Haplotype.HOM)
 
     return updated_reads, new_outliers, summary_df

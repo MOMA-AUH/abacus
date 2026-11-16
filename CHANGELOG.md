@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     
 ## [Unreleased]
 ### Added
+- `--min-reads-per-haplotype`: minimum usable reads per haplotype (default: `2`, minimum: `1`)
 - `AFF3` catalog entry
 - `RFC1_complex` catalog entry, covering the RFC1 motifs with a published pathogenicity classification
 - `PS` FORMAT field; heterozygous genotypes are now phased
@@ -16,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 - `REFDIV` INFO field: each allele's divergence from the catalog locus structure, so alleles the catalog motif doesn't describe are visible
 ### Changed
+- Centralized genotyping in `genotype_locus`, preserving input read calls
+- `--min-haplotyping-depth` applies only to equal-length sequence splitting; low coverage no longer overrides biological ploidy
 - **Breaking:** replaced `--keep-temp-files` with `--keep-summaries` and `--keep-read-summaries`; skip unrequested tables unless needed for a report
 - Reduced I/O operations: keep CSVs open, buffer writes, and flush CSVs and intermediate VCF records every 100 completed loci
 - Merged sequence plots with haplotype facets and grey strand lines; removed quality shading
@@ -40,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
+- Consensus refinement reassigns spanning reads and refits group parameters and lengths; ties preserve assignments
+- Enforce minimum haplotype support throughout genotyping, retaining supported low-depth diploid splits
 - Flanking reads reaching both inner anchors now retain their original alignment instead of synthetic-anchor rescue inflating their repeat counts
 - Minigraph alignment selection now prefers the hit touching the most anchor nodes, preventing flank-only hits from replacing spanning alignments
 - External-tool errors now show the command and captured output without verbose mode; required executables are checked before processing loci
@@ -56,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial estimates when one allele is under-represented
 - Report crashing when no reads are filtered/unmapped ([#26](https://github.com/MOMA-AUH/abacus/issues/26))
 - Segfault at loci with many distinct kmers, e.g. long RFC1 expansions ([#29](https://github.com/MOMA-AUH/abacus/issues/29))
-- Crash when the equal-length sequence split is cancelled for a singleton cluster; unclassified reads now return to HOM
+- Unsupported equal-length sequence splits retain all reads as HOM
 - Parallel runs of the same sample sharing a temporary directory; it is now named after the VCF instead of the sample ID
 - Crash on chrY loci in XX samples (ploidy 0); chrY loci are now skipped when `--sex XX`
 - Crash on an empty catalog; a header-only VCF is now written and the report is skipped

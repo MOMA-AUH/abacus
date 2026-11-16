@@ -15,27 +15,19 @@ Abacus converts each entry of an STR catalog (JSON) into a graph, then re-maps r
 
 ### Haplotyping algorithm
 
-The haplotyping pipeline proceeds in three stages.
+Each haplotype requires `--min-reads-per-haplotype` usable reads (default: `2`). Diploid loci with fewer than twice this minimum are fitted as one homozygous (HOM) group; fewer than the minimum produce no call. At the default, two or three reads support HOM; four can support two haplotypes. Chromosome and sex determine biological ploidy.
 
-**Stage 1 — Outlier removal (preprocessing)**
+1. **Grouping and filtering:** a Gaussian mixture model groups reads by repeat count. Unsupported groups and length outliers are removed, then groups are refitted. Length outliers fall outside robust bounds and the wider window: `median × (1 ± tolerance)` (`--length-outlier-tolerance`) or `median ± bases` (`--length-outlier-tolerance-bases`). Filtering requires more than `--min-n-length-outlier-detection` spanning reads per group and removes at most one spanning and one overly long flanking read per iteration.
 
-Reads are grouped into two clusters (H1 and H2) via a Gaussian mixture model fit to the repeat counts. Two outlier removal steps then clean the read set iteratively, re-estimating model parameters and re-grouping after each removal. At most 1 read is removed per cluster per iteration to prevent over-filtering. Both steps are controlled by `--min-n-length-outlier-detection`, the minimum number of reads per haplotype group required to run outlier detection for that group.
+2. **Heterozygosity test:**
 
-1. **Singleton cluster removal**: a haplotype cluster with exactly one read is treated as an outlier; the read is removed and reads are re-grouped.
-2. **Length outlier detection**: for each group (H1, H2, or HOM), the median STR base-pair length is computed across spanning reads. A read is flagged as an outlier if it falls outside both Tukey-fence robust bounds *and* a tolerance window of `median × (1 ± tolerance)`, set via `--length-outlier-tolerance`.
+   - **a. Length test:** a likelihood ratio test compares homozygous and heterozygous models (one Gaussian versus two). Significant results (p < `--heterozygosity-alpha`) retain H1/H2; otherwise reads become HOM and the sequence test is attempted.
 
-**Stage 2 — Length-based heterozygosity test**
+   - **b. Sequence test:** with at least `--min-haplotyping-depth` spanning reads (default: `10`), a partial-order alignment (POA) identifies the most variable kmer position. A binomial test checks the two commonest kmers for a 50/50 ratio. If p ≥ `--equal-length-alpha` and both groups meet minimum support, reads are split into H1/H2; reads carrying neither kmer are filtered (`not_split_base`). Otherwise all reads remain HOM.
 
-A log-likelihood ratio test (LRT) compares a homozygous model (single Gaussian) against a heterozygous model (two Gaussians). If significant (p < `--heterozygosity-alpha`), reads keep their H1/H2 assignments; otherwise all reads are re-tagged HOM and Stage 3 is attempted.
+3. **Consensus building:** each haplotype's consensus is built by hill-climbing over read kmers, independently for each satellite and break, then concatenating the results. Satellite lengths match the fitted repeat counts.
 
-**Stage 3 — Equal-length sequence split test (backup)**
-
-When Stage 2 is not significant — haplotypes have the same repeat count — Abacus attempts a sequence-level split. A partial-order alignment (POA) MSA is built from all reads, the most variable kmer position is identified, and a binomial test (H₀: p = 0.5) is applied to the two most common kmers at that position:
-
-- **Not significant (p ≥ alpha)**: the observed split is consistent with a 50/50 split — two alleles of equal length but distinct sequence. Reads are tagged H1/H2 by which kmer they carry; reads carrying neither are filtered (`not_split_base`). If either group would hold a single read, the split is cancelled: the locus is called homozygous and all reads, including unclassified ones, are kept as HOM.
-- **Significant (p < alpha)**: ratio deviates from 50/50, no split is made, locus is called homozygous.
-
-Controlled by `--equal-length-alpha`.
+4. **Consensus refinement:** spanning and flanking reads are reassigned to a strictly closer consensus, preserving ties. Spanning-read moves trigger parameter and length refitting. Minimum support is rechecked after splitting and reassignment; unsupported groups are removed before rebuilding consensus.
 
 ### Reporting results
 
@@ -137,7 +129,8 @@ Fine-tuning knobs for the analysis:
 - `--min-n-length-outlier-detection`: minimum spanning reads per haplotype group to run length outlier detection. Default: `5`.
 
 #### Haplotype Parameters
-- `--min-haplotyping-depth`: minimum depth per called haplotype; below this the locus is called homozygous. Default: `10`.
+- `--min-reads-per-haplotype`: minimum usable reads required per reported haplotype; groups below this support are removed. Must be at least `1`. Default: `2`.
+- `--min-haplotyping-depth`: minimum spanning-read depth to attempt the equal-length sequence split. Separate from `--min-reads-per-haplotype`. Default: `10`.
 - `--heterozygosity-alpha`: sensitivity cutoff for the length-based heterozygosity test. Default: `0.05`.
 - `--equal-length-alpha`: sensitivity cutoff for the equal-length sequence split test (backup test for equal-length haplotypes). Default: `0.05`.
 

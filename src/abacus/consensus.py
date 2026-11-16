@@ -6,9 +6,6 @@ from Levenshtein import distance as levenshtein_distance
 from abacus.consensus_search import KmerRead, find_consensus
 from abacus.graph import AlignmentType, ConsensusAlignment, ReadCall, qual_to_char
 from abacus.locus import Locus
-from abacus.logging import logger
-from abacus.parameter_estimation import HomozygousParameters
-from abacus.timing import timed
 from abacus.utils import Haplotype, compute_levenshtein_rate, trim_sequences_for_comparison
 
 # A slot in a locus's structure: a break (index into locus.breaks) or a satellite (index into
@@ -52,52 +49,11 @@ def contract_kmer_string(kmer_string: str) -> str:
     return contracted_kmer
 
 
-def build_consensus_for_locus(grouped_read_calls: list[ReadCall], final_params: dict[Haplotype, HomozygousParameters]) -> list[ConsensusCall]:
-    """Build consensus, reassign flanking reads in place, and rebuild only if labels change.
-
-    Target lengths stay fixed: only flanking reads move, while spanning reads dominate length.
-    """
-    with timed("consensus"):
-        expected_haplotypes = {r.haplotype for r in grouped_read_calls}
-        target_lengths = consensus_lengths(grouped_read_calls, final_params)
-        raw_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls, target_lengths)
-        # A missing haplotype must not move flanking reads to the surviving one
-        # or produce a complete genotype from only a partial consensus.
-        if {call.haplotype for call in raw_consensus_calls} != expected_haplotypes:
-            logger.warning("Incomplete raw consensus; emitting NoCall for the whole locus.")
-            return []
-        original_haplotypes = [r.haplotype for r in grouped_read_calls]
-        update_flanking_labels_based_on_consensus(read_calls=grouped_read_calls, consensus_read_calls=raw_consensus_calls)
-        if original_haplotypes == [r.haplotype for r in grouped_read_calls]:
-            final_consensus_calls = raw_consensus_calls
-        else:
-            final_consensus_calls = consensus_calls_by_haplotype(grouped_read_calls, target_lengths)
-        if {call.haplotype for call in final_consensus_calls} != expected_haplotypes:
-            logger.warning("Incomplete final consensus; emitting NoCall for the whole locus.")
-            return []
-        for call in final_consensus_calls:
-            if call.spanning_reads == 0:
-                logger.warning(
-                    f"Locus {call.locus.id}, haplotype {call.haplotype}: consensus length has no spanning-read "
-                    f"support ({call.flanking_reads} flanking reads only).",
-                )
-        return final_consensus_calls
-
-
-def consensus_lengths(read_calls: list[ReadCall], final_params: dict[Haplotype, HomozygousParameters]) -> dict[Haplotype, list[int]]:
-    """Per-satellite kmer count of each haplotype's consensus, from the estimated per-satellite
-    means. A break isn't part of this - it always contributes exactly one kmer when the locus
-    defines one, independent of any estimate (see locus_slots). Haplotypes without reads have NaN
-    estimates and no consensus, so they're skipped.
-    """
-    return {h: [int(round(x)) for x in p.mean] for h, p in final_params.items() if p.mean.size and not np.isnan(p.mean).any()}
-
-
-def consensus_calls_by_haplotype(read_calls: list[ReadCall], target_lengths: dict[Haplotype, list[int]]) -> list[ConsensusCall]:
+def consensus_calls_by_haplotype(read_calls: list[ReadCall], lengths: dict[Haplotype, list[int]]) -> list[ConsensusCall]:
     consensus_calls: list[ConsensusCall] = []
     for haplotype in {r.haplotype for r in read_calls}:
         haplotyped_read_calls = [r for r in read_calls if r.haplotype == haplotype]
-        consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype, target_lengths=target_lengths[haplotype]))
+        consensus_calls.extend(create_consensus_calls(read_calls=haplotyped_read_calls, haplotype=haplotype, target_lengths=lengths[haplotype]))
     return consensus_calls
 
 
@@ -289,17 +245,13 @@ def create_consensus_calls(read_calls: list[ReadCall], haplotype: Haplotype, tar
     return [build_consensus_call(locus, consensus_kmers, target_lengths, haplotype, spanning_count, flanking_count)]
 
 
-def update_flanking_labels_based_on_consensus(
+def update_labels_based_on_consensus(
     read_calls: list[ReadCall],
     consensus_read_calls: list[ConsensusCall],
 ) -> None:
     # Get unique consensus haplotypes
     unique_haplotypes = {read_call.haplotype for read_call in consensus_read_calls}
     for read_call in read_calls:
-        # Skip if read call is spanning
-        if read_call.alignment.type == AlignmentType.SPANNING:
-            continue
-
         # Find closest consensus and use this as haplotype
         # Initialize
         current_haplotype = read_call.haplotype

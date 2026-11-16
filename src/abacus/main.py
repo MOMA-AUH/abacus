@@ -12,21 +12,17 @@ from pathlib import Path
 from typing import Annotated
 
 import pandas as pd
+import typer
 from pyfaidx import Fasta
 from pysam import AlignmentFile
-import typer
 
 from abacus import __version__
 from abacus.config import config
-from abacus.consensus import build_consensus_for_locus
 from abacus.external_tools import run_tool
-from abacus.filtering import filter_low_qual_read_calls, filter_outlier_qual_read_calls
-from abacus.graph import (
-    ReadCall,
-    get_read_calls,
-)
+from abacus.genotyping import genotype_locus
+from abacus.graph import get_read_calls
 from abacus.group_summary import calculate_final_group_summaries
-from abacus.haplotyping import run_haplotyping, summarize_final_parameter_estimates, summarize_test_parameter_estimates
+from abacus.haplotyping import summarize_final_parameter_estimates, summarize_test_parameter_estimates
 from abacus.locus import load_loci_from_json
 from abacus.logging import logger, set_log_file_handler
 from abacus.parallel import locus_results
@@ -87,19 +83,13 @@ def _process_locus(locus, ref: Fasta, sex: Sex, *, bamfile: AlignmentFile) -> di
     with timed("locus TOTAL"):
         logger.info("Locus: %s  |  %s  |  %s:%d-%d", locus.id, locus.structure, locus.location.chrom, locus.location.start, locus.location.end)
 
-        # Initialize list to keep track of removed read calls for final summary
-        all_removed_read_calls: list[ReadCall] = []
-
         # Get reads in locus
         with timed("get_reads_in_locus") as t:
             reads = get_reads_in_locus(bamfile, locus)
             t.info = f"{len(reads)} reads"
 
         # Handle ploidy
-        if len(reads) < config.min_haplotyping_depth:
-            logger.warning(f"Low coverage for locus {locus.id}. Setting ploidy to 1.")
-            ploidy = 1
-        elif locus.location.chrom == "chrY":
+        if locus.location.chrom == "chrY":
             ploidy = sex.value.count("Y")
         elif locus.location.chrom == "chrX":
             ploidy = sex.value.count("X")
@@ -111,41 +101,14 @@ def _process_locus(locus, ref: Fasta, sex: Sex, *, bamfile: AlignmentFile) -> di
             read_calls, unmapped_reads = get_read_calls(reads, locus)
             t.info = f"{len(read_calls)} calls, {len(unmapped_reads)} unmapped"
 
-        # Prefilter low quality read calls
-        with timed("filter_low_qual_read_calls") as t:
-            good_read_calls, low_quality_read_calls = filter_low_qual_read_calls(read_calls=read_calls)
-            all_removed_read_calls.extend(low_quality_read_calls)
-            t.info = f"{len(good_read_calls)} kept, {len(low_quality_read_calls)} removed"
-
-        # First round haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
-        with timed("run_haplotyping") as t:
-            initial_grouped_read_calls, initial_haplotyping_outliers, _, _, _, _ = run_haplotyping(
-                read_calls=good_read_calls,
-                ploidy=ploidy,
-            )
-            all_removed_read_calls.extend(initial_haplotyping_outliers)
-            t.info = f"{len(initial_grouped_read_calls)} grouped, {len(initial_haplotyping_outliers)} removed"
-
-        # Filter QC outliers per haplotype group
-        with timed("filter_outlier_qual_read_calls") as t:
-            good_read_calls, outlier_quality_read_calls = filter_outlier_qual_read_calls(read_calls=initial_grouped_read_calls)
-            all_removed_read_calls.extend(outlier_quality_read_calls)
-            t.info = f"{len(good_read_calls)} kept, {len(outlier_quality_read_calls)} removed"
-
-        # Second round haplotyping (includes singleton detection + length outlier detection + re-estimation internally)
-        with timed("run_haplotyping") as t:
-            grouped_read_calls, haplotyping_outliers, het_params, hom_params, final_params, test_summary_res_df = run_haplotyping(
-                read_calls=good_read_calls,
-                ploidy=ploidy,
-            )
-            all_removed_read_calls.extend(haplotyping_outliers)
-            t.info = f"{len(grouped_read_calls)} grouped, {len(haplotyping_outliers)} removed"
-
-        # TODO: Make this nicer
-        locus_is_het = grouped_read_calls[0].haplotype in [Haplotype.H1, Haplotype.H2] if grouped_read_calls else False
-
-        # Build per-haplotype consensus (relabels flanking reads in grouped_read_calls against a raw consensus first)
-        final_consensus_calls = build_consensus_for_locus(grouped_read_calls, final_params)
+        genotyping = genotype_locus(read_calls, ploidy)
+        grouped_read_calls = genotyping.grouped_read_calls
+        all_removed_read_calls = genotyping.removed_read_calls
+        final_consensus_calls = genotyping.consensus_calls
+        final_params = genotyping.final_params
+        het_params, hom_params = genotyping.het_params, genotyping.hom_params
+        test_summary_res_df = genotyping.test_summary
+        locus_is_het = any(read.haplotype in (Haplotype.H1, Haplotype.H2) for read in grouped_read_calls)
 
         # Generate VCF records here while final_consensus_calls, final_params, and locus_is_het are in scope,
         # so the main process never needs to accumulate the full ConsensusCall/params objects.
@@ -188,16 +151,20 @@ def _process_locus(locus, ref: Fasta, sex: Sex, *, bamfile: AlignmentFile) -> di
         # Catalog thresholds and the status of each estimate, for the report
         final_parameter_summary_df["benign_max"] = pd.array([locus.satellites[i].benign_max for i in final_parameter_summary_df["idx"]], dtype="Int64")
         final_parameter_summary_df["pathogenic_min"] = pd.array([locus.satellites[i].pathogenic_min for i in final_parameter_summary_df["idx"]], dtype="Int64")
-        final_parameter_summary_df["status"] = [locus.satellites[i].status(m) for i, m in zip(final_parameter_summary_df["idx"], final_parameter_summary_df["mean"])]
+        final_parameter_summary_df["status"] = [
+            locus.satellites[i].status(m) for i, m in zip(final_parameter_summary_df["idx"], final_parameter_summary_df["mean"])
+        ]
         test_parameter_summary_df = test_parameter_summary_df.merge(satellite_df, on="idx", how="left")
 
-    result.update({
-        "final_consensus_calls": final_consensus_calls,
-        "haplotyping_df": haplotyping_df,
-        "test_summary_res_df": test_summary_res_df,
-        "final_parameter_summary_df": final_parameter_summary_df,
-        "test_parameter_summary_df": test_parameter_summary_df,
-    })
+    result.update(
+        {
+            "final_consensus_calls": final_consensus_calls,
+            "haplotyping_df": haplotyping_df,
+            "test_summary_res_df": test_summary_res_df,
+            "final_parameter_summary_df": final_parameter_summary_df,
+            "test_parameter_summary_df": test_parameter_summary_df,
+        },
+    )
     return result
 
 
@@ -503,11 +470,20 @@ def abacus(
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.max_trim,
+    min_reads_per_haplotype: Annotated[
+        int,
+        typer.Option(
+            "--min-reads-per-haplotype",
+            help="Minimum number of usable reads required per reported haplotype",
+            min=1,
+            rich_help_panel=CONFIGURATION,
+        ),
+    ] = config.min_reads_per_haplotype,
     min_haplotyping_depth: Annotated[
         int,
         typer.Option(
             "--min-haplotyping-depth",
-            help="Minimum allowed depth for haplotyping. If depth is lower, locus is analyzed as homozygous.",
+            help="Minimum spanning-read depth to attempt the equal-length sequence split.",
             rich_help_panel=CONFIGURATION,
         ),
     ] = config.min_haplotyping_depth,
@@ -577,6 +553,7 @@ def abacus(
     config.min_end_qual = min_end_qual
     config.trim_window_size = trim_window_size
     config.max_trim = max_trim
+    config.min_reads_per_haplotype = min_reads_per_haplotype
     config.min_haplotyping_depth = min_haplotyping_depth
     config.het_alpha = heterozygosity_alpha
     config.equal_length_alpha = equal_length_alpha
@@ -682,10 +659,7 @@ def abacus(
 
     logger.info("Processing loci...")
     with ExitStack() as streams, timed("process loci") as t:
-        writers = {
-            key: CsvWriter(streams.enter_context(path.open("w", newline="")))
-            for key, path in output_paths.items()
-        }
+        writers = {key: CsvWriter(streams.enter_context(path.open("w", newline=""))) for key, path in output_paths.items()}
         vcf_stream = streams.enter_context(vcf_records_tmp.open("w"))
         try:
             with locus_results(loci, _process_locus, bam=bam, ref=ref, settings=config.to_dict(), sex=sex, workers=threads) as results:
