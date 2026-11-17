@@ -173,16 +173,22 @@ def _interior(kmers: list[str], read_type: str) -> list[str]:
     return kmers
 
 
-def _encode_reads(reads: list[KmerRead]) -> tuple[list[EncodedRead], dict[str, str]]:
-    """Return the reads with one character per kmer, and the map back from character to kmer."""
-    distinct_kmers = sorted({k for kmers, *_ in reads for k in kmers})
+def encode_kmer_sequences(sequences: list[list[str]]) -> tuple[list[str], dict[str, str]]:
+    """Encode all sequences with one shared character per distinct kmer, and return the reverse map."""
+    distinct_kmers = sorted({k for kmers in sequences for k in kmers})
     if len(distinct_kmers) > len(_USABLE_CHARS):
         msg = "too many distinct kmers for this quick encoding scheme"
         raise ValueError(msg)
     # Not strict: there are fewer kmers than characters, checked above
     kmer_to_char = dict(zip(distinct_kmers, _USABLE_CHARS, strict=False))
-    encoded = [("".join(kmer_to_char[k] for k in kmers), read_type, strand) for kmers, read_type, strand in reads]
+    encoded = ["".join(kmer_to_char[k] for k in kmers) for kmers in sequences]
     return encoded, {v: k for k, v in kmer_to_char.items()}
+
+
+def _encode_reads(reads: list[KmerRead]) -> tuple[list[EncodedRead], dict[str, str]]:
+    """Encode the kmer sequences while preserving read types and strands."""
+    sequences, char_to_kmer = encode_kmer_sequences([kmers for kmers, _, _ in reads])
+    return [(seq, read_type, strand) for seq, (_, read_type, strand) in zip(sequences, reads, strict=True)], char_to_kmer
 
 
 def _decode_consensus(encoded_consensus: str, char_to_kmer: dict[str, str]) -> list[str]:

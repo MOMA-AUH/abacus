@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from Levenshtein import distance as levenshtein_distance
 
-from abacus.consensus_search import KmerRead, find_consensus
+from abacus.consensus_search import KmerRead, encode_kmer_sequences, find_consensus
 from abacus.graph import AlignmentType, ConsensusAlignment, ReadCall, qual_to_char
 from abacus.locus import Locus
 from abacus.utils import Haplotype, compute_levenshtein_rate, trim_sequences_for_comparison
@@ -263,7 +263,7 @@ def update_labels_based_on_consensus(
             # Get consensus read calls for this haplotype
             haplotype_consensus_read_calls = [x for x in consensus_read_calls if x.haplotype == haplotype]
 
-            # Get group probabilities using string distance
+            # Compare whole-kmer sequences.
             dist_to_consensus = calc_dist_to_consensus(
                 read_call=read_call,
                 consensus_read_calls=haplotype_consensus_read_calls,
@@ -281,23 +281,30 @@ def calc_dist_to_consensus(
     read_call: ReadCall,
     consensus_read_calls: list[ConsensusCall],
 ) -> float:
-    # Extract information from reads
-    seq = read_call.alignment.str_sequence
-    seq_type = read_call.alignment.type
+    """Return edit distance in whole kmers over the sequences' covered regions."""
+    read_kmers = read_call.obs_kmer_string.split("|") if read_call.obs_kmer_string else []
+    consensus_kmer_sequences = [
+        call.obs_kmer_string.split("|") if call.obs_kmer_string else []
+        for call in consensus_read_calls
+    ]
+    # A kmer must have the same symbol in the read and every consensus.
+    encoded_sequences, _ = encode_kmer_sequences([read_kmers, *consensus_kmer_sequences])
+    encoded_read = encoded_sequences[0]
+    encoded_consensuses = encoded_sequences[1:]
+    read_type = read_call.alignment.type
 
-    best_dist = np.inf
-    for consensus_read_call in consensus_read_calls:
-        consensus_seq = consensus_read_call.alignment.str_sequence
-        consensus_type = consensus_read_call.alignment.type
+    best_distance = np.inf
+    for consensus_call, encoded_consensus in zip(consensus_read_calls, encoded_consensuses, strict=True):
+        consensus_type = consensus_call.alignment.type
 
         # Skip if both are flanking and on different sides
-        if AlignmentType.SPANNING not in (seq_type, consensus_type) and seq_type != consensus_type:
+        if AlignmentType.SPANNING not in (read_type, consensus_type) and read_type != consensus_type:
             continue
 
-        seq_trimmed, consensus_seq_trimmed = trim_sequences_for_comparison(seq, seq_type, consensus_seq, consensus_type)
-        dist = levenshtein_distance(seq_trimmed, consensus_seq_trimmed)
+        trimmed_read, trimmed_consensus = trim_sequences_for_comparison(
+            encoded_read, read_type, encoded_consensus, consensus_type,
+        )
+        distance = levenshtein_distance(trimmed_read, trimmed_consensus)
+        best_distance = min(best_distance, distance)
 
-        # Check if distance is better than best distance
-        best_dist = min(best_dist, dist)
-
-    return best_dist
+    return best_distance

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 - `REFDIV` INFO field: each allele's divergence from the catalog locus structure, so alleles the catalog motif doesn't describe are visible
 ### Changed
+- Consensus-based read reassignment now measures edit distance in whole kmers instead of individual bases, sharing the manual kmer encoder with consensus search
 - Renamed the `not_split_base` read exclusion reason to `not_split_kmer`
 - Centralized haplotyping in `haplotype_locus`, preserving input read calls
 - `--min-haplotyping-depth` applies only to equal-length sequence splitting; low coverage no longer overrides biological ploidy
