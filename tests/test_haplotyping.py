@@ -5,8 +5,9 @@ from typing import Literal
 
 import pytest
 
+from abacus.allele_grouping import estimate_group_parameters
 from abacus.graph import get_read_calls
-from abacus.haplotyping import haplotype_locus
+from abacus.haplotyping import _refine_haplotypes, haplotype_locus
 from abacus.utils import Haplotype
 from tests.helpers import make_locus, make_reads
 
@@ -472,15 +473,26 @@ from tests.helpers import make_locus, make_reads
             id="Case 21: CTG - same length, ATG interruptions - sequence split should be detected",
         ),
         pytest.param(
-            "(CAG|CAA)+",
-            # Length groups the 12-copy CAG reads with CAA; consensus moves them to CAG.
-            ["CAG" * 10] * 2 + ["CAA" * 12] * 5 + ["CAG" * 12] * 2,
+            "(CCC|GGG)*",
+            # A minority repeat unit in the expansion matches the short allele's consensus.
+            ["GGG" * 5] * 3 + ["CCC" * 40] * 5 + ["GGG" * 40] * 4,
             [],
             [],
-            {"h1": 4, "h2": 5},
-            {"h1": [11.0], "h2": [12.0]},
-            {"h1": "CAG" * 11, "h2": "CAA" * 12},
-            id="Consensus reassigns spanning reads and refits lengths",
+            {"h1": 3, "h2": 9},
+            {"h1": [5.0], "h2": [40.0]},
+            {"h1": "GGG" * 5, "h2": "CCC" * 40},
+            id="Consensus preserves length groups despite minority repeat units",
+        ),
+        pytest.param(
+            "(CAG|GAG)*",
+            # Length variation keeps the shorter expanded reads through QC and length filtering.
+            ["CAG" * 5] * 3 + ["CAG" * n for n in [30, 35, 40, 45, 50]] + ["GAG" * n for n in [35, 40, 45, 23]],
+            [],
+            [],
+            {"h1": 3, "h2": 9},
+            {"h1": [5.0], "h2": [38.0]},
+            {"h1": "CAG" * 5},
+            id="Expanded reads must not inflate the short allele",
         ),
         # Slipped reads: a stretch of short CG copies is cheaper for the aligner to pack into fewer
         # CGG copies with insertions, undercounting the read. Most reads below are slipped, each at
@@ -958,3 +970,44 @@ def test_haplotype_locus(
             # A set lists every acceptable consensus, for cases whose estimate may differ by a unit
             allowed = expected_sequence if isinstance(expected_sequence, set) else {expected_sequence}
             assert observed_consensus.get(haplotype) in allowed, f"Expected {haplotype} consensus {expected_sequence}, got {observed_consensus.get(haplotype)}"
+
+
+@pytest.mark.parametrize(
+    ("h1_sequences", "h2_sequences", "expected_group_sizes", "expected_means", "expected_consensus"),
+    [
+        pytest.param(
+            # Spread the lengths so the two 12-copy CAG reads have ~73% support for H2.
+            # Moving them to H1 must refit its mean from 10 to 11.
+            ["CAG" * 8, "CAG" * 12],
+            ["CAA" * n for n in [10, 11, 12, 13, 14]] + ["CAG" * 12] * 2,
+            {"h1": 4, "h2": 5},
+            {"h1": [11.0], "h2": [12.0]},
+            {"h1": "CAG" * 11, "h2": "CAA" * 12},
+            id="Consensus reassigns spanning reads and refits lengths",
+        ),
+        pytest.param(
+            ["CAG" * 10] * 2,
+            ["CAA" * 12] * 5 + ["CAG" * 12] * 2,
+            {"h1": 2, "h2": 7},
+            {"h1": [10.0], "h2": [12.0]},
+            {"h1": "CAG" * 10, "h2": "CAA" * 12},
+            id="Consensus preserves confident spanning length assignments",
+        ),
+    ],
+)
+def test_refine_haplotypes(h1_sequences, h2_sequences, expected_group_sizes, expected_means, expected_consensus):
+    """Sequence can resolve ambiguous length assignments while confident ones stay fixed."""
+    locus = make_locus("(CAG|CAA)+")
+    reads = make_reads(h1_sequences, locus, name_prefix="h1") + make_reads(h2_sequences, locus, name_prefix="h2")
+    read_calls, unmapped = get_read_calls(reads, locus)
+    assert not unmapped
+    assert len(read_calls) == len(reads)
+    for read in read_calls:
+        read.haplotype = Haplotype(read.alignment.name.split("_")[0])
+    params = estimate_group_parameters(read_calls)
+
+    consensus_calls = _refine_haplotypes(read_calls, params)
+
+    assert Counter(read.haplotype.value for read in read_calls) == expected_group_sizes
+    assert {h: params[Haplotype(h)].mean.tolist() for h in expected_means} == expected_means
+    assert {call.haplotype.value: call.alignment.str_sequence for call in consensus_calls} == expected_consensus

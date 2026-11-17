@@ -8,7 +8,7 @@ from abacus.consensus import ConsensusCall, consensus_calls_by_haplotype, update
 from abacus.filtering import filter_low_qual_read_calls, filter_outlier_qual_read_calls, filter_unsupported_haplotypes
 from abacus.graph import ReadCall
 from abacus.logging import logger
-from abacus.parameter_estimation import HeterozygousParameters, HomozygousParameters
+from abacus.parameter_estimation import HeterozygousParameters, HomozygousParameters, discrete_multivariate_normal_logpdf
 from abacus.timing import timed
 from abacus.utils import Haplotype
 
@@ -82,14 +82,33 @@ def _consensus_lengths(group_params: dict[Haplotype, HomozygousParameters]) -> d
     return {h: [int(round(x)) for x in p.mean] for h, p in group_params.items() if p.mean.size and not np.isnan(p.mean).any()}
 
 
+def _consensus_reassignment_candidates(read_calls: list[ReadCall], group_params: dict[Haplotype, HomozygousParameters]) -> list[ReadCall]:
+    """Allow sequence reassignment of flanking reads and length-ambiguous spanning reads."""
+    haplotypes = {read.haplotype for read in read_calls}
+    spanning = [read for read in read_calls if read.is_spanning()]
+    if len(haplotypes) < 2 or not spanning:
+        return read_calls
+
+    counts = np.array([read.satellite_count for read in spanning])
+    log_likelihoods = np.array([discrete_multivariate_normal_logpdf(counts, group_params[h].mean, group_params[h].unit_var) for h in haplotypes])
+    # Equal allele priors, using each group's own fitted variance. A pooled consensus can
+    # misrepresent one strand, so only let it decide when neither length model exceeds 75%.
+    probabilities = np.exp(log_likelihoods - np.logaddexp.reduce(log_likelihoods, axis=0))
+    ambiguous = {id(read) for read, probability in zip(spanning, probabilities.max(axis=0), strict=True) if probability <= 0.75}
+    return [read for read in read_calls if not read.is_spanning() or id(read) in ambiguous]
+
+
 def _refine_haplotypes(grouped_read_calls: list[ReadCall], group_params: dict[Haplotype, HomozygousParameters]) -> list[ConsensusCall]:
     """Refine candidate allele groups, estimates, and consensus into the final haplotype calls.
 
     Read labels and group_params are updated in place. Removed reads keep their outlier labels
-    in the caller's list for reporting. Ties preserve the original haplotype.
+    in the caller's list for reporting. Ties preserve the original haplotype. Spanning reads
+    with confident length assignments are protected using the pre-refinement hom fits.
     """
     with timed("consensus"):
         active_reads = list(grouped_read_calls)
+        # Freeze eligibility so later refits cannot make a protected read eligible to move.
+        reassignment_candidates = {id(read) for read in _consensus_reassignment_candidates(active_reads, group_params)}
         while True:
             original_labels = [read.haplotype for read in active_reads]
             active_reads, unsupported = filter_unsupported_haplotypes(active_reads)
@@ -105,7 +124,7 @@ def _refine_haplotypes(grouped_read_calls: list[ReadCall], group_params: dict[Ha
 
             original_labels = [read.haplotype for read in active_reads]
             spanning_labels = [read.haplotype for read in active_reads if read.is_spanning()]
-            update_labels_based_on_consensus(active_reads, raw_consensus)
+            update_labels_based_on_consensus([read for read in active_reads if id(read) in reassignment_candidates], raw_consensus)
             spanning_moved = spanning_labels != [read.haplotype for read in active_reads if read.is_spanning()]
             active_reads, unsupported = filter_unsupported_haplotypes(active_reads)
             if unsupported or {read.haplotype for read in active_reads} != expected_haplotypes:
