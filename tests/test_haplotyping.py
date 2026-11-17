@@ -903,6 +903,16 @@ from tests.helpers import make_locus, make_reads
             {"hom": "CGG" * 177},
             id="Case 20: FMR1 - Single premutation allele should not be split into two haplotypes.",
         ),
+        pytest.param(
+            "(TTC)+",
+            ["TTC" * 22 + "TTCT"] * 2 + ["TTC" * 23] * 6 + ["TTC" * 24] * 2 + ["TTC" * 22] * 5,
+            [],
+            [],
+            {"hom": 15},
+            {"hom": [23.0]},
+            {"hom": "TTC" * 23},
+            id="DMD-Insufficient spanning coverage at terminal split marker",
+        ),
     ],
 )
 def test_haplotype_locus(

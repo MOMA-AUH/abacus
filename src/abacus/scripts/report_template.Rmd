@@ -1448,6 +1448,7 @@ for (i in seq_len(nrow(regions))) {
         "Significant" = backup_test_significant
       ) %>%
       mutate(
+        across(c(`Kmer H1`, `Kmer H2`), ~ if_else(.x == "-", "Deletion", .x)),
         `Position (kmer range)` = paste0(`Position (kmer range)`, "\u2013", `Position max`),
         `P-value` = signif(`P-value`, 3),
         Conclusion = if_else(

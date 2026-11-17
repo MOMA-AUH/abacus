@@ -17,6 +17,7 @@ from abacus.utils import AlignmentType, Haplotype
 _RESERVED_CHARS = {chr(i) for i in (33, 34, 35, 36, 37, 45)}
 _USABLE_KMER_CHARS = [chr(i) for i in range(38, 127) if chr(i) not in _RESERVED_CHARS]
 _OTHER_KMER_CHAR = _USABLE_KMER_CHARS[-1]
+_MIN_USABLE_COVERAGE = 0.8
 
 
 def build_kmer_char_maps(sequences: list[list[str]]) -> tuple[dict[str, str], dict[str, str]]:
@@ -65,12 +66,16 @@ def find_most_variable_msa_position(
     msa: list[str],
     missing_end_char: str,
     ignore_chars: list[str],
+    n_spanning_reads: int,
 ) -> tuple[int, dict[str, int]]:
     """Find the MSA column most useful for splitting reads into two groups.
 
-    For each column, counts character frequencies (excluding gaps '-',
+    For each column, counts kmer and gap frequencies (excluding
     missing_end_char, ignore_chars, and the "other" bucket char). Returns the
     column index where the count of the 2nd most common character is highest.
+    A column must have usable alleles in at least 80% of covering reads: all
+    spanning reads (the first n_spanning_reads rows), plus flanking reads with
+    repeat coverage at that column. Internal gaps are usable deletion alleles.
 
     Returns (position_index, char_counts_at_that_position).
     Returns (-1, {}) if no suitable position exists.
@@ -79,7 +84,8 @@ def find_most_variable_msa_position(
         return -1, {}
 
     # "other" bucket lumps unrelated rare kmers together, so skip it too
-    skip_chars = set(ignore_chars) | {missing_end_char, "-", _OTHER_KMER_CHAR}
+    skip_chars = set(ignore_chars) | {missing_end_char, _OTHER_KMER_CHAR}
+    uncovered_chars = set(ignore_chars) | {missing_end_char}
 
     # Initialize tracking variables
     best_pos = -1
@@ -98,6 +104,11 @@ def find_most_variable_msa_position(
 
         # Need at least 2 different characters to consider this position for splitting
         if len(char_counts) < 2:
+            continue
+
+        # Missing terminal sequence still counts against spanning-read coverage.
+        n_covering = n_spanning_reads + sum(row[col] not in uncovered_chars for row in msa[n_spanning_reads:])
+        if sum(char_counts.values()) < _MIN_USABLE_COVERAGE * n_covering:
             continue
 
         # Get counts of characters sorted by frequency
@@ -185,12 +196,16 @@ def run_equal_length_backup_test(
     When the primary length-based heterozygosity test is not significant, this
     test uses the multiple sequence alignment to find the most variable kmer
     position and runs a binomial test (H0: p = 0.5) on the counts of the two
-    most common kmers at that position.
+    most common kmers or gaps at that position. Only gaps bounded by observed
+    repeat kmers on both sides count as deletions. Terminal gaps in spanning
+    and flanking reads are masked as missing and do not contribute.
+    Candidate columns require usable alleles in at least 80% of covering reads;
+    spanning reads with missing terminal sequence still count in the denominator.
 
     A nonsignificant result (p >= alpha) is consistent with a 50/50 ratio.
     Reads are tagged H1/H2 only if both candidate groups also meet
     config.min_reads_per_haplotype; reads carrying neither split kmer are
-    then filtered with reason "not_split_base". If either group lacks support
+    then filtered with reason "not_split_kmer". If either group lacks support
     or the result is significant (p < alpha), all original HOM reads are
     retained without filtering by this test.
 
@@ -223,6 +238,7 @@ def run_equal_length_backup_test(
 
     all_sequences = spanning_sequences + left_flanking_sequences + right_flanking_sequences
     kmer_to_char, char_to_kmer = build_kmer_char_maps(all_sequences)
+    char_to_kmer["-"] = "-"  # Report an aligned deletion without encoding it as an observed kmer.
 
     # Translate to unique characters
     translated_spanning = ["".join(kmer_to_char[k] for k in seq) for seq in spanning_sequences]
@@ -249,9 +265,19 @@ def run_equal_length_backup_test(
     # Generate MSA
     msa = generate_msa(translated_spanning, translated_left, translated_right, missing_end_char)
 
+    # Synthetic anchors do not establish repeat coverage. Terminal gaps reflect length, not an internal deletion.
+    non_kmer_chars = anchor_chars | {"-", missing_end_char}
+    for i, row in enumerate(msa):
+        covered = [col for col, char in enumerate(row) if char not in non_kmer_chars]
+        if not covered:
+            msa[i] = row.replace("-", missing_end_char)
+            continue
+        first, last = covered[0], covered[-1] + 1
+        msa[i] = row[:first].replace("-", missing_end_char) + row[first:last] + row[last:].replace("-", missing_end_char)
+
     # Find most variable position
     ignore_chars = left_anchor_chars + right_anchor_chars
-    best_col, char_counts = find_most_variable_msa_position(msa, missing_end_char, ignore_chars)
+    best_col, char_counts = find_most_variable_msa_position(msa, missing_end_char, ignore_chars, len(spanning_reads))
     if best_col == -1:
         return read_calls, [], _make_empty_backup_summary(run=True, significant=True)
 
@@ -313,7 +339,7 @@ def run_equal_length_backup_test(
             updated_reads.append(read_call)
         # The split is supported; reads without either split base are outliers.
         else:
-            read_call.add_qc_filter_reason("not_split_base")
+            read_call.add_qc_filter_reason("not_split_kmer")
             new_outliers.append(read_call)
 
     return updated_reads, new_outliers, summary_df
