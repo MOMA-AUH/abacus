@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Consensus-based read reassignment now measures edit distance in whole kmers instead of individual bases, sharing the manual kmer encoder with consensus search
 - Renamed the `not_split_base` read exclusion reason to `not_split_kmer`
+- Reports now show main sequence plots and detailed plots split by strand, with colored nested headers, consistent read IDs and QC removals shown separately
 - Centralized haplotyping in `haplotype_locus`, preserving input read calls
 - `--min-haplotyping-depth` applies only to equal-length sequence splitting; low coverage no longer overrides biological ploidy
 - **Breaking:** replaced `--keep-temp-files` with `--keep-summaries` and `--keep-read-summaries`; skip unrequested tables unless needed for a report

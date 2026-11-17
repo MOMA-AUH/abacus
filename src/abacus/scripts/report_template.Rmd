@@ -41,6 +41,7 @@ options(knitr.table.format = "html")
 # Load libraries
 library(dplyr)
 library(ggplot2)
+library(ggh4x)
 library(readr)
 library(stringr)
 library(tibble)
@@ -48,6 +49,11 @@ library(tidyr)
 library(RColorBrewer)
 library(knitr)
 library(kableExtra)
+
+theme_update(
+  panel.grid.major.y = element_blank(),
+  panel.grid.minor.y = element_blank()
+)
 ```
 
 ```{r Unpack input parameters}
@@ -93,7 +99,7 @@ ATTENTION_COLOR <- "#FF5733"
 
 HAPLOTYPE_COLORS <- c("#308EFF", "#30CDFF", "#30FF60", "#C030FF", ATTENTION_COLOR)
 names(HAPLOTYPE_COLORS) <- c("h1", "h2", "hom", "outlier", "qc_filtered")
-STRAND_COLORS <- c("-" = "grey35", "+" = "grey70")
+FACET_COLORS <- c(h1 = "#DDEAF6", h2 = "#E9E2F3", hom = "#E3EEDF", outlier = "#E2E2E2", qc_filtered = "#E2E2E2")
 ```
 
 ```{r Functions}
@@ -125,6 +131,12 @@ wrangle_reads_data <- function(reads_df) {
         0L,
         str_count(obs_kmer_string, fixed("|")) + 1L
       ),
+      # Separate length/grouping outliers from reads removed by QC.
+      read_category = case_when(
+        haplotype %in% c("h1", "h2", "hom") ~ "main",
+        haplotype == "qc_filtered" & !coalesce(filter_reasons, "") %in% c("not_split_kmer", "not_split_base") ~ "qc_filtered",
+        TRUE ~ "outlier"
+      ),
       # Convert alignment_type to factor
       alignment_type_fct = factor(alignment_type, levels = ALIGNMENT_TYPES),
       alignment_type_txt = if_else(
@@ -136,10 +148,10 @@ wrangle_reads_data <- function(reads_df) {
         alignment_type == "spanning" ~ "Spanning"
       )
     ) %>%
-    # Number reads once in group order, then by alignment type, length and sequence.
+    # Number main reads first; retain these IDs in all plots and tables.
     arrange(
-      haplotype,
-      factor(strand, levels = c("-", "+")),
+      factor(read_category, levels = c("main", "outlier", "qc_filtered")),
+      if_else(read_category == "outlier", "outlier", haplotype),
       alignment_type_fct,
       if_else(
         alignment_type == "right_flanking",
@@ -252,29 +264,24 @@ wrangle_kmer_plot_df <- function(kmer_df) {
 }
 
 # Function to create kmer plots from an already-wrangled kmer_plot_df (see wrangle_kmer_plot_df)
-create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, color_by_strand = TRUE) {
+create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, facet_by_strand = FALSE) {
+  # Plot positions may change between views; read_id remains the table identifier.
+  kmer_plot_df <- kmer_plot_df %>% mutate(strand = factor(strand, levels = c("-", "+")))
+  facet_vars <- if (facet_by_strand) c("haplotype", "strand") else "haplotype"
+  read_rows <- kmer_plot_df %>%
+    distinct(read_id, haplotype, strand) %>%
+    arrange(haplotype, if (facet_by_strand) match(strand, c("-", "+")) else 0L, read_id) %>%
+    mutate(plot_row = row_number())
+  kmer_plot_df <- kmer_plot_df %>%
+    left_join(select(read_rows, read_id, plot_row), by = "read_id")
   hz_lines_df <- kmer_plot_df %>%
-    distinct(read_id, alignment_type_txt, start, end, strand, haplotype)
+    distinct(read_id, plot_row, alignment_type_txt, start, end, strand, haplotype)
 
-  plot <- ggplot()
-  if (color_by_strand) {
-    plot <- plot +
-      geom_segment(
-        aes(x = start, xend = end, y = read_id, yend = read_id, color = strand),
-        lwd = 0.7, lineend = "butt", data = hz_lines_df
-      ) +
-      scale_color_manual(
-        values = STRAND_COLORS,
-        breaks = names(STRAND_COLORS),
-        name = "Strand"
-      )
-  } else {
-    plot <- plot +
-      geom_segment(
-        aes(x = start, xend = end, y = read_id, yend = read_id),
-        lwd = 0.7, lineend = "butt", data = hz_lines_df
-      )
-  }
+  plot <- ggplot() +
+    geom_segment(
+      aes(x = start, xend = end, y = plot_row, yend = plot_row),
+      lwd = 0.7, lineend = "butt", data = hz_lines_df
+    )
 
   # Get "dimensionality" of plot
   n_reads <- nrow(hz_lines_df)
@@ -306,7 +313,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, color_b
         geom_point(
           aes(
             x = cor_kmer_idx,
-            y = read_id,
+            y = plot_row,
             fill = kmer
           ),
           shape = 21, stroke = 0, size = 5,
@@ -322,7 +329,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, color_b
         geom_tile(
           aes(
             x = cor_kmer_idx,
-            y = read_id,
+            y = plot_row,
             fill = kmer
           ),
           data = filter(kmer_plot_df, n_kmer > 0)
@@ -338,7 +345,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, color_b
     if (n_reads < ABACUS_PLOT_MAX_POINT_READS && n_kmers < ABACUS_PLOT_MAX_POINT_KMERS) {
       plot <- plot +
         geom_point(
-          aes(x = cor_kmer_idx, y = read_id, fill = mod_prob),
+          aes(x = cor_kmer_idx, y = plot_row, fill = mod_prob),
           shape = 21, stroke = 0, size = 5,
           data = filter(kmer_plot_df, n_kmer > 0)
         ) +
@@ -353,7 +360,7 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, color_b
     } else {
       plot <- plot +
         geom_tile(
-          aes(x = cor_kmer_idx, y = read_id, fill = mod_prob),
+          aes(x = cor_kmer_idx, y = plot_row, fill = mod_prob),
           data = filter(kmer_plot_df, n_kmer > 0)
         ) +
         # Add color gradient with low (0) = "blue", high (100) = "red", NA = "grey" (similar to IGV)
@@ -372,16 +379,15 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, color_b
 
   # Add details to plot
   # Choose one interval for the whole plot, so small facets do not get denser ticks.
-  read_id_range <- range(hz_lines_df$read_id)
+  read_id_range <- range(hz_lines_df$plot_row)
   read_tick_step <- max(1, round(diff(pretty(read_id_range, n = 15))[1]))
   read_ticks <- seq(ceiling(read_id_range[1] / read_tick_step) * read_tick_step, read_id_range[2], by = read_tick_step)
 
-  vertical_fixer_df <- kmer_plot_df %>%
-    distinct(read_id, haplotype) %>%
-    group_by(haplotype) %>%
+  vertical_fixer_df <- read_rows %>%
+    group_by(across(all_of(facet_vars))) %>%
     summarise(
-      min_read_idx = min(read_id),
-      max_read_idx = max(read_id),
+      min_read_idx = min(plot_row),
+      max_read_idx = max(plot_row),
       group_size = n(),
       .groups = "drop"
     ) %>%
@@ -402,12 +408,24 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, color_b
     read_ticks[read_ticks >= group$first_read_idx & read_ticks <= group$last_read_idx]
   }
 
+  # ggh4x orders outer headers before their nested strand headers.
+  facet_groups <- unique(read_rows$haplotype)
+  strip_colors <- unname(FACET_COLORS[facet_groups])
+  if (facet_by_strand) {
+    nested_groups <- read_rows %>% distinct(haplotype, strand) %>% pull(haplotype)
+    strip_colors <- c(strip_colors, unname(FACET_COLORS[nested_groups]))
+  }
+
   plot <- plot +
-    facet_grid(
-      rows = vars(haplotype),
-      labeller = labeller(.default = function(x) sub("^OUTLIERS?", "OUT", toupper(x))),
+    facet_nested(
+      rows = vars(!!!syms(facet_vars)),
+      labeller = labeller(haplotype = function(x) sub("^OUTLIERS?", "OUT", toupper(x))),
       scales = "free_y",
-      space = "free_y"
+      space = "free_y",
+      nest_line = element_blank(),
+      strip = strip_nested(background_y = lapply(strip_colors, function(fill) {
+        element_rect(fill = fill, colour = NA)
+      }))
     ) +
     geom_segment(
       aes(x = x, xend = x, y = min_read_idx, yend = max_read_idx),
@@ -422,8 +440,10 @@ create_kmer_plot <- function(kmer_plot_df, color_by, kmer_color_palette, color_b
       breaks = function(x) unique(round(pretty(x))),
       labels = function(x) formatC(x, format = "f", digits = 0)
     ) +
-    scale_y_reverse(breaks = read_breaks, labels = function(x) formatC(x, format = "f", digits = 0)) +
+    scale_y_reverse(breaks = read_breaks, labels = function(x) read_rows$read_id[match(x, read_rows$plot_row)]) +
     theme(
+      strip.text.y.right = element_text(angle = 0),
+      panel.spacing.y = unit(if (facet_by_strand) 0.35 else 0.8, "lines"),
       panel.grid.minor = element_blank()
     )
 
@@ -763,8 +783,8 @@ for (i in seq_len(nrow(regions))) {
 
   # Calculate coverage
   n_haplotyped_reads <- nrow(reads_region_df %>% filter(haplotype %in% c("h1", "h2", "hom")))
-  n_outlier_reads <- nrow(reads_region_df %>% filter(haplotype == "outlier"))
-  n_qc_filtered_reads <- nrow(reads_region_df %>% filter(haplotype == "qc_filtered"))
+  n_outlier_reads <- nrow(reads_region_df %>% filter(read_category == "outlier"))
+  n_qc_filtered_reads <- nrow(reads_region_df %>% filter(read_category == "qc_filtered"))
   n_filtered_reads <- nrow(filtered_reads_region_df)
 
   cat("\n\n")
@@ -805,25 +825,29 @@ for (i in seq_len(nrow(regions))) {
   cat("\n\n")
 
   cat("\n\n")
-  cat("Each row represents a read, with colored beads or tiles showing its $k$-mers. Panels are grouped by the haplotype inferred by Abacus, with outlier reads shown separately. Within each panel, reads are sorted by strand (- then +); line colors indicate strand. The tabs show observed sequence, reference sequence, and methylation probability. Flanking reads align to the left or right edge according to their covered anchor.")
+  cat("Each row represents a read, with colored beads or tiles showing its $k$-mers. The main and detailed plots show the same reads: H1/H2 or HOM reads, plus length and grouping outliers under OUT. The main plots group reads by haplotype and sort by alignment type, length and sequence; Sequence (detailed) splits each group by strand. Read IDs identify the same reads across plots and tables. Reads removed by QC, including statistical QC outliers, are shown separately under QC Filtered. Flanking reads align to their covered anchor; right-flanking reads end at the longest read in their haplotype.")
   cat("\n\n")
 
   kmer_df <- wrangle_reads_to_kmers(reads_region_df)
 
   # Split data
   kmer_haplotyped_df <- kmer_df %>%
-    filter(haplotype != "qc_filtered")
+    filter(read_category != "qc_filtered") %>%
+    mutate(haplotype = if_else(read_category == "outlier", "outlier", haplotype))
+
+  kmer_detailed_df <- kmer_haplotyped_df
 
   kmer_qc_filtered_df <- kmer_df %>%
-    filter(haplotype == "qc_filtered")
+    filter(read_category == "qc_filtered")
 
   no_haplotype_reads <- nrow(kmer_haplotyped_df) == 0
   no_qc_filtered_reads <- nrow(kmer_qc_filtered_df) == 0
 
   # Color priority: reference motifs > high-occurrence kmers (>10% of reads, at least
-  # 2) > other observed kmers, all ranked by occurrence count. Outlier reads excluded
-  kmer_ranking_df <- kmer_haplotyped_df %>%
-    filter(haplotype %in% c("h1", "h2", "hom"))
+  # 2) > other observed kmers, all ranked by occurrence count. Only use outliers
+  # when no H1/H2/HOM reads are available.
+  kmer_ranking_df <- kmer_haplotyped_df %>% filter(read_category == "main")
+  if (nrow(kmer_ranking_df) == 0) kmer_ranking_df <- kmer_detailed_df
 
   kmer_occurrence_rank <- kmer_ranking_df %>%
     filter(!is.na(kmer), kmer != "") %>%
@@ -855,6 +879,17 @@ for (i in seq_len(nrow(regions))) {
     cat("There are no haplotyped reads for this locus.")
   } else {
     kmer_plot <- create_kmer_plot(kmer_plot_df_haplotyped, "kmer", kmer_color_palette)
+    print(kmer_plot)
+  }
+
+  cat("\n\n")
+  cat("#### Sequence (detailed)")
+  cat("\n\n")
+
+  if (nrow(kmer_detailed_df) == 0) {
+    cat("There are no reads for the detailed plot at this locus.")
+  } else {
+    kmer_plot <- create_kmer_plot(wrangle_kmer_plot_df(kmer_detailed_df), "kmer", kmer_color_palette, facet_by_strand = TRUE)
     print(kmer_plot)
   }
 
@@ -1179,7 +1214,7 @@ for (i in seq_len(nrow(regions))) {
     consensus_kmer_df <- consensus_region_df %>%
       wrangle_reads_to_kmers()
 
-    consensus_kmer_plot <- create_kmer_plot(wrangle_kmer_plot_df(consensus_kmer_df), "kmer", kmer_color_palette, color_by_strand = FALSE)
+    consensus_kmer_plot <- create_kmer_plot(wrangle_kmer_plot_df(consensus_kmer_df), "kmer", kmer_color_palette)
     print(consensus_kmer_plot)
   } else {
     cat("There is no consensus sequence for this locus.")

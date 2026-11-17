@@ -40,7 +40,7 @@ class Haplotype(StrEnum):
     H1 = auto()
     H2 = auto()
     HOM = auto()
-    OUTLIER = auto()       # Length-based outliers and singletons (shown in main plot)
+    OUTLIER = auto()       # Length-based outliers and singletons
     QC_FILTERED = auto()   # Quality-filtered reads (hidden from main plot)
     NONE = auto()
 
