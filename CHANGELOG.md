@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     
 ## [Unreleased]
 
-Planned release: **3.0.0**, including the breaking CLI and VCF changes listed below.
+## [3.0.0] - 2026-11-17
 
 ### Added
 - `--min-reads-per-haplotype`: minimum usable reads per haplotype (default: `2`, minimum: `1`)

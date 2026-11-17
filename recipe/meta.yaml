@@ -1,5 +1,5 @@
 {% set name = "abacus-str" %}
-{% set version = "2.0.0" %}
+{% set version = "3.0.0" %}
 {% set python_min = "3.11" %}
 
 package:
@@ -8,10 +8,10 @@ package:
 
 source:
   url: "https://github.com/MOMA-AUH/abacus/archive/refs/tags/v{{ version }}.tar.gz"
-  sha256: "7ae1c0ac927e6de4afd873ad468624c304b082861ee5228dc27f5a7d6090c8d0"
+  # Add the release archive's SHA256 after tagging, before submitting to Bioconda.
 
 build:
-  number: 1
+  number: 0
   noarch: python
   script: "{{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation"
   run_exports:
