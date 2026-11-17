@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     
 ## [Unreleased]
+
+Planned release: **3.0.0**, including the breaking CLI and VCF changes listed below.
+
 ### Added
 - `--min-reads-per-haplotype`: minimum usable reads per haplotype (default: `2`, minimum: `1`)
 - `AFF3` catalog entry
@@ -17,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 - `REFDIV` INFO field: each allele's divergence from the catalog locus structure, so alleles the catalog motif doesn't describe are visible
 ### Changed
+- Updated and aligned Python, R, and external-tool dependency requirements across package metadata, the development environment, and the conda recipe; the development environment now uses Python 3.11
+- Replaced the development environment's `r-tidyverse` bundle with the individual report dependencies, explicitly including `r-htmltools`, and added `pytest-cov` to match the Python development extras
 - Consensus-based read reassignment now measures edit distance in whole kmers instead of individual bases, sharing the manual kmer encoder with consensus search
 - Renamed the `not_split_base` read exclusion reason to `not_split_kmer`
 - Reports now show main sequence plots and detailed plots split by strand, with colored nested headers, consistent read IDs and QC removals shown separately
@@ -25,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** replaced `--keep-temp-files` with `--keep-summaries` and `--keep-read-summaries`; skip unrequested tables unless needed for a report
 - Reduced I/O operations: keep CSVs open, buffer writes, and flush CSVs and intermediate VCF records every 100 completed loci
 - Merged sequence plots with haplotype facets and grey strand lines; removed quality shading
-- **Breaking:** VCF output now follows VCFv4.5 and uses the `<CNV:TR>` tandem repeat representation (see the README for all fields):
+- **Breaking:** VCF output now follows VCFv4.5 and uses the `<CNV:TR>` tandem repeat representation:
   - `POS`/`REF` is the padding base before the repeat; `POS` was previously reported with a reference base it did not match
   - ALT alleles are `<CNV:TR>` instead of `<STRn>`
   - Repeat composition is reported with the reserved `SVLEN`, `RN`, `RUS` and `RUC` INFO fields, splitting the consensus into runs of identical repeat units
@@ -34,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `LC` is replaced by the reserved `DP`, and `AD`, `ADSP` and `ADFL` now include the reference allele (always `0`)
   - Fixed the `##reference` header line
 - Consensus built by hill-climbing search instead of spoa (new dependency: `rapidfuzz`); consensus length now matches the estimated repeat count ([#25](https://github.com/MOMA-AUH/abacus/issues/25))
-- Consensus built from kmers and slot structure; minigraph subprocess removed
+- Consensus built from kmers and slot structure; removed the minigraph subprocess used for consensus remapping (minigraph is still required for read alignment)
 - Faster read quality and 5mC probability conversion (native `bytes.translate`, in-place `bytearray` mutation)
 - Faster parameter estimation and report
 - Faster consensus search when some reads are much noisier than the rest: reads far from the consensus no longer propose changes
@@ -46,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
+- Exit with an error instead of hanging when a worker process is killed
+- Report generation when no catalog locus has thresholds
 - Prevent an `IndexError` when trimming remapped flanking alignments that end inside the left anchor; anchor-only hits continue through normal read QC
 - Prevent consensus reassignment from overriding confident spanning-read length assignments
 - Sequence-based haplotype splitting now detects internal deletions, ignores terminal gaps and requires usable alleles in at least 80% of covering reads
@@ -81,6 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empty repeat units where a read doesn't fit the motif (minigraph deletes whole copies and inserts the read's bases elsewhere); such reads are now realigned along their path (new dependency: `biopython`)
 - Reads with long unaligned ends beyond short flanks were misclassified as spanning; they are now treated as flanking reads instead of contributing falsely small repeat counts
 ### Removed
+- Unused `scikit-learn` dependency
 - `--add-contracted-consensus-to-vcf` and the `CONTRCONS` VCF field; `RUS`/`RUC` carry the same information
 - VCF fields `END`, `RU`, the unused `INFO/REF` and `FILTER/LowQual`, and the `<STRn>` ALT header lines
 
