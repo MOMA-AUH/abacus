@@ -1,7 +1,9 @@
 from enum import StrEnum, auto
 from pathlib import Path
+from typing import TextIO
 
 import Levenshtein
+import pandas as pd
 
 REPORT_TEMPLATE = Path(__file__).parent / "report.Rmd"
 
@@ -38,7 +40,7 @@ class Haplotype(StrEnum):
     H1 = auto()
     H2 = auto()
     HOM = auto()
-    OUTLIER = auto()       # Length-based outliers and singletons (shown in main plot)
+    OUTLIER = auto()       # Length-based outliers and singletons
     QC_FILTERED = auto()   # Quality-filtered reads (hidden from main plot)
     NONE = auto()
 
@@ -149,3 +151,16 @@ def compute_ref_divergence(cigar: str, indel_cost: float = 1, replace_cost: floa
 
     # Normalize cost
     return cost / len(cigar)
+
+
+class CsvWriter:
+    """Append locus tables to a caller-owned buffered stream, with one header."""
+
+    def __init__(self, stream: TextIO):
+        self.stream = stream
+        self.needs_header = True
+
+    def write(self, df: pd.DataFrame) -> None:
+        if not df.empty:
+            df.to_csv(self.stream, header=self.needs_header, index=False)
+            self.needs_header = False

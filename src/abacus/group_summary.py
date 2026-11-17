@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from abacus.haplotyping import ReadCall
+from abacus.graph import ReadCall
 
 
 def calculate_final_group_summaries(grouped_read_calls: list[ReadCall]) -> pd.DataFrame:

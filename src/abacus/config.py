@@ -23,7 +23,7 @@ class Config:
     tol_q10_str_quality: int = 25
     max_error_rate: float = 0.01
     tol_error_rate: float = 0.005
-    max_ref_divergence: float = 0.34
+    tol_ref_divergence: float = 0.20
 
     # Length outlier detection parameters
     min_n_length_outlier_detection: int = 5
@@ -36,9 +36,13 @@ class Config:
 
     # Output parameters
     add_consensus_to_vcf: bool = False
-    add_contracted_consensus_to_vcf: bool = False
+    # VCF-only run: skip report-only tables, read/consensus payloads and CSV writes
+    vcf_only_output: bool = False
+    summary_output: bool = True
+    read_summary_output: bool = True
 
     # Haplotype parameters
+    min_reads_per_haplotype: int = 2
     min_haplotyping_depth: int = 10
     min_sd: float = 0.05
     min_var: float = field(init=False)

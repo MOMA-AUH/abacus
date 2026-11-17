@@ -8,42 +8,42 @@ import pysam
 from abacus.config import config
 from abacus.locus import Locus
 from abacus.read import Read
+from abacus.timing import timed
 
 logger = logging.getLogger()
 
 
-def get_reads_in_locus(bam: Path, locus: Locus, ref: Path) -> list[Read]:
-    # Get alignments overlapping the region
+def open_alignment_file(bam: Path, ref: Path) -> pysam.AlignmentFile:
     mode: Literal["rb", "rc"] = "rc" if str(bam).lower().endswith(".cram") else "rb"
-    with pysam.AlignmentFile(str(bam), mode, reference_filename=str(ref)) as bamfile:
+    with timed("open alignment input"):
+        return pysam.AlignmentFile(str(bam), mode, reference_filename=str(ref))
+
+
+def get_reads_in_locus(bamfile: pysam.AlignmentFile, locus: Locus) -> list[Read]:
+    """Extract locus reads; the caller owns the alignment handle."""
+    with timed("fetch locus alignments") as t:
+        # Finish this iterator before supplementary fetches reuse the file position.
         alignments = list(bamfile.fetch(locus.location.chrom, locus.location.start, locus.location.end))
+        t.info = f"{len(alignments)} alignments"
 
-        # Return empty list if no alignments found
-        if not alignments:
-            return []
+    if not alignments:
+        return []
 
-        # Remove secondary alignments
-        alignments = [ali for ali in alignments if not ali.is_secondary]
+    alignments = [ali for ali in alignments if not ali.is_secondary]
+    primary_alignments = [read for read in alignments if not read.is_supplementary]
+    supplementary_alignments = [read for read in alignments if read.is_supplementary]
 
-        # Split alignments into primary and supplementary
-        primary_alignments = [read for read in alignments if not read.is_supplementary]
-        supplementary_alignments = [read for read in alignments if read.is_supplementary]
+    # Recover only reads whose primary alignment was outside the locus.
+    primary_ids = [read.query_name for read in primary_alignments]
+    supplementary_alignments = [ali for ali in supplementary_alignments if ali.query_name not in primary_ids]
 
-        # Filter supplementary alignments that are in primary alignments already
-        primary_ids = [read.query_name for read in primary_alignments]
-        supplementary_alignments = [ali for ali in supplementary_alignments if ali.query_name not in primary_ids]
-
-        # Find primary alignments of left supplementary alignments
+    with timed("recover supplementary alignments") as t:
         for ali in supplementary_alignments:
-            # Get the primary alignment position
             chrom, pos = str(ali.get_tag("SA")).split(",")[0:2]
-
-            # Load all alignments at the primary alignment position
             primary_candidates = bamfile.fetch(chrom, int(pos), int(pos) + 1)
-
-            # Find the primary alignment and add it to the primary alignments
             primary_alignment = [cand for cand in primary_candidates if cand.query_name == ali.query_name]
             primary_alignments.extend(primary_alignment)
+        t.info = f"{len(supplementary_alignments)} lookups"
 
     # Downsample if coverage exceeds threshold
     if config.downsample > 0 and len(primary_alignments) > config.downsample:
@@ -51,7 +51,9 @@ def get_reads_in_locus(bam: Path, locus: Locus, ref: Path) -> list[Read]:
         primary_alignments = random.Random(config.downsample_seed).sample(primary_alignments, config.downsample)
 
     # Convert primary alignments to Read objects
-    reads = [Read.from_alignment(alignment=alignment, locus=locus) for alignment in primary_alignments]
+    with timed("convert locus reads") as t:
+        reads = [Read.from_alignment(alignment=alignment, locus=locus) for alignment in primary_alignments]
+        t.info = f"{len(reads)} reads"
 
     # Trim soft-clipped bases
     reads = [trim_soft_clipped_bases(read, config.max_trim) for read in reads]

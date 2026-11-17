@@ -1,8 +1,26 @@
+from collections import Counter
+
 from numpy import median
 
 from abacus.config import config
 from abacus.graph import ReadCall
 from abacus.utils import Haplotype
+
+
+def filter_unsupported_haplotypes(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:
+    """Remove groups below minimum support and label a sole surviving group HOM."""
+    counts = Counter(read.haplotype for read in read_calls)
+    supported, removed = [], []
+    for read in read_calls:
+        if counts[read.haplotype] < config.min_reads_per_haplotype:
+            read.add_outlier_reason("insufficient_haplotype_support")
+            removed.append(read)
+        else:
+            supported.append(read)
+    if len({read.haplotype for read in supported}) == 1:
+        for read in supported:
+            read.set_haplotype(Haplotype.HOM)
+    return supported, removed
 
 
 def filter_low_qual_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:
@@ -27,20 +45,17 @@ def filter_low_qual_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCal
 
 
 def qc_check(rc: ReadCall) -> None:
-    # Check STR quality
-    if rc.alignment.mean_str_quality < config.min_mean_str_quality:
-        rc.add_qc_filter_reason("filtered_low_mean_str_quality")
+    # Check STR quality; an empty STR (0-copy allele) has no bases to check
+    if rc.alignment.str_sequence:
+        if rc.alignment.mean_str_quality < config.min_mean_str_quality:
+            rc.add_qc_filter_reason("filtered_low_mean_str_quality")
 
-    if rc.alignment.q10_str_quality < config.min_q10_str_quality:
-        rc.add_qc_filter_reason("filtered_low_q10_str_quality")
+        if rc.alignment.q10_str_quality < config.min_q10_str_quality:
+            rc.add_qc_filter_reason("filtered_low_q10_str_quality")
 
     # Check STR error rates
     if rc.str_error_rate > config.max_error_rate:
         rc.add_qc_filter_reason("filtered_high_str_error_rate")
-
-    # Check STR reference divergence
-    if rc.alignment.str_ref_divergence > config.max_ref_divergence:
-        rc.add_qc_filter_reason("filtered_high_str_ref_divergence")
 
 
 def filter_outlier_qual_read_calls(read_calls: list[ReadCall]) -> tuple[list[ReadCall], list[ReadCall]]:
@@ -113,9 +128,18 @@ def mark_qc_outliers(read_calls: list[ReadCall]) -> None:
         if error_rate > error_rate_high and error_rate > config.tol_error_rate:
             rc.add_qc_filter_reason("outlier_error_rate")
 
+    # Reference divergence; only relative to the haplotype's own reads, so an allele that differs from the catalog is kept
+    ref_divergences = [rc.alignment.str_ref_divergence for rc in read_calls]
+    _, ref_divergence_high = compute_robust_thresholds(ref_divergences)
+    for rc in read_calls:
+        ref_divergence = rc.alignment.str_ref_divergence
+        # If the reference divergence is above the outlier threshold, and above the tolerance, mark it as qc_filtered
+        if ref_divergence > ref_divergence_high and ref_divergence > config.tol_ref_divergence:
+            rc.add_qc_filter_reason("outlier_ref_divergence")
+
 
 def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]:
-    """Per-haplotype length outlier detection after first round of haplotyping.
+    """Length outlier detection within candidate allele groups.
 
     For each haplotype group (h1, h2, hom), computes the median total base pair count
     (sum of satellite_count[i] * len(satellite.sequences[0]) for each satellite i)
@@ -136,8 +160,8 @@ def detect_length_outliers(grouped_read_calls: list[ReadCall]) -> list[ReadCall]
         spanning = [rc for rc in group if rc.is_spanning()]
         non_spanning = [rc for rc in group if not rc.is_spanning()]
 
-        # Remove at most one outlier per haplotype per call; the caller re-estimates and
-        # re-groups before calling again, mirroring the singleton removal loop
+        # Remove at most one spanning and one long flanking outlier per group;
+        # the caller re-estimates and re-groups before calling again.
         if len(spanning) > config.min_n_length_outlier_detection:
             lengths = [float(len(rc.alignment.str_sequence)) for rc in spanning]
             median_length = float(median(lengths))
