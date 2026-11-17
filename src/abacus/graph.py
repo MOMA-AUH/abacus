@@ -708,7 +708,7 @@ def create_linear_graph(locus: Locus, satellite_counts: list[int]) -> nx.DiGraph
     return graph
 
 
-def get_graph_alignments(reads: list[Read], graph: nx.DiGraph, minimizer_window: int = 11) -> list[GraphAlignment]:
+def get_graph_alignments(reads: list[Read], graph: nx.DiGraph) -> list[GraphAlignment]:
     if not reads:
         return []
 
@@ -722,7 +722,7 @@ def get_graph_alignments(reads: list[Read], graph: nx.DiGraph, minimizer_window:
 
         with timed("minigraph alignment") as t:
             process = run_tool(
-                ["minigraph", "-t", "1", "-c", "-j", "0.3", "-x", "lr", "-w", str(minimizer_window), str(input_graph_gfa), "-"],
+                ["minigraph", "-t", "1", "-c", "-j", "0.3", "-x", "lr", "-w", "11", str(input_graph_gfa), "-"],
                 input=fastq_str,
             )
             t.info = f"{len(reads)} reads"
@@ -780,7 +780,6 @@ def get_kmer_string(locus: Locus, synced_list: list[str], satellite_copy_lengths
 def graph_align_reads_to_locus(
     reads: list[Read],
     locus: Locus,
-    minimizer_window: int = 11,
 ) -> tuple[list[GraphAlignment], list[FilteredRead]]:
     # Initialize output lists
     alignments: list[GraphAlignment] = []
@@ -789,7 +788,7 @@ def graph_align_reads_to_locus(
 
     # Build graph once; reuse for both the initial alignment and flanking remap
     graph = create_repeat_graph(locus)
-    graph_alignments = get_graph_alignments(reads, graph, minimizer_window=minimizer_window)
+    graph_alignments = get_graph_alignments(reads, graph)
 
     # Mark unmapped reads
     mapped_read_names = {aln.name for aln in graph_alignments}
@@ -831,7 +830,6 @@ def graph_align_reads_to_locus(
         flanking_alignments,
         locus,
         graph=graph,
-        minimizer_window=minimizer_window,
     )
 
     # Add the remapped flanking alignments to the lists
@@ -887,7 +885,6 @@ def remap_flanking_alignments_to_locus(
     flanking_alignments: list[GraphAlignment],
     locus: Locus,
     graph: nx.DiGraph,
-    minimizer_window: int = 11,
 ) -> tuple[list[GraphAlignment], list[FilteredRead]]:
     # Initialize lists
     synthetic_reads: list[Read] = []
@@ -924,7 +921,7 @@ def remap_flanking_alignments_to_locus(
         )
 
     # Re-map the synthetic reads (reuse the same graph)
-    remapped_flanking_reads = get_graph_alignments(synthetic_reads, graph, minimizer_window=minimizer_window)
+    remapped_flanking_reads = get_graph_alignments(synthetic_reads, graph)
 
     # Initialize lists
     remapped_alignments: list[GraphAlignment] = []
@@ -1023,12 +1020,12 @@ class ReadCall:
         return self.alignment.type == AlignmentType.SPANNING
 
 
-def get_read_calls(reads: list[Read], locus: Locus, minimizer_window: int = 11) -> tuple[list[ReadCall], list[FilteredRead]]:
+def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], list[FilteredRead]]:
     # Initialize lists
     read_calls: list[ReadCall] = []
 
     # Align reads to locus
-    alignments, unmapped_reads = graph_align_reads_to_locus(reads, locus, minimizer_window=minimizer_window)
+    alignments, unmapped_reads = graph_align_reads_to_locus(reads, locus)
 
     # Build the k-mer background once for all reads, instead of per read
     error_rate_k = 11
