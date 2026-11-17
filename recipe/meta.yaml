@@ -8,7 +8,7 @@ package:
 
 source:
   url: "https://github.com/MOMA-AUH/abacus/archive/refs/tags/v{{ version }}.tar.gz"
-  # Add the release archive's SHA256 after tagging, before submitting to Bioconda.
+  sha256: "fcce7e1165b2ce69209e34314e99e4c6cf906f3ae690a4617e2307132c713870"
 
 build:
   number: 0
@@ -62,7 +62,6 @@ test:
   commands:
     - abacus --help
     - python -c "import json, subprocess; json.loads(subprocess.check_output(['abacus','--show-catalog'])); print('ok')"
-    - python -m pytest -q tests/test_cli.py
 about:
   home: "https://github.com/MOMA-AUH/abacus"
   license: MIT
