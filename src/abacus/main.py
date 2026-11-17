@@ -696,7 +696,7 @@ def abacus(
     if report is not None and loci:
         logger.info("Rendering report...")
         report_template = Path(__file__).parent / "scripts" / "report_template.Rmd"
-        logo_path = Path(__file__).parent.parent.parent / "img" / "logo.png"
+        logo_path = Path(__file__).parent / "img" / "logo.png"
 
         try:
             with timed("Rscript render"):

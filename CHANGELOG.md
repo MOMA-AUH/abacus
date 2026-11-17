@@ -14,12 +14,14 @@ Planned release: **3.0.0**, including the breaking CLI and VCF changes listed be
 - `AFF3` catalog entry
 - `RFC1_complex` catalog entry, covering the RFC1 motifs with a published pathogenicity classification
 - `PS` FORMAT field; heterozygous genotypes are now phased
-- CI workflow
+- CI tests and package builds, including version-tag checks and saved artifacts
+- Installed-package test for VCF/HTML output and serial/parallel consistency
 - Optional `BenignMax`/`PathogenicMin` catalog thresholds: count estimates are highlighted in the report summary table and classified in the new VCF fields `STRSTATUS`, `BENIGNMAX` and `PATHOGENICMIN` ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 - `LPSRUS`/`LPSRUC` INFO fields with the longest pure segment (LPS) of each allele, after [Danzi et al. (2025)](https://doi.org/10.1101/2025.01.06.631535)
 - Report summary table header stays visible while scrolling ([#28](https://github.com/MOMA-AUH/abacus/issues/28))
 - `REFDIV` INFO field: each allele's divergence from the catalog locus structure, so alleles the catalog motif doesn't describe are visible
 ### Changed
+- SPDX license metadata; requires setuptools `>=77`
 - Updated and aligned Python, R, and external-tool dependency requirements across package metadata, the development environment, and the conda recipe; the development environment now uses Python 3.11
 - Replaced the development environment's `r-tidyverse` bundle with the individual report dependencies, explicitly including `r-htmltools`, and added `pytest-cov` to match the Python development extras
 - Consensus-based read reassignment now measures edit distance in whole kmers instead of individual bases, sharing the manual kmer encoder with consensus search
@@ -51,6 +53,7 @@ Planned release: **3.0.0**, including the breaking CLI and VCF changes listed be
 - **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
+- Missing report logo in installed packages
 - Exit with an error instead of hanging when a worker process is killed
 - Report generation when no catalog locus has thresholds
 - Prevent an `IndexError` when trimming remapped flanking alignments that end inside the left anchor; anchor-only hits continue through normal read QC

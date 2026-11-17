@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "abacus"
 version = "2.0.0"
 description = "A tool for analyzing Short Tandem Repeats (STRs) from Long-Read Sequencing data"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Simon Opstrup Drue", email = "simondrue@gmail.com" }]
 requires-python = ">=3.11"
 dependencies = [
@@ -35,7 +36,7 @@ dev = ["pytest", "pytest-cov"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-abacus = ["scripts/*.Rmd", "str_catalogs/*.json"]
+abacus = ["scripts/*.Rmd", "str_catalogs/*.json", "img/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

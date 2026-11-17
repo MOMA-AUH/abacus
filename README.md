@@ -5,7 +5,7 @@
 [![Bioconda downloads](https://img.shields.io/conda/dn/bioconda/abacus-str.svg?label=downloads)](https://anaconda.org/bioconda/abacus-str)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-<img src="./img/logo.png" width="150">
+<img src="./src/abacus/img/logo.png" width="150">
 
 Abacus calls short tandem repeat (STR) alleles from long-read sequencing data and produces an HTML report with comprehensive visualizations and a VCF file. Abacus ships with a built-in catalog of STR loci for hg38, but you can also provide your own catalog in JSON format. For each locus, Abacus reports the called alleles, their repeat counts with confidence intervals and consensus sequences.
 

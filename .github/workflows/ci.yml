@@ -3,8 +3,12 @@ name: CI
 on:
   push:
     branches: [master, develop]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 # Cancel superseded runs on the same branch/PR
 concurrency:
@@ -15,6 +19,7 @@ jobs:
   tests:
     name: Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash -el {0}
@@ -27,15 +32,53 @@ jobs:
           environment-name: abacus
           cache-environment: true
 
-      - name: Install abacus
-        run: pip install . --no-deps
+      - name: Build source distribution and wheel
+        run: |
+          python -m pip install build
+          python -m build
+
+      - name: Install wheel
+        run: |
+          python -m pip install --no-deps dist/*.whl
+          python -m pip check
+
+      - name: Check package and release versions
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import tomllib
+          from importlib.metadata import version
+          from packaging.version import Version
+
+          project = tomllib.loads(Path('pyproject.toml').read_text())
+          project_version = Version(project['project']['version'])
+          recipe = re.search(r'{%\s*set version\s*=\s*"([^"]+)"\s*%}', Path('recipe/meta.yaml').read_text())
+          assert recipe, 'Missing conda recipe version'
+          for name, value in [('recipe/meta.yaml', recipe[1]), ('installed wheel', version('abacus'))]:
+              assert Version(value) == project_version, f'{name}: {value} does not match project version {project_version}'
+          if os.environ.get('GITHUB_REF_TYPE') == 'tag':
+              tag_version = Version(os.environ['GITHUB_REF_NAME'].removeprefix('v'))
+              assert tag_version == project_version, f'Tag {tag_version} does not match project version {project_version}'
+          PY
 
       - name: Run tests
-        run: pytest -q
+        run: python -m pytest -q
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
 
   recipe:
     name: Build conda recipe
+    needs: tests
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash -el {0}
@@ -58,4 +101,12 @@ jobs:
 
       # Builds the package and runs the recipe's test section (import + CLI smoke tests)
       - name: Build and test
-        run: conda build recipe
+        run: conda build recipe --output-folder "$RUNNER_TEMP/conda-artifacts"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: conda-package
+          path: |
+            ${{ runner.temp }}/conda-artifacts/noarch/*.conda
+            ${{ runner.temp }}/conda-artifacts/noarch/*.tar.bz2
+          if-no-files-found: error
