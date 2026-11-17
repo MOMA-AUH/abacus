@@ -12,11 +12,12 @@ from abacus.graph import (
     get_read_calls,
     get_reference_sequence_from_path,
     get_satellite_copy_lengths_from_path,
+    remap_flanking_alignments_to_locus,
     split_into_copies,
 )
 from abacus.locus import Location
 from abacus.utils import AlignmentType
-from tests.helpers import make_locus, make_read
+from tests.helpers import make_locus, make_read, make_reads
 
 
 def test_empty_reads_do_not_need_a_graph():
@@ -47,7 +48,7 @@ def test_read_continuing_beyond_short_flank_is_flanking():
     unaligned_length = 1000
     unaligned = "G" * unaligned_length
     reads = [
-        # Genomic tail -> short left anchor -> 3 repeats -> full right anchor; mirrored below.
+        # Genomic tail -> short left anchor -> repeat -> full right anchor; mirrored below.
         make_read("unaligned_left", unaligned + locus.left_anchor[-60:] + repeat + locus.right_anchor, locus),
         make_read("unaligned_right", locus.left_anchor + repeat + locus.right_anchor[:60] + unaligned, locus),
     ]
@@ -94,6 +95,292 @@ def test_read_reaching_outer_anchors_is_spanning_despite_unaligned_ends():
     }
     assert all(call.is_spanning() for call in calls)
     assert not filtered
+
+
+@pytest.mark.parametrize(
+    ("structure", "read_type", "repeat_str", "expected_counts", "expected_obs_kmers", "expected_ref_kmers"),
+    [
+        # One satellite
+        pytest.param(
+            "(GAA)*",
+            "left",
+            "GAA" * 5 + "GA",
+            [6],
+            ["GAA"] * 5 + ["GA"],
+            ["GAA"] * 6,
+            id="1-satellite-short-terminal-kmer",
+        ),
+        pytest.param(
+            "(AAG)*",
+            "right",
+            "AG" + "AAG" * 5,
+            [6],
+            ["AG"] + ["AAG"] * 5,
+            ["AAG"] * 6,
+            id="1-satellite-right-short-terminal-kmer",
+        ),
+        pytest.param(
+            "(GAA)*",
+            "left",
+            "GAA" * 5 + "GAAT",
+            [6],
+            ["GAA"] * 5 + ["GAAT"],
+            ["GAA"] * 6,
+            id="1-satellite-long-terminal-kmer",
+        ),
+        pytest.param(
+            "(AAG)*",
+            "right",
+            "TAAG" + "AAG" * 5,
+            [6],
+            ["TAAG"] + ["AAG"] * 5,
+            ["AAG"] * 6,
+            id="1-satellite-right-long-terminal-kmer",
+        ),
+        # Two satellites
+        pytest.param(
+            "(A)*(GAA)*",
+            "right",
+            "A" + "GAA" * 5,
+            [0, 5],
+            ["GAA"] * 5,
+            ["GAA"] * 5,
+            id="2-satellites-right-false-a-tract",
+        ),
+        pytest.param(
+            "(AAG)*(A)*",
+            "left",
+            "AAG" * 5 + "A",
+            [5, 0],
+            ["AAG"] * 5,
+            ["AAG"] * 5,
+            id="2-satellites-left-false-a-tract",
+        ),
+        pytest.param(
+            "(A)*(GAA)*",
+            "right",
+            "A" * 2 + "GAA" * 5,
+            [0, 5],
+            ["GAA"] * 5,
+            ["GAA"] * 5,
+            id="2-satellites-right-false-2-a-tract",
+        ),
+        pytest.param(
+            "(AAG)*(A)*",
+            "left",
+            "AAG" * 5 + "A" * 2,
+            [5, 0],
+            ["AAG"] * 5,
+            ["AAG"] * 5,
+            id="2-satellites-left-false-2-a-tract",
+        ),
+        pytest.param(
+            "(A)*(GAA)*",
+            "right",
+            "A" * 3 + "GAA" * 5,
+            [3, 5],
+            ["A"] * 3 + ["GAA"] * 5,
+            ["A"] * 3 + ["GAA"] * 5,
+            id="2-satellites-right-true-3-a-tract",
+        ),
+        pytest.param(
+            "(AAG)*(A)*",
+            "left",
+            "AAG" * 5 + "A" * 3,
+            [5, 3],
+            ["AAG"] * 5 + ["A"] * 3,
+            ["AAG"] * 5 + ["A"] * 3,
+            id="2-satellites-left-true-3-a-tract",
+        ),
+        pytest.param(
+            "(C)*(GAA)*",
+            "right",
+            "C" + "GAA" * 5,
+            [1, 5],
+            ["C"] + ["GAA"] * 5,
+            ["C"] * 1 + ["GAA"] * 5,
+            id="2-satellites-right-true-c-tract",
+        ),
+        pytest.param(
+            "(A)*(GAA)*",
+            "spanning",
+            "A" + "GAA" * 5,
+            [1, 5],
+            ["A"] + ["GAA"] * 5,
+            ["A"] * 1 + ["GAA"] * 5,
+            id="2-satellites-spanning-single-a",
+        ),
+        # Three satellites
+        pytest.param(
+            "(GAA)*(CAG)*(CGG)*",
+            "left",
+            "GAA" * 5 + "GA",
+            [6, 0, 0],
+            ["GAA"] * 5 + ["GA"],
+            ["GAA"] * 6,
+            id="3-satellites-ends-in-first",
+        ),
+        pytest.param(
+            "(GGC)*(GAC)*(AAG)*",
+            "right",
+            "AG" + "AAG" * 5,
+            [0, 0, 6],
+            ["AG"] + ["AAG"] * 5,
+            ["AAG"] * 6,
+            id="3-satellites-starts-in-third",
+        ),
+        pytest.param(
+            "(GAA)*(CAG)*(CGG)*",
+            "left",
+            "GAA" * 5 + "CAG" * 5 + "CA",
+            [5, 6, 0],
+            ["GAA"] * 5 + ["CAG"] * 5 + ["CA"],
+            ["GAA"] * 5 + ["CAG"] * 6,
+            id="3-satellites-ends-in-second",
+        ),
+        pytest.param(
+            "(GGC)*(GAC)*(AAG)*",
+            "right",
+            "AC" + ("GAC" * 5 + "AAG" * 5),
+            [0, 6, 5],
+            ["AC"] + ["GAC"] * 5 + ["AAG"] * 5,
+            ["GAC"] * 6 + ["AAG"] * 5,
+            id="3-satellites-starts-in-second",
+        ),
+        pytest.param(
+            "(GAA)*(CAG)*(CGG)*",
+            "left",
+            "GAA" * 5 + "CAG" * 5 + "CGG" * 5 + "CG",
+            [5, 5, 6],
+            ["GAA"] * 5 + ["CAG"] * 5 + ["CGG"] * 5 + ["CG"],
+            ["GAA"] * 5 + ["CAG"] * 5 + ["CGG"] * 6,
+            id="3-satellites-ends-in-third",
+        ),
+        pytest.param(
+            "(GGC)*(GAC)*(AAG)*",
+            "right",
+            "GC" + "GGC" * 5 + "GAC" * 5 + "AAG" * 5,
+            [6, 5, 5],
+            ["GC"] + ["GGC"] * 5 + (["GAC"] * 5 + ["AAG"] * 5),
+            ["GGC"] * 6 + ["GAC"] * 5 + ["AAG"] * 5,
+            id="3-satellites-starts-in-first",
+        ),
+        # Breaks separate repeat runs or occupy the free end.
+        pytest.param(
+            "(AAG)*C(A)*",
+            "left",
+            "AAGCA",
+            [1, 1],
+            ["AAG", "C", "A"],
+            ["AAG", "C", "A"],
+            id="left-break-between-runs",
+        ),
+        pytest.param(
+            "(AAG)*(A)*C",
+            "left",
+            "AAGAC",
+            [1, 1],
+            ["AAG", "A", "C"],
+            ["AAG", "A", "C"],
+            id="left-break-at-free-end",
+        ),
+        pytest.param(
+            "(A)*C(GAA)*",
+            "right",
+            "ACGAA",
+            [1, 1],
+            ["A", "C", "GAA"],
+            ["A", "C", "GAA"],
+            id="right-break-between-runs",
+        ),
+        pytest.param(
+            "C(A)*(GAA)*",
+            "right",
+            "CAGAA",
+            [1, 1],
+            ["C", "A", "GAA"],
+            ["C", "A", "GAA"],
+            id="right-break-at-free-end",
+        ),
+    ],
+)
+def test_read_calls_resolve_terminal_kmers(
+    structure,
+    read_type,
+    repeat_str,
+    expected_counts,
+    expected_obs_kmers,
+    expected_ref_kmers,
+):
+    locus = make_locus(structure)
+    calls, filtered = get_read_calls(make_reads([repeat_str], locus, read_type), locus)
+    assert not filtered
+    assert [call.satellite_count for call in calls] == [expected_counts]
+    assert calls[0].obs_kmer_string.split("|") == expected_obs_kmers
+    assert calls[0].ref_kmer_string.split("|") == expected_ref_kmers
+    assert calls[0].qual_kmer_string.split("|") == ["?" * len(kmer) for kmer in expected_obs_kmers]
+    assert calls[0].mod_5mc_kmer_string.split("|") == ["!" * len(kmer) for kmer in expected_obs_kmers]
+    assert calls[0].alignment.str_sequence == "".join(expected_obs_kmers)
+
+
+@pytest.mark.parametrize(
+    "matching_anchor",
+    [
+        pytest.param(True, id="matching-anchor"),
+        pytest.param(False, id="contrasting-anchor"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("read_type", "motif", "fragment"),
+    [
+        pytest.param("right", "AAG", "AG", id="right-two-bases"),
+        pytest.param("right", "AAG", "G", id="right-one-base"),
+        pytest.param("left", "GAA", "GA", id="left-two-bases"),
+        pytest.param("left", "GAA", "G", id="left-one-base"),
+    ],
+)
+def test_flanking_remap_preserves_repeat(read_type, motif, fragment, matching_anchor):
+    locus = make_locus(f"({motif})*")
+    missing = motif[: -len(fragment)] if read_type == "right" else motif[len(fragment) :]
+    boundary = missing if matching_anchor else "C" * len(missing)
+    # Control whether the synthetic anchor can complete the terminal motif.
+    if read_type == "right":
+        locus.left_anchor = locus.left_anchor[: -len(boundary)] + boundary
+        repeat = fragment + motif * 5
+        expected_type = AlignmentType.RIGHT_FLANKING
+    else:
+        locus.right_anchor = boundary + locus.right_anchor[len(boundary) :]
+        repeat = motif * 5 + fragment
+        expected_type = AlignmentType.LEFT_FLANKING
+
+    graph = create_repeat_graph(locus)
+    initial = get_graph_alignments(make_reads([repeat], locus, read_type), graph)
+    assert len(initial) == 1
+    assert initial[0].type == expected_type
+
+    remapped, filtered = remap_flanking_alignments_to_locus(initial, locus, graph)
+
+    assert not filtered
+    assert len(remapped) == 1
+    assert remapped[0].type == expected_type
+    assert remapped[0].str_sequence == repeat
+
+
+@pytest.mark.parametrize("read_type", ["left", "right"])
+def test_flanking_remap_preserves_repeat_with_anchor_deletion(read_type):
+    locus = make_locus("(CAG)*")
+    repeat = "CAG" * 10
+    overlap = locus.right_anchor[:10] if read_type == "left" else locus.left_anchor[-10:]
+    overlap = overlap[:5] + overlap[6:]  # One deletion in the original anchor overlap.
+    sequence = repeat + overlap if read_type == "left" else overlap + repeat
+    graph = create_repeat_graph(locus)
+    initial = get_graph_alignments(make_reads([sequence], locus, read_type), graph)
+
+    remapped, filtered = remap_flanking_alignments_to_locus(initial, locus, graph)
+
+    assert not filtered
+    assert len(remapped) == 1
+    assert remapped[0].str_sequence == repeat
 
 
 @pytest.mark.parametrize(

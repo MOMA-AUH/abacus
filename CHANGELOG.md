@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** reference divergence is an outlier filter within each haplotype instead of a hard cutoff, so an allele that differs from the catalog motif is kept instead of removed (e.g. an expansion of a different unit). `--max-ref-divergence` is replaced by `--tol-ref-divergence` (default `0.20`)
 - `FGF14_complex` catalog entry is now `(TAGTCATAGTACCCCAA|TAGTCATAGTACCA)*(GVA)*`, adding the alternative flanking region `TAGTCATAGTACCA` and the `GGA` interruption
 ### Fixed
+- Ambiguous terminal satellite runs on flanking reads are trimmed and realigned when they could be partial copies of the neighbouring repeat
+- Synthetic anchors used to remap flanking reads no longer contribute repeat bases; indels in original anchor overlaps are preserved
 - Native crash decoding empty `MM`/`Mm` modification blocks
 - Consensus refinement reassigns spanning reads and refits group parameters and lengths; ties preserve assignments
 - Enforce minimum haplotype support throughout haplotyping, retaining supported low-depth diploid splits

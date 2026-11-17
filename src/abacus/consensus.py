@@ -177,6 +177,8 @@ def build_consensus_call(
         locus=locus,
         n_soft_clipped_left=0,
         n_soft_clipped_right=0,
+        n_left_synthetic_bases=0,
+        n_right_synthetic_bases=0,
         str_sequence=consensus_sequence,
         type=AlignmentType.SPANNING,
         path=path,

@@ -19,6 +19,8 @@ class Read:
     strand: str
     n_soft_clipped_left: int
     n_soft_clipped_right: int
+    n_left_synthetic_bases: int
+    n_right_synthetic_bases: int
     locus: Locus
 
     def quality_string(self) -> str:
@@ -53,6 +55,8 @@ class Read:
             locus=locus,
             n_soft_clipped_left=n_soft_clipped_left,
             n_soft_clipped_right=n_soft_clipped_right,
+            n_left_synthetic_bases=0,
+            n_right_synthetic_bases=0,
         )
 
     def is_reverse(self) -> bool:
@@ -81,6 +85,8 @@ class FilteredRead(Read):
             locus=read.locus,
             n_soft_clipped_left=read.n_soft_clipped_left,
             n_soft_clipped_right=read.n_soft_clipped_right,
+            n_left_synthetic_bases=read.n_left_synthetic_bases,
+            n_right_synthetic_bases=read.n_right_synthetic_bases,
             error_flags=error_flags,
         )
 

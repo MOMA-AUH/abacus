@@ -13,6 +13,8 @@ Abacus analyzes STR (Short Tandem Repeat) data from Long-Read Sequencing. It tar
 
 Abacus converts each entry of an STR catalog (JSON) into a graph, then re-maps relevant reads from an aligned BAM/CRAM file onto that graph using [minigraph](https://github.com/lh3/minigraph). Haplotyping uses the resulting repeat counts and sequences to infer allele groups, refine their consensus sequences, and call STR alleles.
 
+On flanking reads, a short terminal satellite run is trimmed and the read realigned if the run could instead be a partial copy of the neighbouring repeat motif. For example, at `(A)*(GAA)*`, one or two leading `A` bases before `GAA` copies are not counted as a separate A tract.
+
 ### Haplotyping algorithm
 
 Each haplotype requires `--min-reads-per-haplotype` usable reads (default: `2`). Diploid loci with fewer than twice this minimum are fitted as one homozygous (HOM) group; fewer than the minimum produce no call. At the default, two or three reads support HOM; four can support two haplotypes. Chromosome and sex determine biological ploidy.

@@ -50,6 +50,8 @@ def make_read(
         locus=locus,
         n_soft_clipped_left=n_soft_clipped_left,
         n_soft_clipped_right=n_soft_clipped_right,
+        n_left_synthetic_bases=0,
+        n_right_synthetic_bases=0,
     )
 
 

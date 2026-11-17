@@ -85,6 +85,63 @@ def rescue_boundary(synced: list, trim_start: int) -> list:
     return [residue + kept[0], *kept[1:]] if kept else [residue]
 
 
+def _trim_anchor_list(
+    synced: list,
+    trim_start: int,
+    trim_end: int,
+    left_query_bases: int | None = None,
+    right_query_bases: int | None = None,
+    is_cigar: bool = False,
+) -> list:
+    """Trim both anchors; a query count selects synthetic trimming at that end."""
+    for from_right, reference_bases, query_bases in (
+        (False, trim_start, left_query_bases),
+        (True, trim_end, right_query_bases),
+    ):
+        # Biological anchors use reference slots; synthetic anchors use known query counts.
+        if query_bases is None:
+            if not from_right:
+                synced = rescue_boundary(synced, reference_bases)
+            elif reference_bases > 0:
+                synced = synced[:-reference_bases]
+            continue
+        # Reverse slots and their contents so the same loop can trim either end.
+        synced = [entry[::-1] for entry in reversed(synced)] if from_right else synced[:]
+        for i, entry in enumerate(synced):
+            if query_bases == 0:
+                break
+            if is_cigar:
+                # Deletions consume no query bases. Removed matches become D; removed insertions disappear.
+                kept_operations = []
+                for op in entry:
+                    if op != "D" and query_bases > 0:
+                        query_bases -= 1
+                        if op != "I":
+                            kept_operations.append("D")
+                    else:
+                        kept_operations.append(op)
+                synced[i] = "".join(kept_operations)
+            else:
+                removed = min(query_bases, len(entry))
+                synced[i] = entry[removed:]
+                query_bases -= removed
+
+        # Discard anchor reference slots after removing the synthetic query bases.
+        kept = synced[reference_bases:]
+        if kept:
+            # Real query bases may have aligned into anchor reference slots.
+            if is_cigar:
+                residue = "I" * sum(op != "D" for entry in synced[:reference_bases] for op in entry)
+            else:
+                residue = kept[0][:0]
+                for entry in synced[:reference_bases]:
+                    residue += entry
+            kept[0] = residue + kept[0]
+        synced = [entry[::-1] for entry in reversed(kept)] if from_right else kept
+
+    return synced
+
+
 ANCHOR_NODES = frozenset({"left_anchor", "left_anchor_overlap", "right_anchor_overlap", "right_anchor"})
 
 # Only simple (single-node, unambiguous) satellite copies can be split.
@@ -249,6 +306,8 @@ class GraphAlignment(Read):
             strand=read.strand,
             n_soft_clipped_left=read.n_soft_clipped_left,
             n_soft_clipped_right=read.n_soft_clipped_right,
+            n_left_synthetic_bases=read.n_left_synthetic_bases,
+            n_right_synthetic_bases=read.n_right_synthetic_bases,
             locus=read.locus,
             # Properties from GAF
             query_length=query_length,
@@ -278,46 +337,7 @@ class GraphAlignment(Read):
         else:
             self.type = AlignmentType.NO_ANCHORS
 
-        # Get sequence and qualities of the STR region
-        # Remove unmapped regions outside of the alignment
-        locus_sequence = self.sequence[self.query_start : self.query_end]
-        locus_quals = self.qualities[self.query_start : self.query_end]
-        locus_mod_5mc_probs = self.mod_5mc_probs[self.query_start : self.query_end]
-
-        locus_cigar_synced = sync_cigar(self.cigar)
-
-        locus_sequence_synced = ["".join(ls) for ls in sync_with_cigar(list(locus_sequence), self.cigar)]
-        locus_mod_5mc_synced = ["".join(ls) for ls in sync_with_cigar(list(locus_mod_5mc_probs), self.cigar)]
-        locus_quals_synced = sync_with_cigar(locus_quals, self.cigar)
-
-        # Determine the number of bases to trim from the left and right of the STR region
-        trim_start = (
-            config.anchor_len - self.path_start
-            if "left_anchor" in self.path
-            else config.min_anchor_overlap - self.path_start
-            if "left_anchor_overlap" in self.path
-            else 0
-        )
-        trim_end = (
-            config.anchor_len - (self.path_length - self.path_end)
-            if "right_anchor" in self.path
-            else config.min_anchor_overlap - (self.path_length - self.path_end)
-            if "right_anchor_overlap" in self.path
-            else 0
-        )
-
-        # Trim the sequence, qualities, CIGAR, mod 5mC string
-        self.str_sequence_synced = rescue_boundary(locus_sequence_synced, trim_start)
-        self.str_qualities_synced = rescue_boundary(locus_quals_synced, trim_start)
-        self.str_cigar_synced = rescue_boundary(locus_cigar_synced, trim_start)
-        self.str_mod_5mc_synced = rescue_boundary(locus_mod_5mc_synced, trim_start)
-
-        if trim_end > 0:
-            self.str_sequence_synced = self.str_sequence_synced[:-trim_end]
-            self.str_qualities_synced = self.str_qualities_synced[:-trim_end]
-            self.str_cigar_synced = self.str_cigar_synced[:-trim_end]
-            self.str_mod_5mc_synced = self.str_mod_5mc_synced[:-trim_end]
-
+        self.trim_anchors()
         self.realign_deleted_copies()
         self.split_slipped_copies()
 
@@ -345,6 +365,56 @@ class GraphAlignment(Read):
         str_cigar = re.sub(rf"^[ID]{{1,{longest_satellite}}}|[ID]{{1,{longest_satellite}}}$", "", str_cigar)
 
         self.str_ref_divergence = compute_ref_divergence(str_cigar)
+
+    def trim_anchors(self) -> None:
+        """Extract STR evidence by trimming biological and synthetic anchors."""
+        # Get sequence and qualities of the STR region
+        # Remove unmapped regions outside of the alignment
+        locus_sequence = self.sequence[self.query_start : self.query_end]
+        locus_quals = self.qualities[self.query_start : self.query_end]
+        locus_mod_5mc_probs = self.mod_5mc_probs[self.query_start : self.query_end]
+
+        locus_cigar_synced = sync_cigar(self.cigar)
+
+        locus_sequence_synced = ["".join(ls) for ls in sync_with_cigar(list(locus_sequence), self.cigar)]
+        locus_mod_5mc_synced = ["".join(ls) for ls in sync_with_cigar(list(locus_mod_5mc_probs), self.cigar)]
+        locus_quals_synced = sync_with_cigar(locus_quals, self.cigar)
+
+        # Reference slots occupied by the anchors.
+        trim_start = (
+            config.anchor_len - self.path_start
+            if "left_anchor" in self.path
+            else config.min_anchor_overlap - self.path_start
+            if "left_anchor_overlap" in self.path
+            else 0
+        )
+        trim_end = (
+            config.anchor_len - (self.path_length - self.path_end)
+            if "right_anchor" in self.path
+            else config.min_anchor_overlap - (self.path_length - self.path_end)
+            if "right_anchor_overlap" in self.path
+            else 0
+        )
+
+        # Remove known padding by query count, excluding unaligned query ends.
+        left_query_bases = max(0, self.n_left_synthetic_bases - self.query_start) if self.n_left_synthetic_bases else None
+        right_query_bases = max(0, self.n_right_synthetic_bases - (self.query_length - self.query_end)) if self.n_right_synthetic_bases else None
+
+        # Existing biological overlap may contain indels; measure it from the alignment.
+        if left_query_bases is not None and self.n_left_synthetic_bases < len(self.locus.left_anchor) and trim_start > 0:
+            aligned_anchor_bases = sum(len(entry) for entry in locus_sequence_synced[:trim_start])
+            # Keep insertions attached to the last anchor slot as terminal repeat evidence.
+            aligned_anchor_bases -= locus_cigar_synced[trim_start - 1].count("I")
+            left_query_bases = max(left_query_bases, aligned_anchor_bases)
+        if right_query_bases is not None and self.n_right_synthetic_bases < len(self.locus.right_anchor) and trim_end > 0:
+            aligned_anchor_bases = sum(len(entry) for entry in locus_sequence_synced[-trim_end:])
+            right_query_bases = max(right_query_bases, aligned_anchor_bases)
+
+        # Trim the sequence, qualities, CIGAR, mod 5mC string
+        self.str_sequence_synced = _trim_anchor_list(locus_sequence_synced, trim_start, trim_end, left_query_bases, right_query_bases)
+        self.str_qualities_synced = _trim_anchor_list(locus_quals_synced, trim_start, trim_end, left_query_bases, right_query_bases)
+        self.str_mod_5mc_synced = _trim_anchor_list(locus_mod_5mc_synced, trim_start, trim_end, left_query_bases, right_query_bases)
+        self.str_cigar_synced = _trim_anchor_list(locus_cigar_synced, trim_start, trim_end, left_query_bases, right_query_bases, is_cigar=True)
 
     def split_slipped_copies(self) -> None:
         """Split over-long satellite copies that are really several copies, so they count right.
@@ -777,6 +847,54 @@ def get_kmer_string(locus: Locus, synced_list: list[str], satellite_copy_lengths
     return "|".join(kmers)
 
 
+def get_ambiguous_terminal_length(aln: GraphAlignment, locus: Locus) -> int:
+    """Return the terminal run's length if it could be a partial neighbouring repeat."""
+    if aln.type not in (AlignmentType.LEFT_FLANKING, AlignmentType.RIGHT_FLANKING):
+        return 0
+
+    satellite_copy_lengths = get_satellite_copy_lengths_from_path(aln.path, locus)
+    obs_kmers = get_kmer_string(
+        locus=locus,
+        synced_list=aln.str_sequence_synced,
+        satellite_copy_lengths=satellite_copy_lengths,
+    ).split("|")
+    ref_kmers = get_kmer_string(
+        locus=locus,
+        synced_list=[*aln.str_reference],
+        satellite_copy_lengths=satellite_copy_lengths,
+    ).split("|")
+    satellite_counts = [len(lengths) for lengths in satellite_copy_lengths]
+
+    # Locate each observed satellite run; break sequences occupy their own kmer entries.
+    runs = []
+    position = 0
+    for count, brk in zip(satellite_counts, locus.breaks):
+        position += bool(brk)
+        if count:
+            runs.append((position, position + count))
+        position += count
+    if len(runs) < 2:
+        return 0
+
+    right_flanking = aln.type == AlignmentType.RIGHT_FLANKING
+    if right_flanking:
+        (start, end), (neighbour_start, _) = runs[:2]
+        if start != 0 or end != neighbour_start:
+            return 0  # A break separates the runs or occupies the free end.
+        neighbour_motif = ref_kmers[neighbour_start]
+    else:
+        (_, neighbour_end), (start, end) = runs[-2:]
+        if end != len(obs_kmers) or start != neighbour_end:
+            return 0
+        neighbour_motif = ref_kmers[neighbour_end - 1]
+
+    fragment = "".join(obs_kmers[start:end])
+    if not 0 < len(fragment) < len(neighbour_motif):
+        return 0
+    matches = neighbour_motif.endswith(fragment) if right_flanking else neighbour_motif.startswith(fragment)
+    return len(fragment) if matches else 0
+
+
 def graph_align_reads_to_locus(
     reads: list[Read],
     locus: Locus,
@@ -916,6 +1034,8 @@ def remap_flanking_alignments_to_locus(
                 strand=aln.strand,
                 n_soft_clipped_left=0,
                 n_soft_clipped_right=0,
+                n_left_synthetic_bases=added_bases if aln.type == AlignmentType.RIGHT_FLANKING else 0,
+                n_right_synthetic_bases=added_bases if aln.type == AlignmentType.LEFT_FLANKING else 0,
                 locus=aln.locus,
             ),
         )
@@ -1026,6 +1146,32 @@ def get_read_calls(reads: list[Read], locus: Locus) -> tuple[list[ReadCall], lis
 
     # Align reads to locus
     alignments, unmapped_reads = graph_align_reads_to_locus(reads, locus)
+
+    # Trim ambiguous terminal repeats from flanking reads, and update their satellite counts accordingly
+    original_reads = {read.name: read for read in reads}
+    trimmed_reads: list[Read] = []
+    retained_alignments: list[GraphAlignment] = []
+    for aln in alignments:
+        ambiguous_length = get_ambiguous_terminal_length(aln, locus)
+        if ambiguous_length > 0:
+            read = original_reads[aln.name]
+            kept = slice(ambiguous_length, None) if aln.type == AlignmentType.RIGHT_FLANKING else slice(None, -ambiguous_length)
+            trimmed_read = replace(
+                read,
+                sequence=read.sequence[kept],
+                qualities=read.qualities[kept],
+                mod_5mc_probs=read.mod_5mc_probs[kept],
+            )
+            trimmed_reads.append(trimmed_read)
+        else:
+            retained_alignments.append(aln)
+    alignments = retained_alignments
+
+    # Re-align the trimmed reads to the locus and add them to the alignments
+    if trimmed_reads:
+        trimmed_alignments, unmapped_trimmed_reads = graph_align_reads_to_locus(trimmed_reads, locus)
+        alignments.extend(trimmed_alignments)
+        unmapped_reads.extend(unmapped_trimmed_reads)
 
     # Build the k-mer background once for all reads, instead of per read
     error_rate_k = 11
