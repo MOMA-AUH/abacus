@@ -4,6 +4,7 @@ import pysam
 import pytest
 
 from abacus.graph import (
+    GraphAlignment,
     Locus,
     Read,
     create_repeat_graph,
@@ -24,6 +25,29 @@ def test_empty_reads_do_not_need_a_graph():
     graph = create_repeat_graph(make_locus("(CAG)+"))
     graph.clear()
     assert get_graph_alignments([], graph) == []
+
+
+def test_synthetic_read_aligned_only_inside_left_anchor_has_no_repeat_evidence():
+    locus = make_locus("(TTTAT)*")
+    graph = create_repeat_graph(locus)
+    read = make_read("anchor_only", locus.left_anchor, locus)
+    read.n_left_synthetic_bases = len(locus.left_anchor) - 10
+    anchor_length = len(graph.nodes["left_anchor"]["sequence"])
+    aligned_length = anchor_length - 1
+    # A valid local hit can end before reaching the inner anchor or repeat.
+    gaf_line = "\t".join(map(str, [
+        read.name, len(read.sequence), 0, aligned_length, "+", ">left_anchor",
+        anchor_length, 0, aligned_length, aligned_length, aligned_length, 60,
+        f"cg:Z:{aligned_length}M",
+    ]))
+
+    alignment = GraphAlignment.from_gaf_line(read, gaf_line, graph)
+
+    assert alignment.type == AlignmentType.NO_ANCHORS
+    assert alignment.str_sequence == ""
+    assert alignment.str_qualities == []
+    assert alignment.str_mod_5mc_synced == []
+    assert alignment.str_cigar_synced == []
 
 
 def test_read_ending_in_short_flank_is_spanning():

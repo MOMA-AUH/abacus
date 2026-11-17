@@ -404,7 +404,9 @@ class GraphAlignment(Read):
         if left_query_bases is not None and self.n_left_synthetic_bases < len(self.locus.left_anchor) and trim_start > 0:
             aligned_anchor_bases = sum(len(entry) for entry in locus_sequence_synced[:trim_start])
             # Keep insertions attached to the last anchor slot as terminal repeat evidence.
-            aligned_anchor_bases -= locus_cigar_synced[trim_start - 1].count("I")
+            # Local hits ending inside the anchor never reach that slot.
+            if trim_start <= len(locus_cigar_synced):
+                aligned_anchor_bases -= locus_cigar_synced[trim_start - 1].count("I")
             left_query_bases = max(left_query_bases, aligned_anchor_bases)
         if right_query_bases is not None and self.n_right_synthetic_bases < len(self.locus.right_anchor) and trim_end > 0:
             aligned_anchor_bases = sum(len(entry) for entry in locus_sequence_synced[-trim_end:])
